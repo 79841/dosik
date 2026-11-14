@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dosik</title>
+    <script>
+      // Pre-hydration theme: paints the correct background before the JS
+      // bundle runs, so dark-theme users never see a white flash. Values must
+      // match shared/lib/theme.ts (storage key) and palette.ts (canvasBg).
+      (() => {
+        let stored = null;
+        try {
+          stored = localStorage.getItem("dosik.theme");
+        } catch {}
+        const theme =
+          stored === "light" || stored === "dark"
+            ? stored
+            : matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light";
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+        document.documentElement.style.setProperty(
+          "--dsk-canvas-bg",
+          theme === "dark" ? "#1C1C1C" : "#FFFFFF",
+        );
+      })();
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,203 @@
+@import "tailwindcss";
+/* The design system's tokens (#216): colours and shadows for each data-theme,
+   the two faces, spaces, radii and layout sizes. A generated file — not edited
+   by hand. No layer: its `--font-sans`/`--font-mono` must beat Tailwind's
+   theme defaults. */
+@import "../design/design-system/project/tokens.css";
+/* design/ and docs/ are not app markup and must not add utilities */
+@source not "../design";
+@source not "../docs";
+
+/* Theme is driven by data-theme on <html> (set by shared/lib/theme.ts). */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* The chrome's colours and shadows as utilities — `bg-surface`, `text-muted`,
+   `shadow-raised`. `inline` makes a utility read the token where it is used,
+   so one class follows data-theme with no `dark:` twin; `reference` keeps
+   Tailwind from re-declaring the variables, which would make each shadow
+   point at itself. `primary` (#158) is another name for the ink. */
+@theme inline reference {
+  --color-surface: var(--surface);
+  --color-frame: var(--frame);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-edge: var(--edge);
+  --color-frame-dash: var(--frame-dash);
+  --color-ink: var(--ink);
+  --color-icon: var(--icon);
+  --color-muted: var(--muted);
+  --color-muted-strong: var(--muted-strong);
+  --color-ink-surface: var(--ink-surface);
+  --color-on-ink-muted: var(--on-ink-muted);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-focus: var(--focus);
+  --color-tile-mono: var(--tile-mono);
+  --color-tile-blue: var(--tile-blue);
+  --color-tile-teal: var(--tile-teal);
+  --color-tile-violet: var(--tile-violet);
+  --color-tile-green: var(--tile-green);
+  --color-tile-amber: var(--tile-amber);
+  --color-tile-rose: var(--tile-rose);
+  --color-tile-ink: var(--tile-ink);
+  --color-tile-ink-muted: var(--tile-ink-muted);
+  --color-deep-rose: var(--deep-rose);
+  --color-dot: var(--dot);
+  --color-dash: var(--dash);
+  --color-on-ink-line: var(--on-ink-line);
+  --color-on-ink-soft: var(--on-ink-soft);
+  --color-project-grey: var(--project-grey);
+  --color-project-amber: var(--project-amber);
+  --color-project-violet: var(--project-violet);
+  --color-line-blue: var(--line-blue);
+  --color-glyph-folder: var(--glyph-folder);
+  --color-glyph-folder-soft: var(--glyph-folder-soft);
+  --color-glyph-diagram: var(--glyph-diagram);
+  --color-glyph-diagram-soft: var(--glyph-diagram-soft);
+  --color-badge-blue: var(--badge-blue);
+  --color-badge-blue-soft: var(--badge-blue-soft);
+  --color-badge-teal: var(--badge-teal);
+  --color-badge-teal-soft: var(--badge-teal-soft);
+  --color-badge-orange: var(--badge-orange);
+  --color-badge-orange-soft: var(--badge-orange-soft);
+  --color-badge-pink: var(--badge-pink);
+  --color-badge-pink-soft: var(--badge-pink-soft);
+  --color-badge-green: var(--badge-green);
+  --color-badge-green-soft: var(--badge-green-soft);
+  --color-badge-violet: var(--badge-violet);
+  --color-badge-violet-soft: var(--badge-violet-soft);
+  --color-primary: var(--ink);
+  --color-primary-fg: var(--surface);
+  --color-primary-hover: color-mix(in oklab, var(--ink) 82%, var(--surface));
+  --shadow-raised: var(--shadow-raised);
+  --shadow-lifted: var(--shadow-lifted);
+  --shadow-popover: var(--shadow-popover);
+  --shadow-overlay: var(--shadow-overlay);
+  --shadow-segment: var(--shadow-segment);
+}
+
+:root {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* the top-level error fallback is h-full — it needs a resolved chain (#125) */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  user-select: none;
+  background: var(--dsk-canvas-bg, #FFFFFF);
+}
+
+/* Agent edit highlight: an expanding accent ring that fades out */
+@keyframes agent-flash {
+  0% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--ink) 55%, transparent);
+    opacity: 1;
+  }
+  100% {
+    box-shadow: 0 0 0 12px color-mix(in srgb, var(--ink) 0%, transparent);
+    opacity: 0;
+  }
+}
+
+.agent-flash {
+  animation: agent-flash 1.4s ease-out forwards;
+}
+
+/* Edge flow animation (marching dashes) */
+@keyframes md-dash {
+  to {
+    stroke-dashoffset: -10;
+  }
+}
+
+/* No rule lifts a selected node: a shape is picked where it sits in the stack
+   (#170 D7). One used to force `z-index: 10 !important` here, which put a
+   picked frame over everything it holds. */
+
+/* Edge labels and segment grips render into React Flow's edgelabel-renderer,
+   which sits *before* the nodes in DOM order — so the layer belongs behind
+   them. Its children carry their own z-index (the label pill's z-30 has to beat
+   the grips' z-20, #76), and without a stacking context here those values leak
+   into the viewport's and outrank the nodes' z-index 0. The label of an edge
+   running under a box then painted on top of the box while the line itself was
+   correctly hidden behind it. Isolating keeps pill-over-grip ordering local and
+   puts the whole layer back behind the nodes. (#91)
+
+   The editor is the one exception, and it opts out rather than weakening this
+   rule: `LabeledEdge` renders the pill being edited into `ViewportPortal`,
+   which sits *after* the nodes, and `liftForLabelEdit` brings the edge and its
+   two boxes forward to match. A covered label could otherwise be opened for
+   editing — the line is double-clickable and the context menu has "Edit label",
+   so neither path needs the pill to be visible — and the input took focus
+   behind the box (#93). Static labels are untouched: they still hide. */
+.react-flow__edgelabel-renderer {
+  isolation: isolate;
+}
+
+.react-flow__edge {
+  cursor: pointer;
+}
+
+/* Resize border hit area (#70).
+
+   `NodeResizer` draws the grab target and the visible line as the same box:
+   `.react-flow__resize-control.line` is 1px wide with a 1px border on the side
+   facing the node. Widening that box is not enough on its own — the border
+   rides the box's outer edge while the box is centred on the node's edge, so a
+   wider box puts the visible line 4-5px off the shape.
+
+   So the box becomes a pure hit area and the hairline moves to a centred
+   `::after`. The band is 10px, the same span the corner handles already cover
+   (`!h-2.5 !w-2.5` + React Flow's `translate: -50% -50%`), which is what made
+   corners easy and edges hard. It reaches ~5px outside the node, but the
+   resizer only exists while the node is selected.
+
+   `currentColor` keeps the colour in Tailwind's hands — `ShapeNode` sets it
+   with a text-* class on `lineClassName`. */
+.dosik-resize-line {
+  border-width: 0 !important;
+}
+
+.dosik-resize-line.left,
+.dosik-resize-line.right {
+  width: 10px !important;
+}
+
+.dosik-resize-line.top,
+.dosik-resize-line.bottom {
+  height: 10px !important;
+}
+
+.dosik-resize-line::after {
+  content: "";
+  position: absolute;
+  background: currentColor;
+}
+
+.dosik-resize-line.left::after,
+.dosik-resize-line.right::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.dosik-resize-line.top::after,
+.dosik-resize-line.bottom::after {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}

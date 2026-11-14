@@ -1,0 +1,5 @@
+# pnpm 10+ blocks dependency install scripts unless they are allowed here.
+# esbuild places its platform binary in one — without it vite and vitest cannot
+# start, which is how this migration first failed (#59).
+allowBuilds:
+  esbuild: true

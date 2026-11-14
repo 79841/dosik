@@ -1,0 +1,608 @@
+import {
+  Background,
+  BackgroundVariant,
+  ConnectionMode,
+  ReactFlow,
+  SelectionMode,
+  useReactFlow,
+  useStoreApi,
+  type FinalConnectionState,
+  type NodeChange,
+  type Node,
+} from "@xyflow/react";
+import { type DragEvent, type PointerEvent, useCallback, useEffect, useMemo, useRef } from "react";
+import { isIconId } from "../../shared/lib/iconIds";
+
+import {
+  clampToAttach,
+  findSnapTarget,
+  lifelineAttachRange,
+  messageHandles,
+  nodeBounds,
+  SELF_MESSAGE_GAP,
+} from "../../shared/lib/edgeUtils";
+import { spreadsOnSides } from "../../shared/lib/placeEnds";
+import { parseSide } from "../../shared/lib/sideAttach";
+import { DEFAULT_NODE_SIZE, isBackdrop, THEME_CANVAS_DOT } from "../../shared/lib/palette";
+import { useDiagramStore } from "../../shared/lib/store";
+import { withoutTouchedBackdrops } from "../../shared/lib/store/frames";
+import { liveGroups, withBoxGroupSelection } from "../../shared/lib/store/groups";
+import { GroupOutlines } from "./GroupOutlines";
+import type { DiagramNode, ShapeKind } from "../../shared/lib/types";
+import { ArrowDrawOverlay } from "./ArrowDrawOverlay";
+import { connectDrag, useCanvasUiStore } from "./canvasUiStore";
+import { liftForView } from "./canvasLifts";
+import { ConnectionLine } from "./ConnectionLine";
+import { connectionLanding, isDot } from "./connectionLanding";
+import { DropNodeMenu } from "./DropNodeMenu";
+import { EdgeContextMenu } from "./EdgeContextMenu";
+import { NodeContextMenu } from "./NodeContextMenu";
+import { openShapeMenu } from "./selectionMenu";
+import { LabeledEdge } from "./LabeledEdge";
+import { ShapeNode } from "./ShapeNode";
+import { registerPointerAt, registerViewportCenter, registerViewportRead } from "./canvasViewport";
+import { placeBlobs, useImageFileDrop } from "./useImageFileDrop";
+
+export const SHAPE_DRAG_MIME = "application/modern-diagram-shape";
+
+const nodeTypes = { shape: ShapeNode };
+
+const anchorDragPoint = (node: Node): { x: number; y: number } => {
+  const dragged = useDiagramStore.getState().nodes.find((n) => n.id === node.id);
+  if (!dragged) return { x: 0, y: 0 };
+  const b = nodeBounds({ ...dragged, position: node.position });
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+};
+
+/** where a dragged anchor's line comes from — its end on a lifeline faces it (#210) */
+const anchorOtherEnd = (anchorId: string): { x: number; y: number } | undefined => {
+  const { nodes, edges } = useDiagramStore.getState();
+  const edge = edges.find((e) => e.source === anchorId || e.target === anchorId);
+  const other =
+    edge && nodes.find((n) => n.id === (edge.source === anchorId ? edge.target : edge.source));
+  if (!other) return undefined;
+  const b = nodeBounds(other);
+  return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+};
+const edgeTypes = { labeled: LabeledEdge };
+
+/**
+ * Resolves a lifeline↔lifeline connection into horizontal message handles at
+ * the pointer's y (self-message when both ends are the same lifeline, its loop
+ * height taken from the drag). Returns null for anything else — including a
+ * lifeline pair with no pointer info, which falls back to the store's
+ * mid-line default.
+ */
+export const resolveMessageConnection = (
+  nodes: DiagramNode[],
+  connection: { source: string | null; target: string | null },
+  drag: { start: { y: number } | null; point: { y: number } | null },
+): { sourceHandle: string; targetHandle: string } | null => {
+  const source = nodes.find((n) => n.id === connection.source);
+  const target = nodes.find((n) => n.id === connection.target);
+  if (source?.data.shape !== "lifeline" || target?.data.shape !== "lifeline") return null;
+  const rawY = drag.start?.y ?? drag.point?.y;
+  if (rawY === undefined) return null;
+  // a new attachment never lands below a destroy marker
+  const y = clampToAttach(target, clampToAttach(source, rawY));
+  if (source.id !== target.id) return messageHandles(source, target, y);
+  const dropY = clampToAttach(source, drag.point?.y ?? y + SELF_MESSAGE_GAP);
+  const gap = Math.max(16, Math.abs(dropY - y));
+  // the loop's return leg must clear the marker too, not just its start
+  const top = Math.min(Math.min(y, dropY), lifelineAttachRange(source).max - gap);
+  return messageHandles(source, target, top, gap);
+};
+
+/**
+ * How far the drag must travel vertically before a drop back on the source
+ * lifeline counts as a self-message (#99).
+ *
+ * Without a floor, letting go where the drag began would silently create a
+ * zero-height loop — and that gesture is how a user cancels a connection they
+ * changed their mind about. Below the floor the drop stays "invalid", which is
+ * what makes `onConnectEnd` fall through to the drop menu, exactly as today.
+ */
+export const SELF_MESSAGE_MIN_DROP = 16;
+
+/**
+ * Whether React Flow should treat a pending connection as connectable.
+ *
+ * Only self-connections are judged here; everything else is already handled by
+ * React Flow's own rules. A lifeline dropping on itself is the case #99 opened:
+ * the model has supported self-messages all along (`pickHandles`,
+ * `resolveMessageConnection`, the bridge's `add_message` with `from == to`) but
+ * the gesture could never produce one, because the only handle under the
+ * pointer was the one the drag started from.
+ *
+ * Boxes are left alone (2026-08-23) — they can already self-loop
+ * by dropping on a *different* side handle.
+ */
+export const isConnectionAllowed = (
+  nodes: DiagramNode[],
+  connection: { source: string | null; target: string | null },
+  drag: { start: { y: number } | null; point: { y: number } | null },
+): boolean => {
+  if (!connection.source || !connection.target) return true;
+  if (connection.source !== connection.target) return true;
+  const node = nodes.find((n) => n.id === connection.source);
+  if (node?.data.shape !== "lifeline") return true;
+  const from = drag.start?.y;
+  const to = drag.point?.y;
+  // no pointer trail means the drag never moved — treat it as a cancel
+  if (from === undefined || to === undefined) return false;
+  return Math.abs(to - from) >= SELF_MESSAGE_MIN_DROP;
+};
+
+/** the parts of a mouse event the menu rules care about */
+const pointer = (e: React.MouseEvent) => ({
+  target: e.target as HTMLElement | null,
+  clientX: e.clientX,
+  clientY: e.clientY,
+});
+
+/** middle button only — see the note on `panOnDrag` below */
+const PAN_BUTTONS = [1];
+
+export const DiagramCanvas = () => {
+  const nodes = useDiagramStore((s) => s.nodes);
+  const edges = useDiagramStore((s) => s.edges);
+  const editedEdgeId = useCanvasUiStore((s) => s.edgeLabelEdit?.edgeId ?? null);
+  const editedNodeId = useCanvasUiStore((s) => s.nodeLabelEdit);
+  const onNodesChange = useDiagramStore((s) => s.onNodesChange);
+  const onEdgesChange = useDiagramStore((s) => s.onEdgesChange);
+  const onConnect = useDiagramStore((s) => s.onConnect);
+  const addNode = useDiagramStore((s) => s.addNode);
+  const commit = useDiagramStore((s) => s.commit);
+  const setDropMenu = useCanvasUiStore((s) => s.setDropMenu);
+  const setEdgeMenu = useCanvasUiStore((s) => s.setEdgeMenu);
+  const setNodeMenu = useCanvasUiStore((s) => s.setNodeMenu);
+  const setEdgeLabelEdit = useCanvasUiStore((s) => s.setEdgeLabelEdit);
+  const { screenToFlowPosition, getViewport } = useReactFlow();
+  // pictures dropped from Finder (#8), and the view centre ⌘V pastes one at
+  useImageFileDrop(screenToFlowPosition);
+  useEffect(
+    () =>
+      registerViewportCenter(() => {
+        // the window centre is not the canvas centre — panels float over it
+        const rect = document.querySelector(".react-flow")?.getBoundingClientRect();
+        return screenToFlowPosition(
+          rect && rect.width > 0
+            ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+            : { x: window.innerWidth / 2, y: window.innerHeight / 2 },
+        );
+      }),
+    [screenToFlowPosition],
+  );
+  // where a tab was left, so coming back to it does not fit again (#218 D5)
+  useEffect(() => registerViewportRead(getViewport), [getViewport]);
+  // where the pointer is over the canvas — ⌘V pastes a picture or Mermaid
+  // there (#200); null once it leaves for a panel or the toolbar
+  const hoverAt = useRef<{ x: number; y: number } | null>(null);
+  useEffect(
+    () => registerPointerAt(() => (hoverAt.current ? screenToFlowPosition(hoverAt.current) : null)),
+    [screenToFlowPosition],
+  );
+
+  // View-only paint order: the label editor (and its line) must not be buried
+  // under a box while focused (#93), and a self-message must stay above the
+  // lifeline it loops on or it cannot be clicked at all (#99). See `liftForView`.
+  const { nodes: flowNodes, edges: flowEdges } = useMemo(
+    () => liftForView(nodes, edges, editedEdgeId, editedNodeId),
+    [nodes, edges, editedEdgeId, editedNodeId],
+  );
+
+  /*
+   * A selection box picks what it touches (Partial), but a box drawn inside a
+   * frame always touches the frame — dragging the picked shapes would then
+   * drag the frame and everything it holds, and Delete would take the frame
+   * (#170). A backdrop joins a selection box only when the box holds
+   * it whole.
+   *
+   * The box is tracked here: React Flow sends the first step's selection
+   * before it marks the box active, and remembers what it picked, so a frame
+   * the box comes to hold whole later is never sent again — the end of the
+   * box picks those up.
+   */
+  const boxStart = useRef<{ x: number; y: number } | null>(null);
+  const lastPointer = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const boxTo = useCallback(
+    (client: { x: number; y: number }) => {
+      const start = boxStart.current;
+      if (!start) return null;
+      const end = screenToFlowPosition(client);
+      return {
+        x: Math.min(start.x, end.x),
+        y: Math.min(start.y, end.y),
+        width: Math.abs(end.x - start.x),
+        height: Math.abs(end.y - start.y),
+      };
+    },
+    [screenToFlowPosition],
+  );
+  const handleNodesChange = useCallback(
+    (changes: NodeChange<DiagramNode>[]) => {
+      const box = boxTo(lastPointer.current);
+      if (!box) return onNodesChange(changes);
+      const { nodes, enteredGroup } = useDiagramStore.getState();
+      // the box decides a group as a whole: touched anywhere, selected whole (#171)
+      onNodesChange(
+        withBoxGroupSelection(
+          withoutTouchedBackdrops(changes, nodes, box),
+          nodes,
+          enteredGroup,
+          box,
+        ),
+      );
+    },
+    [boxTo, onNodesChange],
+  );
+  // the box is anchored where the button went down, as React Flow anchors it
+  // — the start event arrives with the first move, already away from there
+  const pressedAt = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const onSelectionStart = useCallback(() => {
+    boxStart.current = screenToFlowPosition(pressedAt.current);
+  }, [screenToFlowPosition]);
+  const onSelectionEnd = useCallback(
+    (e: React.MouseEvent) => {
+      const box = boxTo({ x: e.clientX, y: e.clientY });
+      boxStart.current = null;
+      if (!box) return;
+      const store = useDiagramStore.getState();
+      const wanted = store.nodes
+        .filter((n) => !n.selected && isBackdrop(n.data.shape))
+        .map((n) => ({ type: "select" as const, id: n.id, selected: true }));
+      // the backdrops the finished box holds whole
+      const whole = withoutTouchedBackdrops(wanted, store.nodes, box);
+      if (whole.length > 0) store.onNodesChange(whole);
+    },
+    [boxTo],
+  );
+
+  const handleConnect = useCallback(
+    (connection: Parameters<typeof onConnect>[0]) => {
+      const handles = resolveMessageConnection(
+        useDiagramStore.getState().nodes,
+        connection,
+        connectDrag,
+      );
+      connectDrag.start = null;
+      useCanvasUiStore.getState().setSnapTarget(null);
+      // a drop on the body sits where it was put (#204 D3); a dot gives only
+      // its side, and the store finds the free spot on it
+      const onBody = !isDot(connection.targetHandle);
+      onConnect(
+        handles ? { ...connection, ...handles } : connection,
+        onBody ? { target: screenToFlowPosition(lastPointer.current) } : undefined,
+      );
+    },
+    [onConnect, screenToFlowPosition],
+  );
+
+  /** while a new connection is dragged over a box, show where it would land */
+  const rf = useStoreApi();
+  const previewLanding = useCallback(
+    (client: { x: number; y: number }) => {
+      const c = rf.getState().connection;
+      if (!c.inProgress) return;
+      const ui = useCanvasUiStore.getState();
+      const { nodes, edges } = useDiagramStore.getState();
+      const landing = c.toNode
+        ? connectionLanding(
+            nodes,
+            edges,
+            { id: c.fromNode.id, handle: c.fromHandle?.id },
+            { id: c.toNode.id, handle: c.toHandle?.id },
+            screenToFlowPosition(client),
+          )
+        : null;
+      const now = ui.snapTarget;
+      if (now?.nodeId !== landing?.nodeId || now?.handle !== landing?.handle) {
+        ui.setSnapTarget(landing);
+      }
+    },
+    [rf, screenToFlowPosition],
+  );
+
+  const onDrop = useCallback(
+    (event: DragEvent<HTMLDivElement>) => {
+      // picture files (#8) — reach here in a browser; in Tauri the webview's
+      // drag-drop event carries them instead (useImageFileDrop)
+      const pictures = [...event.dataTransfer.files].filter((f) => f.type.startsWith("image/"));
+      if (pictures.length > 0) {
+        event.preventDefault();
+        void placeBlobs(
+          pictures.map((file) => async () => file),
+          screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+        );
+        return;
+      }
+      const payload = event.dataTransfer.getData(SHAPE_DRAG_MIME);
+      if (!payload) return;
+      event.preventDefault();
+      const position = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      // the icon palette drags "icon:<id>"; every other shape drags its kind
+      const iconId = payload.startsWith("icon:") ? payload.slice("icon:".length) : null;
+      const shape = iconId !== null ? "icon" : (payload as ShapeKind);
+      // centre the new node's own box on the drop point (the palette click does the same)
+      const size = DEFAULT_NODE_SIZE[shape] ?? DEFAULT_NODE_SIZE.rounded;
+      addNode(
+        shape,
+        { x: position.x - size.width / 2, y: position.y - size.height / 2 },
+        iconId !== null && isIconId(iconId) ? { icon: iconId } : undefined,
+      );
+    },
+    [screenToFlowPosition, addNode],
+  );
+
+  const isValidConnection = useCallback(
+    (connection: { source: string | null; target: string | null }) =>
+      isConnectionAllowed(useDiagramStore.getState().nodes, connection, connectDrag),
+    [],
+  );
+
+  const onConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent, state: FinalConnectionState) => {
+      useCanvasUiStore.getState().setSnapTarget(null);
+      if (state.isValid || !state.fromNode) return;
+      // React Flow picks the nearest handle by distance alone, so a drop just
+      // outside a box can land on a placed end's hidden handle, which takes no
+      // connections. It is still a drop on that box — treat it as the body (#204)
+      const toNode = state.toNode;
+      const toShape = useDiagramStore.getState().nodes.find((n) => n.id === toNode?.id)?.data.shape;
+      if (
+        toNode &&
+        toShape &&
+        spreadsOnSides(toShape) &&
+        toNode.id !== state.fromNode.id &&
+        state.toHandle?.id?.includes("-") &&
+        parseSide(state.toHandle.id) !== null
+      ) {
+        handleConnect({
+          source: state.fromNode.id,
+          sourceHandle: state.fromHandle?.id ?? null,
+          target: toNode.id,
+          targetHandle: "body",
+        });
+        return;
+      }
+      const client =
+        "clientX" in event
+          ? { x: event.clientX, y: event.clientY }
+          : { x: event.changedTouches[0]!.clientX, y: event.changedTouches[0]!.clientY };
+      const flow = screenToFlowPosition(client);
+      setDropMenu({
+        fromId: state.fromNode.id,
+        fromHandle: state.fromHandle?.id ?? null,
+        flowX: flow.x,
+        flowY: flow.y,
+        clientX: client.x,
+        clientY: client.y,
+      });
+    },
+    [screenToFlowPosition, setDropMenu, handleConnect],
+  );
+
+  const onNodeDrag = useCallback((_: MouseEvent | TouchEvent, node: Node) => {
+    const store = useDiagramStore.getState();
+    const dragged = store.nodes.find((n) => n.id === node.id);
+    if (dragged?.data.shape !== "anchor") return;
+    // show the connection points of a nearby box while dragging an anchor
+    const snap = findSnapTarget(
+      store.nodes,
+      anchorDragPoint(node),
+      [node.id],
+      undefined,
+      anchorOtherEnd(node.id),
+    );
+    // no `forAnchor`: dragged here the anchor stays under the pointer, not on the
+    // spot, so its line keeps running to it rather than to where it would land
+    useCanvasUiStore.getState().setSnapTarget(snap);
+  }, []);
+
+  const onNodeDragStop = useCallback((_: MouseEvent | TouchEvent, node: Node, dragged: Node[]) => {
+    // what rode along moved too — read before the drag state is cleared
+    const riders = Object.values(useDiagramStore.getState().dragRiders ?? {}).flat();
+    useDiagramStore.getState().endNodeDrag();
+    const store = useDiagramStore.getState();
+    const draggedNode = store.nodes.find((n) => n.id === node.id);
+    if (!draggedNode) return;
+    if (draggedNode.data.shape === "anchor") {
+      // near a box: attach the arrow to the highlighted connection point
+      const snap = findSnapTarget(
+        store.nodes,
+        anchorDragPoint(node),
+        [node.id],
+        undefined,
+        anchorOtherEnd(node.id),
+      );
+      useCanvasUiStore.getState().setSnapTarget(null);
+      if (snap) store.rewireAnchorToNode(draggedNode.id, snap.nodeId, snap.handle);
+    }
+    // moving lifelines (or found/lost anchors) tilts their messages — snap
+    // them level again. covers multi-select drags where either end co-moves
+    // multi-select drags where either end co-moves, and what a frame carried
+    const movedMessageEnds = [...dragged.map((n) => n.id), ...riders].filter((id) => {
+      const shape = store.nodes.find((sn) => sn.id === id)?.data.shape;
+      return shape === "lifeline" || shape === "anchor";
+    });
+    if (movedMessageEnds.length > 0) store.resnapMessages(movedMessageEnds);
+  }, []);
+
+  /*
+   * Groups (#171): a click on a grouped shape selects the group; a second
+   * click on a group already selected steps into it and picks that shape.
+   * Whether it was already selected has to be read before React Flow applies
+   * the click's own selection — hence the capture phase. A click on anything
+   * outside the group the user stepped into steps back out first, so that
+   * click selects whole groups again.
+   */
+  const stepIn = useRef<string | null>(null);
+  const onPointerDownCapture = useCallback((e: PointerEvent) => {
+    stepIn.current = null;
+    const target = e.target as Element;
+    const id = target.closest?.(".react-flow__node")?.getAttribute("data-id");
+    const store = useDiagramStore.getState();
+    const g = id ? store.nodes.find((n) => n.id === id)?.data.groupId : undefined;
+    // anything on the canvas but the stepped-into group steps out — a line,
+    // the empty canvas a selection box starts on, another shape (#171)
+    if (
+      store.enteredGroup &&
+      g !== store.enteredGroup &&
+      target.closest?.(".react-flow__renderer")
+    ) {
+      store.enterGroup(null);
+    }
+    if (!id) return;
+    const members = g ? liveGroups(store.nodes).get(g) : undefined;
+    if (
+      members &&
+      g !== useDiagramStore.getState().enteredGroup &&
+      members.every((m) => store.nodes.find((n) => n.id === m)?.selected)
+    ) {
+      stepIn.current = id;
+    }
+  }, []);
+
+  return (
+    <div
+      className="relative h-full w-full"
+      onPointerDownCapture={(e) => {
+        pressedAt.current = { x: e.clientX, y: e.clientY };
+        onPointerDownCapture(e);
+      }}
+      onPointerMoveCapture={(e) => {
+        lastPointer.current = { x: e.clientX, y: e.clientY };
+        hoverAt.current = { x: e.clientX, y: e.clientY };
+      }}
+      // React Flow moves the connection on the document's mousemove, which
+      // fires after this pointermove — the preview trails it by one event
+      onPointerMove={(e) => previewLanding({ x: e.clientX, y: e.clientY })}
+      onPointerLeave={() => {
+        hoverAt.current = null;
+      }}
+      // the box and the drag close on every way a press ends — React Flow
+      // skips onSelectionEnd on a cancel and onNodeDragStop on an aborted drag,
+      // and a box left open would filter every later selection (#172).
+      // Bubble phase: onSelectionEnd reads the box first
+      onPointerUp={() => {
+        boxStart.current = null;
+      }}
+      onPointerCancel={() => {
+        boxStart.current = null;
+        if (useDiagramStore.getState().dragRiders) useDiagramStore.getState().endNodeDrag();
+      }}
+    >
+      <ReactFlow
+        nodes={flowNodes}
+        edges={flowEdges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        // a clicked shape is picked where it sits in the stack — React Flow
+        // would otherwise lift a selected node above everything (+1000), and
+        // a frame picked up that way would cover what it holds (#170 D7)
+        elevateNodesOnSelect={false}
+        onNodesChange={handleNodesChange}
+        onSelectionStart={onSelectionStart}
+        onSelectionEnd={onSelectionEnd}
+        onEdgesChange={onEdgesChange}
+        onConnect={handleConnect}
+        onConnectEnd={onConnectEnd}
+        isValidConnection={isValidConnection}
+        onNodeDragStart={(_, __, dragged) => {
+          // a press that turns into a drag moves the group, it does not step in
+          stepIn.current = null;
+          commit();
+          useDiagramStore.getState().beginNodeDrag(dragged.map((n) => n.id));
+        }}
+        onNodeDrag={onNodeDrag}
+        onNodeDragStop={onNodeDragStop}
+        onEdgeDoubleClick={(e, edge) => {
+          e.stopPropagation();
+          setEdgeLabelEdit({ edgeId: edge.id, which: "center" });
+        }}
+        onEdgeContextMenu={(e, edge) => {
+          e.preventDefault();
+          setEdgeMenu({ edgeId: edge.id, clientX: e.clientX, clientY: e.clientY });
+        }}
+        /*
+         * Dragging empty canvas draws a selection box; it used to pan (#145).
+         *
+         * Picking several shapes needed Shift+drag, which nobody finds — a
+         * user dragged, got a pan, right-clicked and reported the menu as
+         * broken. Panning moves to the places it can be found: space+drag
+         * (React Flow's `panActivationKeyCode`, which flips `panOnDrag` to
+         * true and so turns selection back off), the middle button, and the
+         * wheel/trackpad.
+         *
+         * `panOnDrag` must never contain 2. React Flow's pane swallows
+         * `onPaneContextMenu` when the right button is a pan button, which
+         * would take the right-click menus (#139) with it.
+         */
+        selectionOnDrag
+        selectionMode={SelectionMode.Partial}
+        panOnDrag={PAN_BUTTONS}
+        panOnScroll
+        onNodeContextMenu={(e, node) => {
+          if (openShapeMenu({ ...pointer(e), nodeId: node.id, settle: true })) e.preventDefault();
+        }}
+        // React Flow lays a transparent rectangle over a rubber-band selection
+        // (`.react-flow__nodesselection-rect`, z-index 3 above the viewport's
+        // 2) and it swallows the right-click before any node sees it. Without
+        // this the menu never opened on the very selections it exists for
+        // (#139). Getting here means the selection is already settled.
+        onSelectionContextMenu={(e, nodes) => {
+          const id = nodes[0]?.id;
+          if (id && openShapeMenu({ ...pointer(e), nodeId: id, settle: false })) e.preventDefault();
+        }}
+        onNodeClick={(e, node) => {
+          // a click, not a drag: step into the group that was already selected
+          if (stepIn.current === node.id && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+            useDiagramStore.getState().pickInGroup(node.id);
+          }
+          stepIn.current = null;
+        }}
+        onPaneClick={() => {
+          useDiagramStore.getState().enterGroup(null);
+          setEdgeMenu(null);
+          setNodeMenu(null);
+          setEdgeLabelEdit(null);
+        }}
+        onDrop={onDrop}
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "copy";
+        }}
+        connectionLineComponent={ConnectionLine}
+        connectionMode={ConnectionMode.Loose}
+        snapToGrid
+        snapGrid={[8, 8]}
+        // no fitView: the app always mounts with an empty canvas, so the
+        // prop's deferred one-shot fit would fire on the FIRST added shape
+        // and yank the viewport (#58). The viewport follows document swaps
+        // through the store's revealRequest → ViewportReveal (#81, #117).
+        minZoom={0.2}
+        maxZoom={2.5}
+        // deletion is handled in canvasKeymap — React Flow's own path splits the
+        // node and edge changes into two commits, costing a second Cmd+Z (#110).
+        // Do not restore this: both paths would then run, and React Flow's
+        // listener (its own, on document — `preventDefault` does not reach it)
+        // would push `remove` changes for elements the keymap already deleted,
+        // stacking empty history frames on top of the real one.
+        deleteKeyCode={null}
+        proOptions={{ hideAttribution: true }}
+        // the diagram is set in IBM Plex Mono — labels, line labels, badges and
+        // their editors inherit it; the menus beside the flow stay in the
+        // interface face (#216). Label sizes assume it (textLayout.ts).
+        className="bg-[var(--dsk-canvas-bg,#FFFFFF)] font-mono"
+      >
+        <Background variant={BackgroundVariant.Dots} gap={20} size={1.4} color={THEME_CANVAS_DOT} />
+        {/* zoom is the canvas column's own island (ZoomIsland); no minimap (#219 D10·D11) */}
+        <GroupOutlines />
+      </ReactFlow>
+      <ArrowDrawOverlay />
+      <EdgeContextMenu />
+      <NodeContextMenu />
+      <DropNodeMenu />
+    </div>
+  );
+};

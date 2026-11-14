@@ -1,0 +1,42 @@
+{
+  "ops": [
+    {
+      "op": "set_diagram",
+      "doc": {
+        "title": "Headless smoke",
+        "nodes": [],
+        "edges": []
+      }
+    },
+    {
+      "op": "add_node",
+      "node": {
+        "id": "a",
+        "shape": "icon",
+        "icon": "browser",
+        "label": "Web",
+        "x": 80,
+        "y": 120
+      }
+    },
+    {
+      "op": "add_node",
+      "node": {
+        "id": "b",
+        "shape": "icon",
+        "icon": "api",
+        "label": "API",
+        "x": 320,
+        "y": 120
+      }
+    },
+    {
+      "op": "add_edge",
+      "edge": {
+        "id": "e",
+        "source": "a",
+        "target": "b"
+      }
+    }
+  ]
+}

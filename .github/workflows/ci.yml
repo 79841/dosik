@@ -1,0 +1,177 @@
+name: CI
+
+# Runs on every push to main — the published source — and on request. Jobs run
+# only in the public repository.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend (lint · typecheck · test · coverage)
+    if: github.repository == '79841/dosik'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint (Biome)
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # A separate path from the app bundle, so no other step catches it. Building is
+      # not enough — vite --ssr leaves dependencies external and never evaluates the
+      # modules, so top-level window/localStorage access only shows up when run (#64)
+      - name: Build and run headless CLI
+        run: |
+          pnpm build:headless
+          node dist-cli/dosik-headless.mjs \
+            --ops src/features/headless/__tests__/fixtures/ops.json \
+            --out "$RUNNER_TEMP/out.dosik.json" --export "$RUNNER_TEMP/out.svg"
+          test -s "$RUNNER_TEMP/out.dosik.json" && test -s "$RUNNER_TEMP/out.svg"
+
+      - name: Test with coverage
+        run: pnpm test:coverage
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 14
+
+  rust:
+    name: Rust (fmt · clippy · test)
+    if: github.repository == '79841/dosik'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev patchelf libxdo-dev libssl-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # generate_context! may require the frontendDist path to exist
+      - name: Ensure dist exists
+        run: mkdir -p dist
+
+      - name: Format check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features -- -D warnings
+
+      - name: Test
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features
+
+  notices:
+    name: Third-party notices are up to date
+    if: github.repository == '79841/dosik'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # reads the installed packages and the fetched crates; fails when a
+      # dependency change was not followed by `pnpm notices`
+      - name: Check THIRD_PARTY_NOTICES.txt
+        run: pnpm notices:check
+
+  audit:
+    name: Known vulnerabilities (npm · Rust)
+    if: github.repository == '79841/dosik'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # reads the lockfile against GitHub's advisory database, build and test tools
+      # included (the same set Dependabot watches); high and critical fail
+      - name: npm advisories
+        run: pnpm audit --audit-level high
+
+      # the Rust check still runs when the npm check fails, so one run shows both
+      - uses: dtolnay/rust-toolchain@stable
+        if: ${{ !cancelled() }}
+
+      - uses: taiki-e/install-action@v2
+        if: ${{ !cancelled() }}
+        with:
+          tool: cargo-audit
+
+      # RustSec advisories fail; unmaintained and Linux-only warnings are reported only
+      - name: Rust advisories
+        if: ${{ !cancelled() }}
+        run: cargo audit --file src-tauri/Cargo.lock
+
+  rust-windows:
+    # cfg(windows) branches (CLI lookup in chat.rs, etc.) do not compile in the Linux
+    # job, so clippy and tests also run on a Windows runner
+    name: Rust Windows (clippy · test)
+    if: github.repository == '79841/dosik'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Ensure dist exists
+        run: New-Item -ItemType Directory -Force -Path dist | Out-Null
+
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features -- -D warnings
+
+      - name: Test
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features

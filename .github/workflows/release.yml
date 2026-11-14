@@ -1,0 +1,236 @@
+# Builds the installers and uploads them to a draft release. Runs when a v* tag
+# arrives — the tag is pushed to this repository together with the release commit.
+# A person publishes the release, after checking the draft's installers on a real machine.
+# macOS only for now (Apple Silicon and Intel). Signed with Developer ID and notarized
+# by Apple with the ticket stapled, so a downloaded dmg opens without being blocked.
+# The certificate and notary key live in repository secrets (APPLE_*). Local builds are
+# ad-hoc signed (tauri.conf.json `signingIdentity: "-"`).
+name: Release
+
+# Tags only — a manual run would create a tag and release named after the branch
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+# Needs to create the release and upload its assets
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The draft is created here, once — if each matrix job created its own, jobs that
+  # finish at the same time would make two drafts or one of them would fail
+  create-release:
+    name: Draft release
+    if: github.repository == '79841/dosik'
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Asset names and the app's version come from the config files, the title from
+      # the tag — if they differ, a "v0.2.0" release would carry 0.1.0 installers
+      - name: Tag matches the app version in all three places
+        run: |
+          tag="${{ github.ref_name }}"
+          for v in \
+            "$(node -p "require('./package.json').version")" \
+            "$(node -p "require('./src-tauri/tauri.conf.json').version")" \
+            "$(sed -n 's/^version = "\(.*\)"/\1/p' src-tauri/Cargo.toml | head -1)"; do
+            [ "v$v" = "$tag" ] || { echo "::error::tag $tag does not match version $v"; exit 1; }
+          done
+
+      - uses: actions/github-script@v7
+        id: create
+        with:
+          result-encoding: string
+          # find-or-create: "Re-run all jobs" must reuse the draft, not add one.
+          # Only this job makes drafts, so there is no race to guard against.
+          script: |
+            const tag = context.ref.replace("refs/tags/", "");
+            const { owner, repo } = context.repo;
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+            const existing = releases.find((r) => r.tag_name === tag && r.draft);
+            if (existing) return String(existing.id);
+            const { data } = await github.rest.repos.createRelease({
+              owner,
+              repo,
+              tag_name: tag,
+              name: `Dosik ${tag}`,
+              body: 'See the "Install" section of the README.',
+              draft: true,
+              prerelease: false,
+            });
+            return String(data.id);
+
+  bundle:
+    name: Bundle (${{ matrix.name }})
+    if: github.repository == '79841/dosik'
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Apple Silicon
+            runner: macos-latest
+            target: aarch64-apple-darwin
+          - name: macOS Intel
+            runner: macos-latest
+            target: x86_64-apple-darwin
+          # Windows x64 comes back once the Windows build is ready for release
+    runs-on: ${{ matrix.runner }}
+    # write the release assets, and sign build provenance for them
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      # no dependency or build caches here: a cache written by another workflow
+      # must not end up inside the signed app
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Developer ID signing and notarization need every one of these secrets —
+      # without them the build would ship unsigned, so it stops here instead
+      - name: Signing secrets are set
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_ISSUER APPLE_API_KEY APPLE_API_KEY_P8; do
+            [ -n "$(printenv "$name")" ] || missing="$missing $name"
+          done
+          [ -z "$missing" ] || { echo "::error::missing secrets:$missing"; exit 1; }
+          umask 077
+          printf '%s\n' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          grep -q 'BEGIN PRIVATE KEY' "$RUNNER_TEMP/AuthKey.p8" || { echo "::error::APPLE_API_KEY_P8 is not the .p8 file's text"; exit 1; }
+
+      # build only — nothing goes up until it is checked below. The environment's
+      # Developer ID wins over the config; the ad-hoc "-" (for local builds) is
+      # removed as well, just in case. The bundler notarizes the .app and staples
+      # it, then makes the dmg from that app. Apple's notary can be slow — for
+      # v0.1.0 the app's took about an hour and the dmg's ran past 30 minutes —
+      # so the limits are generous; the job as a whole still stops at 6 hours
+      - name: Build, sign and notarize the app
+        timeout-minutes: 150
+        uses: tauri-apps/tauri-action@v0
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_PATH: ${{ runner.temp }}/AuthKey.p8
+        with:
+          args: --target ${{ matrix.target }} --config '{"bundle":{"macOS":{"signingIdentity":null}}}'
+
+      # the app: Developer ID, hardened runtime, accepted by Gatekeeper, ticket on
+      - name: Check the app
+        run: |
+          app="src-tauri/target/${{ matrix.target }}/release/bundle/macos/Dosik.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          info="$(codesign -dvv "$app" 2>&1)"
+          grep -q '^Authority=Developer ID Application:' <<<"$info" || { echo "::error::the app is not signed with Developer ID"; exit 1; }
+          grep -Eq '^CodeDirectory .*flags=0x[0-9a-f]+\(([a-z-]+,)*runtime(,[a-z-]+)*\)' <<<"$info" || { echo "::error::hardened runtime is off"; exit 1; }
+          spctl --assess --type execute --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          # the runner's own home is expected in build paths; any other home folder
+          # in the binary is a developer machine's path that must not ship
+          homes="$(strings -a "$app/Contents/MacOS/"* | grep -oE '/Users/[A-Za-z0-9._-]+' | sort -u | grep -vxF "$HOME" || true)"
+          [ -z "$homes" ] || { echo "::error::the app binary contains local home paths"; exit 1; }
+
+      # the dmg is what people download: notarize it too, staple, and check it
+      - name: Notarize, staple and check the dmg
+        timeout-minutes: 160
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          dmg="$(ls src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg)"
+          codesign --verify --strict --verbose=2 "$dmg"
+          notary="$RUNNER_TEMP/notary.json"
+          # keep going on a non-zero exit so the reason ends up in the log
+          xcrun notarytool submit "$dmg" --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$APPLE_API_KEY" \
+            --issuer "$APPLE_API_ISSUER" --wait --timeout 150m --output-format json > "$notary" || true
+          status="$(node -p "require(process.argv[1]).status" "$notary" 2>/dev/null || echo unknown)"
+          if [ "$status" != "Accepted" ]; then
+            cat "$notary"
+            id="$(node -p "require(process.argv[1]).id" "$notary" 2>/dev/null || true)"
+            if [ -n "$id" ] && [ "$id" != "undefined" ]; then
+              xcrun notarytool log "$id" --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$APPLE_API_KEY" \
+                --issuer "$APPLE_API_ISSUER" || true
+            fi
+            echo "::error::dmg notarization: $status"
+            exit 1
+          fi
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
+          spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
+
+      # only checked files go up: the dmg, and the app as .app.tar.gz
+      - name: Package the app
+        id: package
+        run: |
+          case "${{ matrix.target }}" in aarch64-*) arch=aarch64 ;; x86_64-*) arch=x64 ;; esac
+          tarball="$RUNNER_TEMP/Dosik_${arch}.app.tar.gz"
+          tar -czf "$tarball" -C "src-tauri/target/${{ matrix.target }}/release/bundle/macos" Dosik.app
+          echo "tarball=$tarball" >> "$GITHUB_OUTPUT"
+
+      # records which public commit and workflow built these exact files —
+      # after stapling, because stapling changes the dmg
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            ${{ steps.package.outputs.tarball }}
+
+      - name: Upload to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          TARBALL: ${{ steps.package.outputs.tarball }}
+        run: |
+          for file in src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg "$TARBALL"; do
+            name="$(basename "$file")"
+            # a re-run replaces what an earlier run put up under the same name
+            ids="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq ".[] | select(.name == \"$name\") | .id")"
+            for id in $ids; do
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"
+            done
+            curl --fail --silent --show-error -X POST \
+              -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
+              --data-binary @"$file" \
+              "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$name" > /dev/null
+            echo "uploaded $name"
+          done
+
+      - name: Remove the notarization key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"

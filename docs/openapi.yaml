@@ -1,0 +1,743 @@
+openapi: 3.1.0
+info:
+  title: Dosik agent bridge
+  description: |
+    Local HTTP bridge for AI agents to read and edit the current Dosik diagram.
+    A diagram is one canvas — a title, nodes and edges; `new_diagram`
+    starts another one.
+
+    Ops are a discriminated union — the discriminator key is **`op`** (not `type`):
+
+    ```json
+    { "ops": [ { "op": "add_node", "node": { "label": "Client", "x": 120, "y": 160 } } ] }
+    ```
+  version: 1.0.0
+servers:
+  - url: http://127.0.0.1:4517
+    description: Local bridge (port configurable via DOSIK_PORT)
+paths:
+  /api:
+    get:
+      summary: Bridge info
+      description: Name, endpoint list, op summaries, shape/color enums.
+      operationId: getInfo
+      responses:
+        "200":
+          description: Bridge metadata
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/diagram:
+    get:
+      summary: Current diagram document
+      description: |
+        The document on screen — the active tab's. Other open tabs are
+        not reachable here; while the Home tab is active this is an empty
+        document with `project: null`. A `200` from `POST /api/ops`
+        is sent only after the new document has reached this endpoint, so a read
+        straight after a successful write sees the ops applied. User edits made
+        in the app land here on a short debounce instead.
+
+        Image nodes' `src` reads as a placeholder, `elided:<type>;<KB>KB` — a few
+        pictures are megabytes of base64, past a model's context and past the
+        2 MiB request limit on the way back. Send a placeholder back unchanged on
+        its own node (`set_diagram`, `update_node`) and the picture stays; in `set_diagram`,
+        an image node that keeps its id but leaves `src` out keeps its picture too.
+
+        A diagram is one canvas: the document is always a `DiagramDoc`. Its
+        `project.path` names the folders the diagram is in — folders nest to
+        any depth, so it can be several (Payments → Checkout → Flows) — the
+        ids `new_diagram.folder` takes.
+      operationId: getDiagram
+      parameters:
+        - name: images
+          in: query
+          required: false
+          description: "`inline` returns each picture's data URL instead of the placeholder — for a caller that draws the document rather than reads it."
+          schema: { type: string, enum: [inline] }
+      responses:
+        "200":
+          description: |
+            The diagram as JSON (same shape as a `.dosik.json` file) plus
+            `project` — which library diagram this is, or `null` (a project is the
+            folder the diagram sits in).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/DiagramDoc"
+                  - type: object
+                    properties:
+                      project:
+                        $ref: "#/components/schemas/ProjectRef"
+  /api/ops:
+    post:
+      summary: Apply diagram edit operations
+      description: |
+        Applies ops in order, to the document on screen — the active tab's.
+        Returns per-op errors without aborting the batch, with two
+        exceptions that stop it, so nothing lands on the wrong diagram: a
+        removed page op (`add_page`, `switch_page`, `rename_page`,
+        `delete_page` — "pages were removed — a diagram is one canvas") and a
+        `new_diagram` that fails. The ops after either are not applied, and
+        the errors say how many ("the N ops after it were not applied").
+
+        `new_diagram {title?, folder?}` starts another library diagram, opens
+        it in a new tab and makes it the active one; the ops after it in the
+        batch go to it (one undo step there), the ops before it stay on the
+        diagram they were sent to. Several in a batch are made in order. It
+        counts 1 in `applied`, and `project` in the response is the diagram the
+        batch ended on.
+
+        While the Home tab is active a batch that does not start with
+        `new_diagram` first creates a new library diagram, opens it in a new
+        tab (the other tabs stay as they are) and applies the ops there — in
+        the folder Home shows (a project or a folder; not a stray listing of
+        diagrams with no folder on disk), else in the project picked with the
+        dashboard's Change, else in the most recently edited project; the
+        response says which diagram in `project`. A batch that starts with
+        `new_diagram` makes that one only. A batch that starts with a removed
+        page op (`add_page`, `switch_page`, `rename_page`, `delete_page`)
+        makes nothing: it stops at once, and `project` is `null`.
+        If the frontend does not confirm within 3 s the bridge answers `202 {queued: true}` —
+        check `GET /api/diagram` to confirm the result. Several `new_diagram`s
+        in one batch (each a disk write and a new tab) may take that long.
+
+        Requires `Content-Type: application/json`. Bodies over 2 MiB are rejected.
+        All endpoints require a loopback `Host` header (DNS-rebinding defense).
+      operationId: applyOps
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ops]
+              properties:
+                ops:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/Op"
+            examples:
+              addNodesAndEdge:
+                summary: Two nodes and a labeled edge
+                value:
+                  ops:
+                    - op: add_node
+                      node: { id: n1, label: Client, shape: rect, color: blue, x: 120, y: 160 }
+                    - op: add_node
+                      node: { id: n2, label: Server, shape: cylinder, color: teal, x: 420, y: 160 }
+                    - op: add_edge
+                      edge: { source: n1, target: n2, label: request }
+              sequenceDiagram:
+                summary: Sequence diagram — lifelines, messages, an activation
+                value:
+                  ops:
+                    - op: add_node
+                      node: { id: user, label: User, shape: lifeline, x: 100, y: 80 }
+                    - op: add_node
+                      node: { id: api, label: API, shape: lifeline, x: 340, y: 80 }
+                    - op: add_message
+                      message: { from: user, to: api, y: 180, label: "login()" }
+                    - op: add_message
+                      message: { from: api, to: api, y: 220, label: "validate()" }
+                    - op: add_message
+                      message: { from: api, to: user, y: 300, label: "token", variant: dashed, markerEnd: open }
+                    - op: add_activation
+                      lifeline: api
+                      y0: 100
+                      y1: 240
+              newDiagram:
+                summary: Start another diagram and draw on it
+                value:
+                  ops:
+                    - op: new_diagram
+                      title: Order flow
+                    - op: add_node
+                      node: { id: cart, label: Cart, x: 0, y: 0 }
+                    - op: add_node
+                      node: { id: pay, label: Payment, x: 260, y: 0 }
+                    - op: add_edge
+                      edge: { source: cart, target: pay }
+      responses:
+        "200":
+          description: Ops applied (possibly with per-op errors)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OpsResult"
+        "202":
+          description: Accepted but the frontend did not confirm within the timeout
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  queued: { type: boolean }
+                  note: { type: string }
+        "400":
+          description: Malformed body (unreadable, oversized, invalid JSON, or `ops` is not an array)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, const: false }
+                  error: { type: string }
+        "403":
+          description: Non-loopback Host header (DNS-rebinding defense)
+        "415":
+          description: Content-Type is not application/json
+  /api/chat/{token}/diagram:
+    get:
+      summary: "In-app chat only: read the diagram a chat turn works on"
+      description: |
+        Dosik's own AI chat, on a subscription CLI, is handed these URLs for one
+        turn. External agents use `GET /api/diagram` and `POST /api/ops`.
+
+        The token names the turn, and the turn draws on the diagram the user
+        sent the message from. `404` once the turn is over; `409` when the user
+        has left that diagram (the Home tab, another tab or diagram) — the turn
+        stops instead of drawing elsewhere, and does not pick up again when the
+        user comes back to it.
+      operationId: chatReadDiagram
+      parameters:
+        - $ref: "#/components/parameters/ChatToken"
+      responses:
+        "200":
+          description: The document (images as placeholders, as `GET /api/diagram` gives them; no `project` field).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DiagramDoc"
+        "403": { description: Host header is not a loopback host }
+        "404": { description: Unknown token — the turn is over }
+        "405": { description: Wrong method for the route }
+        "409": { description: The user left the diagram this turn was drawing on }
+        "500": { description: The app could not be reached or failed answering }
+        "504": { description: The app did not answer within 3 s }
+  /api/chat/{token}/ops:
+    post:
+      summary: "In-app chat only: apply ops on the chat turn's diagram"
+      description: |
+        Same ops and the same request rules as `POST /api/ops`, applied on the
+        turn's diagram. Never creates a diagram — `409` when the user has left
+        the diagram, and `new_diagram` is refused ("only POST /api/ops can
+        start a new diagram — this edits one diagram") with the ops after it.
+      operationId: chatApplyOps
+      parameters:
+        - $ref: "#/components/parameters/ChatToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ops]
+              properties:
+                ops:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/Op"
+      responses:
+        "200":
+          description: Applied (per-op errors listed, as for `POST /api/ops`)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  applied: { type: integer }
+                  errors: { type: array, items: { type: string } }
+        "202": { description: The app did not confirm within 3 s — read the diagram to confirm }
+        "400": { description: Malformed body }
+        "403": { description: Host header is not a loopback host }
+        "404": { description: Unknown token — the turn is over }
+        "405": { description: Wrong method for the route }
+        "409": { description: The user left the diagram this turn was drawing on }
+        "415": { description: Content-Type is not application/json }
+        "500": { description: The app could not be reached or failed answering }
+components:
+  parameters:
+    ChatToken:
+      name: token
+      in: path
+      required: true
+      description: The chat turn's token (letters, digits and `-`, at most 64)
+      schema: { type: string, pattern: "^[A-Za-z0-9-]{1,64}$" }
+  schemas:
+    ShapeKind:
+      type: string
+      description: >-
+        `frame` is a titled backdrop area (its label is the title): it has no
+        connection handles, so add_edge rejects it as an endpoint, and
+        update_node refuses to change a frame's shape or to turn any other shape
+        into one. It is drawn behind everything (new frames default to z -2).
+        In the app, dragging a frame carries the shapes wholly inside it; over
+        the bridge, moving it moves only the frame.
+      enum: [rect, rounded, ellipse, diamond, parallelogram, cylinder, hexagon, sticky, text, lifeline, anchor, fragment, frame, class, icon, image, entity]
+    IconId:
+      description: |
+        An id from the built-in architecture icon set. With `shape: icon` it is the node's
+        glyph, drawn with the label underneath (default 96×96); on a box shape (rect, rounded,
+        ellipse, diamond, parallelogram, cylinder, hexagon, sticky) it sits above the label in
+        the colour's deep tone (beside the label in a box under 64px tall). Ids are only ever
+        added, never removed.
+      type: string
+      enum: [database, server, cloud, user, queue, cache, storage, function, api, browser, mobile, lock, mail, scheduler, container, balancer, service, document, search, internet, users, gateway, firewall, shield, key, certificate, network, dns, iot, stream, pipeline, backup, disk, cpu, cluster, laptop, desktop, robot, code, terminal, git, bug, config, log, folder, table, graph, chart, metrics, bell, chat, calendar, card, bank, cart, location, image, video]
+    PaletteColor:
+      description: >-
+        Node colour. Shapes are borderless tinted tiles: the colour tints the tile and its icon,
+        the label stays ink. `mono` (a warm grey tile) is the default for new shapes; `ink` is a
+        near-black tile with white text (inverted in the dark theme) — keep it for the one key
+        node. On a line the colour is the stroke and its label.
+      type: string
+      enum: [mono, violet, blue, teal, green, amber, rose, gray, ink]
+    EdgeVariant:
+      type: string
+      enum: [solid, dashed, dotted, dashdot]
+    EdgePathStyle:
+      type: string
+      enum: [orthogonal, straight, curved]
+    MarkerShape:
+      type: string
+      description: "`one`, `zero-one`, `one-many` and `zero-many` are the ERD crow's-foot ends: exactly one, zero or one, one or many, zero or many."
+      enum: [none, arrow, open, circle, diamond, bar, many, triangle, diamond-open, one, zero-one, one-many, zero-many]
+    MarkerSize:
+      type: string
+      enum: [sm, md, lg]
+    Point:
+      type: object
+      required: [x, y]
+      properties:
+        x: { type: number }
+        y: { type: number }
+    NodeInput:
+      type: object
+      description: Node fields for add_node. `id` is generated when omitted; shape defaults to `rect` and color to `mono`.
+      required: [label]
+      properties:
+        id: { type: string }
+        label: { type: string }
+        shape: { $ref: "#/components/schemas/ShapeKind", default: rect }
+        color: { $ref: "#/components/schemas/PaletteColor", default: mono }
+        icon:
+          description: "With `shape: icon` the glyph itself (defaults to `server`). On a box shape (rect, rounded, ellipse, diamond, parallelogram, cylinder, hexagon, sticky) an icon above the label (beside it in a box under 64px tall — give the box 70–90 height to stack it). Rejected on other shapes."
+          $ref: "#/components/schemas/IconId"
+        badge:
+          type: string
+          maxLength: 16
+          description: "Box shapes (rect, rounded, ellipse, diamond, parallelogram, cylinder, hexagon, sticky) and frames. Short text in a tag inside the top-left corner — a version, a status (`v2`, `NEW`); on a frame the tag sits in its top border, at the right. One to three digits (`1`, `12`) draw as a numbered step circle on the top-right corner instead. Text the badge would cover moves down past it. Trimmed, runs of whitespace collapsed, then at most 16 characters."
+        description:
+          type: string
+          maxLength: 300
+          description: "Box shapes only. Smaller text under the label (line breaks kept). Trimmed, then at most 300 characters. The box does not grow — give it more height (e.g. 80–100) when you add one."
+        columns:
+          type: array
+          items: { type: string }
+          description: "Only with `shape: entity` (an ERD table). One raw line per column: name, type, then PK / FK / UK — e.g. `id uuid PK`, `customer_id uuid FK`. The box grows to fit, so leave width/height unset."
+        src:
+          type: string
+          description: "Required with `shape: image`, rejected on other shapes. A base64 data URL of a png, jpeg, gif or webp picture (`data:image/png;base64,…`), at most 1.5 MB decoded. The picture fills the node; its label is not drawn (it is the alt text, used in Markdown/Mermaid). Size the node to the picture's proportions. An `elided:…` placeholder from `GET /api/diagram` is refused here — it stands for a picture already on some node."
+        x: { type: number, default: 0 }
+        y: { type: number, default: 0 }
+        width: { type: number }
+        height: { type: number }
+    NodePatch:
+      type: object
+      description: Partial node update for update_node.
+      properties:
+        label: { type: string }
+        shape: { $ref: "#/components/schemas/ShapeKind" }
+        color: { $ref: "#/components/schemas/PaletteColor" }
+        icon:
+          description: "The glyph of a `shape: icon` node, or a box shape's icon. `\"\"` removes a box's icon."
+          oneOf:
+            - $ref: "#/components/schemas/IconId"
+            - type: string
+              const: ""
+        badge:
+          type: string
+          maxLength: 16
+          description: "Box shapes and frames. `\"\"` removes it."
+        description:
+          type: string
+          maxLength: 300
+          description: "Box shapes only. `\"\"` removes it."
+        columns:
+          type: array
+          items: { type: string }
+          description: "Only valid when the node is (or becomes) `shape: entity` — replaces all columns; one raw line each (`id uuid PK`)."
+        src:
+          type: string
+          description: "Only valid when the node is (or becomes) `shape: image` — a new picture, same rules as add_node. A node cannot become an image without one; one turned into another shape drops its picture. The node's own `elided:…` placeholder (from `GET /api/diagram`) means \"keep the picture\"."
+        x: { type: number }
+        y: { type: number }
+        width: { type: number }
+        height: { type: number }
+        activations:
+          type: array
+          description: Lifeline only — replaces all activation bars.
+          items: { $ref: "#/components/schemas/Activation" }
+        fragmentKind:
+          type: string
+          enum: [alt, loop, opt, par, critical]
+          description: >-
+            Fragment only — the operator set into the frame's top border. A fragment
+            is a backdrop with no connection handles: add_edge rejects it as an
+            endpoint, and a node with edges cannot be switched to shape=fragment.
+        branches:
+          type: integer
+          minimum: 2
+          maximum: 5
+          description: Fragment only, alt — number of equal branches split by dashed dividers.
+        z:
+          type: number
+          description: >-
+            Paint order; lower is further back. Negative puts a node below the edge
+            layer, which is how fragment frames sit behind messages (new fragments
+            default to -1, new frames to -2).
+        stereotype:
+          type: string
+          description: >-
+            Class only — the «stereotype» shown above the name. Stored without the
+            guillemets; they are added when rendering, and a value that already has
+            them is unwrapped. Blank clears it.
+        isAbstract:
+          type: boolean
+          description: Class only — draws the class name in italic.
+        attributes:
+          type: array
+          items: { type: string }
+          description: >-
+            Class only — replaces the attribute compartment. One raw signature line
+            per entry ("+ name: string"); a leading + - # ~ is drawn quieter as the UML
+            visibility marker. Blank lines are dropped, line breaks inside an entry
+            are folded, and an empty result removes the compartment (it is not
+            drawn). The box height grows to fit.
+        methods:
+          type: array
+          items: { type: string }
+          description: Class only — same rules as `attributes`, for the method compartment.
+        destroyY:
+          type: [number, "null"]
+          description: >-
+            Lifeline only — UML destroy marker (X) at this y, relative to the node
+            top. The dashed line stops here. Must be within the line
+            (header height 40 .. node height); out-of-range values are rejected.
+            Send null to clear the marker.
+    Activation:
+      type: object
+      description: Activation bar on a lifeline; y offsets are px relative to the node top, y0 < y1.
+      required: [y0, y1]
+      properties:
+        y0: { type: number }
+        y1: { type: number }
+    EdgeStyle:
+      type: object
+      properties:
+        label: { type: string }
+        labelStart: { type: string }
+        labelEnd: { type: string }
+        variant: { $ref: "#/components/schemas/EdgeVariant" }
+        color: { $ref: "#/components/schemas/PaletteColor" }
+        width: { type: number, description: "Line width in px. Leave unset for the default (1.25). 1.6 was the default before and is read as unset — a line sent or loaded with it becomes a default line." }
+        opacity: { type: number }
+        animated: { type: boolean }
+        pathStyle: { $ref: "#/components/schemas/EdgePathStyle" }
+        markerStart: { $ref: "#/components/schemas/MarkerShape" }
+        markerEnd:
+          $ref: "#/components/schemas/MarkerShape"
+          description: "Omitted on add_edge, a new line ends in the open chevron (`open`); a sequence message — from add_message, or an add_edge between two lifelines — keeps the filled UML `arrow`. In a document given to set_diagram (a file's contents) an omitted end is the file format's `arrow`, as when the file is opened."
+        markerSize: { $ref: "#/components/schemas/MarkerSize" }
+        waypoints:
+          type: array
+          items: { $ref: "#/components/schemas/Point" }
+    EdgeInput:
+      allOf:
+        - type: object
+          required: [source, target]
+          properties:
+            id: { type: string }
+            source: { type: string, description: Source node id }
+            target: { type: string, description: Target node id }
+        - $ref: "#/components/schemas/EdgeStyle"
+    Op:
+      oneOf:
+        - $ref: "#/components/schemas/AddNodeOp"
+        - $ref: "#/components/schemas/UpdateNodeOp"
+        - $ref: "#/components/schemas/DeleteNodeOp"
+        - $ref: "#/components/schemas/AddEdgeOp"
+        - $ref: "#/components/schemas/UpdateEdgeOp"
+        - $ref: "#/components/schemas/DeleteEdgeOp"
+        - $ref: "#/components/schemas/AddMessageOp"
+        - $ref: "#/components/schemas/AddActivationOp"
+        - $ref: "#/components/schemas/SetTitleOp"
+        - $ref: "#/components/schemas/LayoutOp"
+        - $ref: "#/components/schemas/GroupOp"
+        - $ref: "#/components/schemas/UngroupOp"
+        - $ref: "#/components/schemas/ClearOp"
+        - $ref: "#/components/schemas/SetDiagramOp"
+        - $ref: "#/components/schemas/NewDiagramOp"
+      discriminator:
+        propertyName: op
+        mapping:
+          add_node: "#/components/schemas/AddNodeOp"
+          update_node: "#/components/schemas/UpdateNodeOp"
+          delete_node: "#/components/schemas/DeleteNodeOp"
+          add_edge: "#/components/schemas/AddEdgeOp"
+          update_edge: "#/components/schemas/UpdateEdgeOp"
+          delete_edge: "#/components/schemas/DeleteEdgeOp"
+          add_message: "#/components/schemas/AddMessageOp"
+          add_activation: "#/components/schemas/AddActivationOp"
+          set_title: "#/components/schemas/SetTitleOp"
+          layout: "#/components/schemas/LayoutOp"
+          group: "#/components/schemas/GroupOp"
+          ungroup: "#/components/schemas/UngroupOp"
+          clear: "#/components/schemas/ClearOp"
+          set_diagram: "#/components/schemas/SetDiagramOp"
+          new_diagram: "#/components/schemas/NewDiagramOp"
+    AddNodeOp:
+      type: object
+      required: [op, node]
+      properties:
+        op: { type: string, const: add_node }
+        node: { $ref: "#/components/schemas/NodeInput" }
+    UpdateNodeOp:
+      type: object
+      description: >-
+        Moving or resizing a node (x/y/width/height) may also clear stale
+        `waypoints` on its connected orthogonal edges — waypoints are kept only
+        while they don't bend the path more than rerouting would.
+      required: [op, id, set]
+      properties:
+        op: { type: string, const: update_node }
+        id: { type: string }
+        set: { $ref: "#/components/schemas/NodePatch" }
+    DeleteNodeOp:
+      type: object
+      description: Deletes the node and every edge connected to it.
+      required: [op, id]
+      properties:
+        op: { type: string, const: delete_node }
+        id: { type: string }
+    AddEdgeOp:
+      type: object
+      description: >-
+        The sides each end attaches to are picked from where the two shapes are.
+        When a side already holds other ends, the new end takes a free spot along
+        it (16px apart, in the order of where the lines come from, so they do not
+        cross); the ends already there do not move.
+      required: [op, edge]
+      properties:
+        op: { type: string, const: add_edge }
+        edge: { $ref: "#/components/schemas/EdgeInput" }
+    UpdateEdgeOp:
+      type: object
+      required: [op, id, set]
+      properties:
+        op: { type: string, const: update_edge }
+        id: { type: string }
+        set: { $ref: "#/components/schemas/EdgeStyle" }
+    DeleteEdgeOp:
+      type: object
+      required: [op, id]
+      properties:
+        op: { type: string, const: delete_edge }
+        id: { type: string }
+    AddMessageOp:
+      type: object
+      description: |
+        Horizontal sequence message between two lifelines at absolute canvas y
+        (clamped to both lifelines' line ranges; errors when the ranges do not
+        overlap). `from === to` draws a self-message loop. Prefer this over
+        add_edge for lifelines — handles and horizontal snap are computed for you.
+
+        Found/lost messages: at most one of `from`/`to` may be a point `{x}`
+        instead of a lifeline id — an invisible anchor (rendered as a UML ●
+        endpoint dot) is created at that x on the message's y. Example:
+        `{from: {x: 40}, to: "api", y: 180}` is a found message into `api`;
+        `{from: "api", to: {x: 640}, y: 220}` is a lost message out of it.
+        Both ends as points are rejected (use add_edge for free arrows).
+      required: [op, message]
+      properties:
+        op: { type: string, const: add_message }
+        message:
+          type: object
+          required: [from, to, y]
+          properties:
+            id: { type: string }
+            from:
+              description: Source lifeline node id, or a point `{x}` (found message)
+              oneOf:
+                - type: string
+                - $ref: "#/components/schemas/MessageEndpointPoint"
+            to:
+              description: Target lifeline node id, or a point `{x}` (lost message)
+              oneOf:
+                - type: string
+                - $ref: "#/components/schemas/MessageEndpointPoint"
+            y: { type: number, description: Absolute canvas y of the message }
+            label: { type: string }
+            variant: { $ref: "#/components/schemas/EdgeVariant" }
+            markerEnd: { $ref: "#/components/schemas/MarkerShape" }
+    MessageEndpointPoint:
+      type: object
+      description: Off-diagram endpoint of a found/lost message; y comes from `message.y`.
+      required: [x]
+      properties:
+        x: { type: number, description: Absolute canvas x of the endpoint dot }
+    AddActivationOp:
+      type: object
+      description: Appends an activation bar to a lifeline (y offsets relative to the node top).
+      required: [op, lifeline, y0, y1]
+      properties:
+        op: { type: string, const: add_activation }
+        lifeline: { type: string, description: Lifeline node id }
+        y0: { type: number }
+        y1: { type: number }
+    SetTitleOp:
+      type: object
+      required: [op, title]
+      properties:
+        op: { type: string, const: set_title }
+        title: { type: string }
+    LayoutOp:
+      type: object
+      description: |
+        Arranges shapes automatically (layered layout, dagre). Each edge points one
+        rank down (`TB`), up (`BT`), right (`LR`) or left (`RL`) the way its arrowhead points — an
+        edge whose only head is at the source end counts as running target
+        to source; the arrangement starts at the shapes' old
+        top-left corner. Edges on moved shapes get their sides picked again and lose
+        their bends (an end attached to a lifeline at a height keeps it); ends that
+        share a side are spread along it, in the order of where they come from. Lifelines,
+        fragment frames and anchors are never moved — a sequence diagram has its own
+        layout — and the arranged block moves clear of them and of any shape not
+        being arranged. Shapes with no edge between them line up along the direction
+        too — a column for TB/BT, a row for LR/RL — in the order they already read that
+        way (BT from the bottom, RL from the right). The block always starts at the old
+        top-left corner and moves clear downward (TB/BT) or rightward (LR/RL).
+        A frame that held arranged shapes grows to hold them again, and moves
+        with the block when the block has to move clear of something.
+        Rejected when fewer than two shapes would move.
+      required: [op]
+      properties:
+        op: { type: string, const: layout }
+        direction:
+          type: string
+          enum: [TB, BT, LR, RL]
+          description: "TB (top to bottom, default), BT (bottom to top), LR (left to right) or RL (right to left)."
+        ids:
+          type: array
+          items: { type: string }
+          description: Only these nodes (two or more). Omitted, every shape that is not part of a sequence diagram. A lifeline, fragment, frame or anchor among them is rejected — to arrange what a frame holds, list the shapes inside it (the app's toolbar does that for a selected frame).
+    GroupOp:
+      type: object
+      description: |
+        Binds shapes into one group: in the app, clicking one selects them all and
+        they move together (double-click picks one). One level only — groups the
+        shapes already belong to are folded into this one. The group id lands on
+        each member as `data.groupId` (read it back from `GET /api/diagram`).
+        Anchors (a free arrow's ends) cannot be grouped.
+      required: [op, ids]
+      properties:
+        op: { type: string, const: group }
+        ids:
+          type: array
+          minItems: 2
+          items: { type: string }
+        id:
+          type: string
+          minLength: 1
+          maxLength: 64
+          description: The group's id; generated when omitted. Rejected when a group with this id already holds other shapes.
+    UngroupOp:
+      type: object
+      description: Releases a group — its shapes stay where they are. A leftover id on a single shape (its partner deleted) is cleared too.
+      required: [op, id]
+      properties:
+        op: { type: string, const: ungroup }
+        id: { type: string, description: "A group id, as in a member's `data.groupId`." }
+    ClearOp:
+      type: object
+      description: Removes all nodes and edges of the diagram. After the batch, the viewport follows what the document ended with — the origin (0, 0 at 100%) if it is still empty, otherwise fitted to the content — so shapes added in the same batch land in view.
+      required: [op]
+      properties:
+        op: { type: string, const: clear }
+    SetDiagramOp:
+      type: object
+      description: "Replaces the whole diagram — title, nodes and edges (one undo step in the app brings the previous one back). A diagram is one canvas: a `doc` with a `pages` key is refused (\"set_diagram: a document with pages is not supported — a diagram is one canvas (send nodes and edges)\"). After the batch, the viewport fits what the document ended with (zooming out as needed, never in past 100%); an empty result returns it to the origin."
+      required: [op, doc]
+      properties:
+        op: { type: string, const: set_diagram }
+        doc: { $ref: "#/components/schemas/DiagramDoc" }
+    NewDiagramOp:
+      type: object
+      description: |
+        Starts another library diagram in a new tab, the active one; the ops
+        after it in the batch go to it. Only `POST /api/ops` takes it — a chat
+        turn edits the diagram it was sent from, and the MCP server's `file`
+        mode edits one file. Errors (the ops after it are then not applied):
+        `title` not a string → "new_diagram: title must be a string"; a
+        `folder` that is not a listed folder → "new_diagram: no folder '<id>'";
+        a save that fails → "new_diagram: could not create a diagram — <reason>".
+      required: [op]
+      properties:
+        op: { type: string, const: new_diagram }
+        title: { type: string, description: 'The new diagram''s title — blank or left out: "Untitled Diagram".' }
+        folder:
+          type: string
+          description: "The folder to save it in, at any depth (a project or a folder inside one) — an id from `project.path` of `GET /api/diagram`. Left out: the folder of the diagram on screen, else the one Home shows, else the project picked on Home, else the most recently edited project."
+    DiagramDoc:
+      type: object
+      description: "A diagram — one canvas. A document with a `pages` key (several pages, never shipped) does not open anywhere."
+      required: [nodes, edges]
+      properties:
+        version: { type: number, const: 1 }
+        title: { type: string }
+        nodes:
+          type: array
+          items: { type: object }
+        edges:
+          type: array
+          items: { type: object }
+    OpsResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        applied: { type: integer, description: Number of ops applied }
+        errors:
+          type: array
+          items: { type: string }
+        project:
+          $ref: "#/components/schemas/ProjectRef"
+    ProjectRef:
+      description: |
+        The library **diagram** the ops were applied to (a project is the folder
+        the diagram sits in) — the active tab's.
+        `null` when that document is an external file (opened with Open) or the
+        Home tab's blank. Ops arriving while the Home tab is active create a new
+        diagram in a new tab first — in the project Home shows (unless it is a
+        stray listing with no folder), else the one
+        picked on Home, else the most recently edited one — so this is always
+        set in that case.
+      oneOf:
+        - type: "null"
+        - type: object
+          required: [id, title, path]
+          properties:
+            id: { type: string }
+            title: { type: string }
+            path:
+              type: array
+              description: "The folders the diagram is in, from its top project down to the folder that holds it — `[]` while the library listing does not have it yet (a diagram just made). Their ids are what `new_diagram.folder` takes."
+              items:
+                type: object
+                required: [id, name]
+                properties:
+                  id: { type: string }
+                  name: { type: string }

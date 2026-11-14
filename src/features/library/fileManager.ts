@@ -1,0 +1,14 @@
+import { isMacPlatform } from "../../shared/lib/windowChrome";
+
+/**
+ * "Show in …" with the OS's name for its file manager (#238 D10, owner
+ * decision 2026-11-11): one set of words for the library menus and Home's
+ * path card — macOS Finder, Windows File Explorer, anything else a file
+ * manager.
+ */
+export const showInLabel = (userAgent: string = navigator.userAgent): string => {
+  // the app's one Mac test: the traffic lights and the shortcuts read it too
+  if (isMacPlatform(userAgent)) return "Show in Finder";
+  if (userAgent.includes("Windows")) return "Show in File Explorer";
+  return "Show in File Manager";
+};
