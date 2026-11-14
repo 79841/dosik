@@ -31,3 +31,7 @@ dist-mcp-view
 
 # Python (design/ scripts)
 __pycache__/
+
+# Local-only: private working notes, and worktrees kept inside the clone
+/.workbench
+.worktrees/

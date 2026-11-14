@@ -1,0 +1,19 @@
+# Files allowed to contain Korean (Hangul). The repository is English; these
+# keep Korean only as test data, because the test is about Korean text.
+# scripts/check-public.mjs fails on Korean in any other file. Add a file here
+# only for test data, never for comments, test titles, or messages.
+
+# keyboard shortcuts on a Korean layout (key vs. code)
+src/features/chrome/__tests__/appKeymap.test.ts
+# multibyte labels through SVG/URI encoding and Mermaid ERD parsing
+src/features/export/__tests__/fixtures/allShapes.ts
+src/features/export/__tests__/image.test.ts
+src/features/export/__tests__/mermaidParse.test.ts
+src/features/export/__tests__/vectorSvg.test.ts
+# CJK text width, wrapping, and first-letter badges
+src/shared/lib/__tests__/classShape.test.ts
+src/shared/lib/__tests__/projectBadge.test.ts
+src/shared/lib/__tests__/textLayout.test.ts
+# UTF-8 boundaries in CLI output, folder name length in characters
+src-tauri/src/chat.rs
+src-tauri/src/library.rs

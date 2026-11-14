@@ -1,10 +1,10 @@
 name: CI
 
-# Runs on every push to main — the published source — and on request. Jobs run
-# only in the public repository.
+# Runs on every branch push and on request; a newer push to the same branch
+# cancels the run still in progress. Jobs run only in this repository, not in forks.
 on:
   push:
-    branches: [main]
+    branches: ["**"]
   workflow_dispatch:
 
 concurrency:
@@ -15,6 +15,26 @@ permissions:
   contents: read
 
 jobs:
+  public:
+    name: Public tree (privacy · English · commit messages)
+    if: github.repository == '79841/dosik'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Check the tree
+        run: node scripts/check-public.mjs
+
+      # every commit on this branch that the last release (main) does not have
+      - name: Check commit messages
+        run: node scripts/check-public.mjs --messages origin/main..HEAD
+
   frontend:
     name: Frontend (lint · typecheck · test · coverage)
     if: github.repository == '79841/dosik'

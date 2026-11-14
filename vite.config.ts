@@ -26,8 +26,13 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri`, and local folders that hold
+      //    other checkouts and notes (.worktrees, .workbench)
+      ignored: ["**/src-tauri/**", "**/.worktrees/**", "**/.workbench/**"],
     },
+  },
+  // scan only this checkout's page for dependencies, not the copies in .worktrees
+  optimizeDeps: {
+    entries: ["index.html"],
   },
 }));

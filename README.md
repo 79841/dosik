@@ -111,4 +111,4 @@ Port: `DOSIK_PORT` (default 4517).
 
 ## Contributing and license
 
-This repository publishes the source only; it does not accept issues or pull requests. Licensed under [MIT](LICENSE).
+Development happens in this repository, but it does not accept issues or pull requests. Licensed under [MIT](LICENSE).
