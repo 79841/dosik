@@ -34,6 +34,7 @@ import { connectDrag, useCanvasUiStore } from "./canvasUiStore";
 import { liftForView } from "./canvasLifts";
 import { ConnectionLine } from "./ConnectionLine";
 import { connectionLanding, isDot } from "./connectionLanding";
+import { inAutoPanZone, snapDrop } from "./dragSnap";
 import { DropNodeMenu } from "./DropNodeMenu";
 import { EdgeContextMenu } from "./EdgeContextMenu";
 import { NodeContextMenu } from "./NodeContextMenu";
@@ -142,6 +143,19 @@ const pointer = (e: React.MouseEvent) => ({
 
 /** middle button only — see the note on `panOnDrag` below */
 const PAN_BUTTONS = [1];
+
+/** the grid a dragged shape lands on */
+const SNAP_GRID: [number, number] = [8, 8];
+
+/**
+ * Where a mouse or touch event happened. A touch is read off the finger that
+ * changed — on a touchend the one let go, which `touches` no longer lists.
+ */
+const clientOf = (event: MouseEvent | TouchEvent): { x: number; y: number } | null => {
+  if ("clientX" in event) return { x: event.clientX, y: event.clientY };
+  const touch = event.changedTouches[0] ?? event.touches[0];
+  return touch ? { x: touch.clientX, y: touch.clientY } : null;
+};
 
 export const DiagramCanvas = () => {
   const nodes = useDiagramStore((s) => s.nodes);
@@ -365,10 +379,8 @@ export const DiagramCanvas = () => {
         });
         return;
       }
-      const client =
-        "clientX" in event
-          ? { x: event.clientX, y: event.clientY }
-          : { x: event.changedTouches[0]!.clientX, y: event.changedTouches[0]!.clientY };
+      const client = clientOf(event);
+      if (!client) return;
       const flow = screenToFlowPosition(client);
       setDropMenu({
         fromId: state.fromNode.id,
@@ -382,32 +394,128 @@ export const DiagramCanvas = () => {
     [screenToFlowPosition, setDropMenu, handleConnect],
   );
 
-  const onNodeDrag = useCallback((_: MouseEvent | TouchEvent, node: Node) => {
+  /*
+   * Grid snapping pauses while a drag sits where React Flow slides the view
+   * (#228). There the view moves a fraction of a pixel every frame while a
+   * snapped shape moves in 8px steps, so the shape shook under a still
+   * pointer. Off the grid it follows the pointer; back away from the edge the
+   * grid returns, and a drop made after the pause is put back on it.
+   */
+  const leftGrid = useRef(false);
+  // the pane as it stood when the drag began — React Flow measures it once
+  // then (XYDrag's `containerBounds`) and slides by it; no layout read a frame
+  const dragPane = useRef<DOMRect | null>(null);
+  /*
+   * The pause is written to React Flow's store and nowhere else. React Flow
+   * reads snapping there on its next mousemove or auto-pan frame, which can
+   * come before React renders anything — a frame still snapped is a jump. A
+   * prop that followed the pause would reach the store only after a render
+   * (StoreUpdater, a passive effect), and a render held up past the next
+   * crossing would write the old value over the fresh one; it would also
+   * re-render the canvas at every crossing. So the prop stays on (#228) —
+   * React Flow writes a prop only when it changes.
+   */
+  const setSnap = useCallback(
+    (on: boolean) => {
+      if (rf.getState().snapToGrid !== on) rf.setState({ snapToGrid: on });
+    },
+    [rf],
+  );
+  const resumeSnap = useCallback(() => {
+    leftGrid.current = false;
+    setSnap(true);
+  }, [setSnap]);
+  /** snapping off while a node drag's pointer is where the view slides */
+  const snapAt = useCallback(
+    (client: { x: number; y: number } | null) => {
+      const pane = dragPane.current;
+      if (!pane || !client) return;
+      const sliding = inAutoPanZone(client, pane);
+      if (sliding) leftGrid.current = true;
+      setSnap(!sliding);
+    },
+    [setSnap],
+  );
+  /*
+   * The node drag in progress, from its start to its end — a fresh token per
+   * drag. Every end clears the same state (`endDrag`): the pause in snapping,
+   * what rides on the drag, the snap dot an anchor drag shows. Most drags end
+   * at React Flow's stop, but one whose shape was deleted mid-drag (Delete,
+   * ⌘X, a bridge op) is aborted and gets none — left behind, its riders
+   * would steer the next arrow-key nudge and its dot would stay on the box
+   * (#228).
+   */
+  const openDrag = useRef<object | null>(null);
+  const endDrag = useCallback(() => {
+    openDrag.current = null;
+    dragPane.current = null;
+    resumeSnap();
     const store = useDiagramStore.getState();
-    const dragged = store.nodes.find((n) => n.id === node.id);
-    if (dragged?.data.shape !== "anchor") return;
-    // show the connection points of a nearby box while dragging an anchor
-    const snap = findSnapTarget(
-      store.nodes,
-      anchorDragPoint(node),
-      [node.id],
-      undefined,
-      anchorOtherEnd(node.id),
-    );
-    // no `forAnchor`: dragged here the anchor stays under the pointer, not on the
-    // spot, so its line keeps running to it rather than to where it would land
-    useCanvasUiStore.getState().setSnapTarget(snap);
-  }, []);
+    if (store.dragRiders) store.endNodeDrag();
+    const ui = useCanvasUiStore.getState();
+    if (ui.snapTarget) ui.setSnapTarget(null);
+  }, [resumeSnap]);
+  /*
+   * Every pointer step of a node drag counts, not only those React Flow
+   * reports: it calls `onNodeDrag` when a shape changes cell, so a step into
+   * the zone that kept it in place went unseen until an auto-pan frame bumped
+   * it a cell — one jump (#228). Heard on the window: by the edge the
+   * pointer is often over a floating panel, out of the canvas's reach.
+   *
+   * The press ending ends the pause at once, stop or no stop: React Flow's
+   * store's snapping also steers screenToFlowPosition, resizing and the
+   * arrow-key nudge. The drag's auto-pan goes off with it. React Flow's abort
+   * skips its `cancelAnimationFrame`, so an aborted drag in the zone kept
+   * sliding the view without end; the loop reads `autoPanOnNodeDrag` each
+   * frame and stops itself on false. A drag that ends normally has cancelled
+   * it already, and the next drag's start turns it back on. Dosik passes no
+   * such prop, so React Flow never writes the field over.
+   *
+   * The rest of the drag's end waits a turn. A stop that does come follows
+   * the release — React Flow ends on the same press's mouseup or touchend —
+   * and still needs `leftGrid` to snap the drop and the riders to carry; a
+   * drag still open once that has had its turn was aborted.
+   *
+   * Only the primary pointer counts — a mouse's, a pen's, the first finger's.
+   * Another finger touching and lifting mid-drag leaves React Flow dragging,
+   * and its release ended the drag state: the riders stopped following
+   * (#228).
+   */
+  useEffect(() => {
+    const onMove = (e: globalThis.PointerEvent) => {
+      if (e.isPrimary) snapAt({ x: e.clientX, y: e.clientY });
+    };
+    const onRelease = (e: globalThis.PointerEvent) => {
+      if (!e.isPrimary) return;
+      const drag = openDrag.current;
+      if (!drag) return;
+      dragPane.current = null;
+      setSnap(true);
+      rf.setState({ autoPanOnNodeDrag: false });
+      setTimeout(() => {
+        if (openDrag.current === drag) endDrag();
+      }, 0);
+    };
+    window.addEventListener("pointermove", onMove, true);
+    window.addEventListener("pointerup", onRelease, true);
+    window.addEventListener("pointercancel", onRelease, true);
+    return () => {
+      window.removeEventListener("pointermove", onMove, true);
+      window.removeEventListener("pointerup", onRelease, true);
+      window.removeEventListener("pointercancel", onRelease, true);
+    };
+  }, [snapAt, setSnap, rf, endDrag]);
 
-  const onNodeDragStop = useCallback((_: MouseEvent | TouchEvent, node: Node, dragged: Node[]) => {
-    // what rode along moved too — read before the drag state is cleared
-    const riders = Object.values(useDiagramStore.getState().dragRiders ?? {}).flat();
-    useDiagramStore.getState().endNodeDrag();
-    const store = useDiagramStore.getState();
-    const draggedNode = store.nodes.find((n) => n.id === node.id);
-    if (!draggedNode) return;
-    if (draggedNode.data.shape === "anchor") {
-      // near a box: attach the arrow to the highlighted connection point
+  const onNodeDrag = useCallback(
+    (event: MouseEvent | TouchEvent, node: Node) => {
+      // auto-pan frames pass the last pointer event — still where the pointer
+      // is, and past the window's edge maybe the only word of it
+      snapAt(clientOf(event));
+
+      const store = useDiagramStore.getState();
+      const dragged = store.nodes.find((n) => n.id === node.id);
+      if (dragged?.data.shape !== "anchor") return;
+      // show the connection points of a nearby box while dragging an anchor
       const snap = findSnapTarget(
         store.nodes,
         anchorDragPoint(node),
@@ -415,18 +523,54 @@ export const DiagramCanvas = () => {
         undefined,
         anchorOtherEnd(node.id),
       );
-      useCanvasUiStore.getState().setSnapTarget(null);
-      if (snap) store.rewireAnchorToNode(draggedNode.id, snap.nodeId, snap.handle);
-    }
-    // moving lifelines (or found/lost anchors) tilts their messages — snap
-    // them level again. covers multi-select drags where either end co-moves
-    // multi-select drags where either end co-moves, and what a frame carried
-    const movedMessageEnds = [...dragged.map((n) => n.id), ...riders].filter((id) => {
-      const shape = store.nodes.find((sn) => sn.id === id)?.data.shape;
-      return shape === "lifeline" || shape === "anchor";
-    });
-    if (movedMessageEnds.length > 0) store.resnapMessages(movedMessageEnds);
-  }, []);
+      // no `forAnchor`: dragged here the anchor stays under the pointer, not on the
+      // spot, so its line keeps running to it rather than to where it would land
+      useCanvasUiStore.getState().setSnapTarget(snap);
+    },
+    [snapAt],
+  );
+
+  const onNodeDragStop = useCallback(
+    // `node` can be missing: a shape deleted mid-drag and let go without a
+    // move is never aborted, and React Flow's stop then has none to pass
+    (_: MouseEvent | TouchEvent, node: Node | undefined, dragged: Node[]) => {
+      // a drop after a pause in snapping lands on the grid (#228) — a plain
+      // move, no commit: the drag opened its undo step, and riders still ride
+      const moves = leftGrid.current ? snapDrop(dragged, SNAP_GRID) : [];
+      if (moves.length > 0) {
+        useDiagramStore
+          .getState()
+          .onNodesChange(moves.map((m) => ({ ...m, type: "position", dragging: false })));
+      }
+      // what rode along moved too — read before the drag state is cleared
+      const riders = Object.values(useDiagramStore.getState().dragRiders ?? {}).flat();
+      // before anything that may find no shape: a stop for one deleted mid-drag ends the drag too
+      endDrag();
+      const store = useDiagramStore.getState();
+      const draggedNode = node && store.nodes.find((n) => n.id === node.id);
+      if (!node || !draggedNode) return;
+      if (draggedNode.data.shape === "anchor") {
+        // near a box: attach the arrow to the connection point it showed
+        const snap = findSnapTarget(
+          store.nodes,
+          anchorDragPoint(node),
+          [node.id],
+          undefined,
+          anchorOtherEnd(node.id),
+        );
+        if (snap) store.rewireAnchorToNode(draggedNode.id, snap.nodeId, snap.handle);
+      }
+      // moving lifelines (or found/lost anchors) tilts their messages — snap
+      // them level again. Covers multi-select drags where either end co-moves,
+      // and what a frame carried
+      const movedMessageEnds = [...dragged.map((n) => n.id), ...riders].filter((id) => {
+        const shape = store.nodes.find((sn) => sn.id === id)?.data.shape;
+        return shape === "lifeline" || shape === "anchor";
+      });
+      if (movedMessageEnds.length > 0) store.resnapMessages(movedMessageEnds);
+    },
+    [endDrag],
+  );
 
   /*
    * Groups (#171): a click on a grouped shape selects the group; a second
@@ -480,16 +624,15 @@ export const DiagramCanvas = () => {
       onPointerLeave={() => {
         hoverAt.current = null;
       }}
-      // the box and the drag close on every way a press ends — React Flow
-      // skips onSelectionEnd on a cancel and onNodeDragStop on an aborted drag,
-      // and a box left open would filter every later selection (#172).
-      // Bubble phase: onSelectionEnd reads the box first
+      // the box closes on every way a press ends — React Flow skips
+      // onSelectionEnd on a cancel, and a box left open would filter every
+      // later selection (#172). Bubble phase: onSelectionEnd reads the box
+      // first. A node drag's end is the window's release (`endDrag`)
       onPointerUp={() => {
         boxStart.current = null;
       }}
       onPointerCancel={() => {
         boxStart.current = null;
-        if (useDiagramStore.getState().dragRiders) useDiagramStore.getState().endNodeDrag();
       }}
     >
       <ReactFlow
@@ -508,9 +651,17 @@ export const DiagramCanvas = () => {
         onConnect={handleConnect}
         onConnectEnd={onConnectEnd}
         isValidConnection={isValidConnection}
-        onNodeDragStart={(_, __, dragged) => {
+        onNodeDragStart={(event, __, dragged) => {
           // a press that turns into a drag moves the group, it does not step in
           stepIn.current = null;
+          // whatever the last drag left — its release never came — goes first
+          endDrag();
+          openDrag.current = {};
+          dragPane.current = rf.getState().domNode?.getBoundingClientRect() ?? null;
+          // unless it starts where the view slides
+          snapAt(clientOf(event));
+          // the last release turned auto-pan off — see the window listeners
+          if (!rf.getState().autoPanOnNodeDrag) rf.setState({ autoPanOnNodeDrag: true });
           commit();
           useDiagramStore.getState().beginNodeDrag(dragged.map((n) => n.id));
         }}
@@ -574,8 +725,9 @@ export const DiagramCanvas = () => {
         }}
         connectionLineComponent={ConnectionLine}
         connectionMode={ConnectionMode.Loose}
+        // on: a drag's pause near the edge goes to React Flow's store alone (`setSnap`)
         snapToGrid
-        snapGrid={[8, 8]}
+        snapGrid={SNAP_GRID}
         // no fitView: the app always mounts with an empty canvas, so the
         // prop's deferred one-shot fit would fire on the FIRST added shape
         // and yank the viewport (#58). The viewport follows document swaps

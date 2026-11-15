@@ -99,6 +99,9 @@ importers:
       '@vitest/ui':
         specifier: ^4.1.12
         version: 4.1.12(vitest@4.1.12)
+      '@xyflow/system':
+        specifier: 0.0.82
+        version: 0.0.82
       jsdom:
         specifier: ^29.1.1
         version: 29.1.1
