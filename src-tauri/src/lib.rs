@@ -6,6 +6,7 @@ mod images;
 mod library;
 mod open_requests;
 mod secrets;
+mod tray;
 
 use base64::Engine;
 use tauri::State;
@@ -81,7 +82,7 @@ fn write_binary_file(path: String, base64: String) -> Result<(), String> {
 }
 
 /// Brings the running window forward when a second launch is refused (#109).
-fn focus_existing(app: &tauri::AppHandle) {
+pub(crate) fn focus_existing(app: &tauri::AppHandle) {
     use tauri::Manager;
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.unminimize();
@@ -133,6 +134,11 @@ pub fn run() {
         .manage(open_requests::OpenRequests::default())
         .setup(|app| {
             bridge::start_agent_server(app.handle().clone());
+            // the menu-bar icon and its menu (#213) — an extra: if the platform
+            // cannot make one, the app still starts
+            if let Err(error) = tray::create(app.handle()) {
+                eprintln!("dosik: no menu-bar icon: {error}");
+            }
             // launched with a file on the command line (#149)
             if let Ok(cwd) = std::env::current_dir() {
                 open_requests::request_open(

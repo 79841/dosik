@@ -19,6 +19,7 @@ import { useAutosave } from "./features/library/useAutosave";
 import { useFlushOnClose } from "./features/library/useFlushOnClose";
 import { useOpenRequests } from "./features/library/useOpenRequests";
 import { useTabSession } from "./features/library/tabSession";
+import { useTrayActions } from "./features/library/useTrayActions";
 import { ShapePalette } from "./features/palette/ShapePalette";
 import { LibrarySidebar } from "./features/sidebar/LibrarySidebar";
 import { SidebarPeek } from "./features/sidebar/SidebarPeek";
@@ -89,6 +90,7 @@ const Shell = () => {
   // the OS's open requests wait in Rust's queue while this is down, and are
   // taken when "Try again" mounts it again
   useOpenRequests();
+  useTrayActions();
   // moves plain-text API keys into the system keychain, then loads them (#17)
   useEffect(() => {
     void initAiKeys();

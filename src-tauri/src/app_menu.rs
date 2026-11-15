@@ -63,17 +63,25 @@ pub fn on_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: tauri::menu
                 let _ = window.close();
             }
         }
-        Some(MenuAction::Quit) => match app.get_webview_window("main") {
-            // closing the last window ends the app, after the front end's say
-            Some(window) => {
-                if window.close().is_err() {
-                    app.exit(0);
-                }
-            }
-            // nothing to ask: Quit must still quit
-            None => app.exit(0),
-        },
+        Some(MenuAction::Quit) => request_quit(app),
         None => {}
+    }
+}
+
+/// Quit through the window's close request, so the front end can ask about
+/// unsaved external files and flush the autosave (`useFlushOnClose`) —
+/// `app.exit` would skip both. Closing the last window ends the app. With no
+/// window to ask, or when the request fails, Quit must still quit. Shared by
+/// Dosik ▸ Quit Dosik and the menu-bar icon's Quit Dosik.
+pub fn request_quit<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
+    match app.get_webview_window("main") {
+        Some(window) => {
+            if window.close().is_err() {
+                app.exit(0);
+            }
+        }
+        None => app.exit(0),
     }
 }
 

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 36 36">
+  <!-- Dosik menu-bar icon (#213): the app icon's four shapes as a one-colour
+       template — macOS paints it to suit a light or dark menu bar. The square
+       and the diamond (white in the app icon) are filled; the quarter circle
+       and the circle (grey there) are outlined, so the diagonal contrast
+       survives in a single colour. 36px = 18pt at 2x. -->
+  <rect x="2" y="2" width="14" height="14" rx="3" fill="#000"/>
+  <path d="M21 3H22.5A11.5 11.5 0 0 1 33 13.5V14A1 1 0 0 1 32 15H21A1 1 0 0 1 20 14V4A1 1 0 0 1 21 3Z" fill="none" stroke="#000" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="9" cy="27" r="6.3" fill="none" stroke="#000" stroke-width="2"/>
+  <path d="M27 19.6L34.4 27L27 34.4L19.6 27Z" fill="#000" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/>
+</svg>
