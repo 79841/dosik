@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { CHROME_DARK, CHROME_LIGHT } from "../../../shared/lib/palette";
-import { mountDiagramView, type ToolResult, type ViewHost } from "../diagramView";
+import {
+  CHROME_DARK,
+  CHROME_LIGHT,
+  SURFACE_DARK,
+  SURFACE_LIGHT,
+} from "../../../shared/lib/palette";
+import { DRAWING_META_KEY, mountDiagramView, type ToolResult, type ViewHost } from "../diagramView";
 
 const svg = (label: string) =>
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" width="100%"><text>${label}</text></svg>`;
@@ -96,14 +101,16 @@ describe("In-chat app (#202)", () => {
     expect(root.querySelector('[role="alert"]')?.textContent).toContain("Dosik is not running");
   });
 
-  it("Shows the reason even when the call itself fails", async () => {
+  it("When the call itself fails, says in words that the request didn't get through, and what to do — not the host's error (#251)", async () => {
     const host = fakeHost("light");
     host.callServerTool.mockRejectedValueOnce(new Error("Tool call refused"));
     const view = mountDiagramView(root, host);
     view.showResult(drawn("first"));
     button("Refresh")?.click();
     await settle();
-    expect(root.querySelector('[role="alert"]')?.textContent).toContain("Tool call refused");
+    expect(root.querySelector('[role="alert"]')?.textContent).toBe(
+      "Couldn't refresh — showing the last drawing. The request didn't get through to Dosik; ask for it again in the chat.",
+    );
   });
 
   it("When the first result is an error, shows only the reason, with no drawing", () => {
@@ -152,6 +159,168 @@ describe("In-chat app (#202)", () => {
     view.showResult(drawn("light one"));
     await settle();
     expect(shownText()).toBe("light one");
+  });
+
+  it("Draws the carried picture in the host theme right away — no call, nothing held (#251)", async () => {
+    const host = fakeHost("dark");
+    const view = mountDiagramView(root, host);
+    view.showResult(drawn("light one", { alternate: { theme: "dark", svg: svg("dark one") } }));
+    expect(shownText()).toBe("dark one");
+    await settle();
+    expect(host.callServerTool).not.toHaveBeenCalled();
+    expect(root.hasAttribute("data-backdrop")).toBe(false);
+  });
+
+  it("Swaps to the carried picture when the host theme changes, and back — no call (#251)", async () => {
+    const host = fakeHost("light");
+    const view = mountDiagramView(root, host);
+    view.showResult(drawn("light one", { alternate: { theme: "dark", svg: svg("dark one") } }));
+    expect(shownText()).toBe("light one");
+    host.theme = "dark";
+    view.hostContextChanged();
+    expect(shownText()).toBe("dark one");
+    host.theme = "light";
+    view.hostContextChanged();
+    expect(shownText()).toBe("light one");
+    await settle();
+    expect(host.callServerTool).not.toHaveBeenCalled();
+  });
+
+  it("Ignores a carried picture that is not the other theme — and asks for one as before", async () => {
+    const host = fakeHost("dark");
+    const view = mountDiagramView(root, host);
+    view.showResult(drawn("light one", { alternate: { theme: "light", svg: svg("also light") } }));
+    await settle();
+    expect(host.callServerTool).toHaveBeenCalledWith({
+      name: "render_diagram",
+      arguments: { file: "/tmp/a.dosik.json", theme: "dark" },
+    });
+    expect(shownText()).toBe("again");
+  });
+
+  it("A Refresh out while the host theme changes still lands — in the new theme, from its own answer (#251)", async () => {
+    const host = fakeHost("light");
+    const view = mountDiagramView(root, host);
+    view.showResult(drawn("old light", { alternate: { theme: "dark", svg: svg("old dark") } }));
+    let answer: (result: ToolResult) => void = () => {};
+    host.callServerTool.mockImplementationOnce(
+      () => new Promise<ToolResult>((resolve) => (answer = resolve)),
+    );
+    button("Refresh")?.click();
+    host.theme = "dark";
+    view.hostContextChanged();
+    // the carried picture right away, and the Refresh still out
+    expect(shownText()).toBe("old dark");
+    expect(root.querySelector(".dsk-status")?.textContent).toBe("Drawing…");
+    expect(button("Refresh")?.disabled).toBe(true);
+    answer(drawn("new light", { alternate: { theme: "dark", svg: svg("new dark") } }));
+    await settle();
+    expect(shownText()).toBe("new dark");
+    expect(host.callServerTool).toHaveBeenCalledTimes(1);
+    expect(button("Refresh")?.disabled).toBe(false);
+  });
+
+  it("A new call takes the last alert down, and a failure shows it anew — pressing again is seen (#251)", async () => {
+    const host = fakeHost("light");
+    host.callServerTool.mockRejectedValueOnce(new Error("refused"));
+    const view = mountDiagramView(root, host);
+    view.showResult(drawn("first"));
+    button("Refresh")?.click();
+    await settle();
+    const alert = root.querySelector('[role="alert"]') as HTMLElement;
+    expect(alert.hidden).toBe(false);
+    host.callServerTool.mockImplementationOnce(() => new Promise<ToolResult>(() => {}));
+    button("Refresh")?.click();
+    expect(alert.hidden).toBe(true);
+    expect(root.querySelector(".dsk-status")?.textContent).toBe("Drawing…");
+  });
+
+  it("A theme redraw of its own does not take down the model's error — only the user's own calls do", async () => {
+    const host = fakeHost("light");
+    const view = mountDiagramView(root, host);
+    view.showResult(drawn("first"));
+    view.showResult({ isError: true, content: [{ type: "text", text: "Dosik is not running" }] });
+    host.callServerTool.mockImplementationOnce(() => new Promise<ToolResult>(() => {}));
+    host.theme = "dark";
+    view.hostContextChanged();
+    expect(host.callServerTool).toHaveBeenCalledTimes(1);
+    const alert = root.querySelector('[role="alert"]') as HTMLElement;
+    expect(alert.hidden).toBe(false);
+    expect(alert.textContent).toBe("Dosik is not running");
+  });
+
+  it("The alert can be dismissed — it would otherwise stay over the drawing on a host that never passes calls on (#251)", async () => {
+    const host = fakeHost("light");
+    host.callServerTool.mockRejectedValueOnce(new Error("refused"));
+    const view = mountDiagramView(root, host);
+    view.showResult(drawn("first"));
+    button("Refresh")?.click();
+    await settle();
+    const alert = root.querySelector('[role="alert"]') as HTMLElement;
+    const dismiss = alert.querySelector('button[aria-label="Dismiss"]') as HTMLButtonElement;
+    expect(dismiss.title).toBe("Dismiss");
+    dismiss.click();
+    expect(alert.hidden).toBe(true);
+    // focus goes back to the drawing, not to the page
+    expect(document.activeElement).toBe(root.querySelector(".dsk-stage"));
+    expect(shownText()).toBe("first");
+  });
+
+  it("On its own backdrop the view is a card in the drawing's theme — controls and focus rings go with it; the document keeps the host's (#251)", async () => {
+    const host = fakeHost("dark");
+    host.callServerTool.mockRejectedValueOnce(new Error("refused"));
+    const view = mountDiagramView(root, host);
+    view.showResult(drawn("light one"));
+    await settle();
+    expect(root.dataset.backdrop).toBe("light");
+    expect(root.dataset.theme).toBe("light");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
+    const css = document.getElementById("dsk-view-style")?.textContent ?? "";
+    // Dosik's own colours on the card, whatever form the host's variables take
+    expect(css).toMatch(
+      /\.dsk-view\[data-backdrop\] \{ --dsk-surface: var\(--panel\);[^}]*--dsk-fg: var\(--muted\);[^}]*--dsk-ring: var\(--ink\); \}/,
+    );
+    expect(css.match(/outline: 2px solid var\(--dsk-ring\)/g)).toHaveLength(3);
+    expect(css).toContain(
+      ".dsk-view[data-backdrop] .dsk-stage { border-radius: var(--dsk-radius); }",
+    );
+  });
+
+  it("A carried picture is as untrusted as the first — it is cleaned the same way, and a malformed one is ignored", async () => {
+    const host = fakeHost("dark");
+    const view = mountDiagramView(root, host);
+    const tainted = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10" onload="alert(1)"><script>alert(2)</script><text onclick="alert(3)">dark one</text></svg>`;
+    view.showResult(drawn("light one", { alternate: { theme: "dark", svg: tainted } }));
+    expect(shownText()).toBe("dark one");
+    const shown = root.querySelector(".dsk-stage > svg") as SVGSVGElement;
+    expect(shown.querySelector("script")).toBeNull();
+    expect(shown.hasAttribute("onload")).toBe(false);
+    expect(shown.querySelector("text")?.hasAttribute("onclick")).toBe(false);
+    for (const alternate of [null, "dark", 7, [], { theme: "dark", svg: 7 }]) {
+      host.callServerTool.mockClear();
+      view.showResult(drawn("light again", { alternate }));
+      await settle();
+      // nothing usable carried: asked for, as before
+      expect(host.callServerTool).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("A drawing left in the other theme lays its own backdrop, and drops it once redrawn in the host theme (#251)", async () => {
+    const host = fakeHost("light");
+    const view = mountDiagramView(root, host);
+    view.showResult(drawn("light one"));
+    let answer: (result: ToolResult) => void = () => {};
+    host.callServerTool.mockImplementationOnce(
+      () => new Promise<ToolResult>((resolve) => (answer = resolve)),
+    );
+    host.theme = "dark";
+    view.hostContextChanged();
+    // while the redraw is out, the light drawing keeps its own page under it
+    expect(root.dataset.backdrop).toBe("light");
+    answer(drawn("dark one", { theme: "dark" }));
+    await settle();
+    expect(shownText()).toBe("dark one");
+    expect(root.hasAttribute("data-backdrop")).toBe(false);
   });
 
   it("Redraws when the host theme changes — no call when it is the same", async () => {
@@ -283,6 +452,24 @@ describe("In-chat app (#202)", () => {
     await settle();
     expect(shownText()).toBe("dark one");
     expect(button("Refresh")?.disabled).toBe(false);
+  });
+
+  it("Keeps the drawing on screen as it is — zoom too — when the host theme comes back during a redraw", async () => {
+    const host = fakeHost("dark");
+    const view = mountDiagramView(root, host);
+    view.showResult(drawn("dark one", { theme: "dark" }));
+    const shown = () => root.querySelector(".dsk-stage > svg") as SVGSVGElement;
+    const before = shown();
+    button("Zoom in")?.click();
+    const zoomed = before.getAttribute("viewBox");
+    host.callServerTool.mockImplementationOnce(() => new Promise<ToolResult>(() => {}));
+    host.theme = "light";
+    view.hostContextChanged();
+    host.theme = "dark";
+    view.hostContextChanged();
+    expect(shown()).toBe(before);
+    expect(shown().getAttribute("viewBox")).toBe(zoomed);
+    expect(root.hasAttribute("data-backdrop")).toBe(false);
   });
 
   it("Sends only one request even if the same theme notice arrives again during a redraw", async () => {
@@ -563,7 +750,7 @@ describe("In-chat app (#202)", () => {
   it("When the host does not state a theme, lays down the drawing theme's backdrop — without one it may be invisible (#202)", () => {
     const view = mountDiagramView(root, fakeHost(undefined));
     view.showResult(drawn("first", { theme: "dark" }));
-    expect(root.hasAttribute("data-backdrop")).toBe(true);
+    expect(root.dataset.backdrop).toBe("dark");
     expect(root.dataset.theme).toBe("dark");
     const themed = document.createElement("div");
     document.body.append(themed);
@@ -571,7 +758,12 @@ describe("In-chat app (#202)", () => {
     withTheme.showResult(drawn("second"));
     expect(themed.hasAttribute("data-backdrop")).toBe(false);
     const css = document.getElementById("dsk-view-style")?.textContent ?? "";
-    expect(css).toMatch(/\.dsk-view\[data-backdrop\] \.dsk-stage \{ background: var\(--bg\)/);
+    expect(css).toContain(
+      `.dsk-view[data-backdrop="light"] .dsk-stage { background: ${SURFACE_LIGHT.canvasBg}; }`,
+    );
+    expect(css).toContain(
+      `.dsk-view[data-backdrop="dark"] .dsk-stage { background: ${SURFACE_DARK.canvasBg}; }`,
+    );
   });
 
   it("The control buttons float over the drawing and show on hover or focus", () => {
@@ -657,5 +849,108 @@ describe("In-chat app (#202)", () => {
     expect(hover).toContain("color-mix(in srgb, var(--dsk-button)");
     expect(hover).toContain("#000");
     expect(hover).not.toMatch(/border|box-shadow/);
+  });
+});
+
+describe("The picture rides in the result's _meta — kept from a model that reads structuredContent (#251)", () => {
+  /** the server's result: facts in structuredContent, pictures in `_meta` */
+  const carried = (label: string, extra: Record<string, unknown> = {}): ToolResult => ({
+    content: [{ type: "text", text: "Showing" }],
+    structuredContent: {
+      theme: "light",
+      title: "Flow",
+      shapes: 2,
+      connectors: 1,
+      target: { file: "/tmp/a.dosik.json" },
+    },
+    _meta: { [DRAWING_META_KEY]: { svg: svg(label), theme: "light", ...extra } },
+  });
+
+  it("Draws the picture from _meta", () => {
+    const view = mountDiagramView(root, fakeHost("light"));
+    view.showResult(carried("from meta"));
+    expect(shownText()).toBe("from meta");
+    expect(root.querySelector(".dsk-stage")?.getAttribute("aria-label")).toBe("Diagram: Flow");
+  });
+
+  it("Shows the other theme _meta carried for a dark host, with no call", () => {
+    const host = fakeHost("dark");
+    const view = mountDiagramView(root, host);
+    view.showResult(carried("light one", { alternate: { theme: "dark", svg: svg("dark one") } }));
+    expect(shownText()).toBe("dark one");
+    expect(host.callServerTool).not.toHaveBeenCalled();
+  });
+
+  it("Prefers _meta's picture over one in structuredContent", () => {
+    const view = mountDiagramView(root, fakeHost("light"));
+    view.showResult({ ...carried("from meta"), structuredContent: drawn("old").structuredContent });
+    expect(shownText()).toBe("from meta");
+  });
+
+  it("Takes theme and the other picture from _meta alone when it holds the picture", () => {
+    const host = fakeHost("dark");
+    const view = mountDiagramView(root, host);
+    // an old dark picture left in structuredContent does not stand in for the one _meta lacks
+    view.showResult({
+      ...carried("light one"),
+      structuredContent: drawn("old", { alternate: { theme: "dark", svg: svg("old dark") } })
+        .structuredContent,
+    });
+    expect(shownText()).not.toBe("old dark");
+  });
+
+  it("Falls back to structuredContent when _meta holds no picture — an older server", () => {
+    const view = mountDiagramView(root, fakeHost("light"));
+    view.showResult({ ...drawn("older"), _meta: { [DRAWING_META_KEY]: { svg: 42 } } });
+    expect(shownText()).toBe("older");
+  });
+
+  it("Draws a Refresh answer that carries its picture in _meta", async () => {
+    const host = fakeHost("light");
+    host.callServerTool.mockResolvedValueOnce(carried("refreshed"));
+    const view = mountDiagramView(root, host);
+    view.showResult(carried("first"));
+    button("Refresh")?.click();
+    await settle();
+    expect(shownText()).toBe("refreshed");
+  });
+});
+
+describe("A result whose picture the host left behind (#251)", () => {
+  /** the facts arrived, the `_meta` with the picture did not */
+  const factsOnly = (): ToolResult => ({
+    content: [{ type: "text", text: 'Showing "Flow" in the chat — 2 shapes, 1 connector.' }],
+    structuredContent: {
+      theme: "light",
+      title: "Flow",
+      shapes: 2,
+      connectors: 1,
+      target: { file: "/tmp/a.dosik.json" },
+    },
+  });
+
+  it("Asks once for the picture, and draws it", async () => {
+    const host = fakeHost("light");
+    host.callServerTool.mockResolvedValueOnce(drawn("fetched"));
+    const view = mountDiagramView(root, host);
+    view.showResult(factsOnly());
+    await settle();
+    expect(host.callServerTool).toHaveBeenCalledTimes(1);
+    expect(host.callServerTool).toHaveBeenCalledWith({
+      name: "render_diagram",
+      arguments: { file: "/tmp/a.dosik.json", theme: "light" },
+    });
+    expect(shownText()).toBe("fetched");
+  });
+
+  it("Says the request didn't get through when the host passes no calls either — never the summary as an error", async () => {
+    const host = fakeHost("dark");
+    host.callServerTool.mockRejectedValueOnce(new Error("IPC not available for MCP tool call"));
+    const view = mountDiagramView(root, host);
+    view.showResult(factsOnly());
+    await settle();
+    const alert = root.querySelector(".dsk-alert-text")?.textContent ?? "";
+    expect(alert).toMatch(/didn't get through to Dosik/);
+    expect(alert).not.toMatch(/Showing/);
   });
 });

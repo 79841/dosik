@@ -378,6 +378,29 @@ describe("MCP server runtime (#2)", () => {
       return { headless, render };
     };
 
+    const createRenderSvgFor = (files: Record<string, string>) => {
+      const headless = vi.fn(async (args: string[]) => {
+        if (args.includes("--report")) {
+          files[args[args.indexOf("--export") + 1] as string] = "<svg/>";
+          files[args[args.indexOf("--report") + 1] as string] = JSON.stringify({ view: VIEW });
+        }
+        return "";
+      });
+      const render = createRenderSvg({
+        headless: headless as never,
+        readDiagram: (async () => ({ nodes: [], edges: [] })) as never,
+        exists: (p: string) => p in files,
+        read: async (p: string) => {
+          if (!(p in files)) throw new Error(`ENOENT: ${p}`);
+          return files[p] as string;
+        },
+        write: async () => {},
+        remove: async () => {},
+        makeTempDir: async () => "/tmp/r",
+      } as never);
+      return { headless, render };
+    };
+
     it("renders the file as SVG fitted to the width", async () => {
       const { headless, render } = setup({ "/tmp/a.dosik.json": "{}" });
       await expect(render({ file: "/tmp/a.dosik.json", theme: "dark" })).resolves.toEqual({
@@ -420,6 +443,86 @@ describe("MCP server runtime (#2)", () => {
       await expect(render({ file: "/tmp/none.dosik.json", theme: "light" })).rejects.toThrow(
         /No such file/,
       );
+    });
+
+    it("draws the same input in the other theme too when asked — the chat view's alternate (#251)", async () => {
+      const files: Record<string, string> = {};
+      const { headless, render } = setup(files);
+      headless.mockImplementation(async (args: string[]) => {
+        const out = args[args.indexOf("--export") + 1] as string;
+        files[out] = `<svg>${args[args.indexOf("--theme") + 1]}</svg>`;
+        if (args.includes("--report")) {
+          files[args[args.indexOf("--report") + 1] as string] = JSON.stringify({ view: VIEW });
+        }
+        return "";
+      });
+      await expect(render({ port: 4517, theme: "light", alternate: "dark" })).resolves.toEqual({
+        svg: "<svg>light</svg>",
+        view: VIEW,
+        alternate: { theme: "dark", svg: "<svg>dark</svg>" },
+      });
+      const [main, other] = callsOf(headless).map((call) => call[0] as string[]);
+      // the open canvas is written once and both pictures are drawn from that copy
+      expect(main?.[1]).toBe("/tmp/r/diagram.dosik.json");
+      expect(other?.slice(0, 4)).toEqual([
+        "--in",
+        "/tmp/r/diagram.dosik.json",
+        "--export",
+        "/tmp/r/alternate.svg",
+      ]);
+      expect(other).toEqual(expect.arrayContaining(["--theme", "dark", "--background", "none"]));
+      // the summary comes from one run
+      expect(other).not.toContain("--report");
+    });
+
+    it("still returns the drawing when only the other theme's run fails — that picture is extra (#251)", async () => {
+      const files: Record<string, string> = { "/tmp/a.dosik.json": "{}" };
+      const { headless, render } = setup(files);
+      headless.mockImplementation(async (args: string[]) => {
+        if (!args.includes("--report")) throw new Error("spawn EAGAIN");
+        files[args[args.indexOf("--export") + 1] as string] = "<svg/>";
+        files[args[args.indexOf("--report") + 1] as string] = JSON.stringify({ view: VIEW });
+        return "";
+      });
+      await expect(
+        render({ file: "/tmp/a.dosik.json", theme: "light", alternate: "dark" }),
+      ).resolves.toEqual({ svg: "<svg/>", view: VIEW });
+    });
+
+    it("still returns the drawing when the other theme's file can't be read — that picture is extra (#251)", async () => {
+      const files: Record<string, string> = { "/tmp/a.dosik.json": "{}" };
+      const { headless, render } = createRenderSvgFor(files);
+      await expect(
+        render({ file: "/tmp/a.dosik.json", theme: "light", alternate: "dark" }),
+      ).resolves.toEqual({ svg: "<svg/>", view: VIEW });
+      expect(callsOf(headless)).toHaveLength(2);
+    });
+
+    it("lets both runs end before the temp folder goes, and fails with the drawing's own error (#251)", async () => {
+      const order: string[] = [];
+      let finishOther: () => void = () => {};
+      const render = createRenderSvg({
+        headless: (async (args: string[]) => {
+          if (args.includes("--report")) throw new Error("render failed");
+          await new Promise<void>((resolve) => (finishOther = resolve));
+          order.push("other done");
+          return "";
+        }) as never,
+        readDiagram: (async () => ({ nodes: [], edges: [] })) as never,
+        exists: () => true,
+        read: async () => "",
+        write: async () => {},
+        remove: (async () => {
+          order.push("removed");
+        }) as never,
+        makeTempDir: async () => "/tmp/r",
+      } as never);
+      const rendering = render({ file: "/tmp/a.dosik.json", theme: "light", alternate: "dark" });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(order).toEqual([]);
+      finishOther();
+      await expect(rendering).rejects.toThrow("render failed");
+      expect(order).toEqual(["other done", "removed"]);
     });
   });
 });

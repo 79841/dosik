@@ -3,6 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { createMcpServer } from "../mcp/mcpServer.mjs";
+import { DRAWING_META_KEY } from "../mcp/tools.mjs";
 import { VIEW_MIME, VIEW_URI, viewHtml } from "../mcp/view.mjs";
 
 const SVG = '<svg xmlns="http://www.w3.org/2000/svg"></svg>';
@@ -44,7 +45,7 @@ describe("MCP server wiring — follows the capabilities the client declares (#2
     expect((await client.listResources()).resources).toEqual([]);
   });
 
-  it("client with UI: tools point to the app, results are a summary + structuredContent, resources are readable", async () => {
+  it("client with UI: tools point to the app, results are a summary with the picture in _meta, resources are readable", async () => {
     const client = await connect(true);
     const { tools } = await client.listTools();
     expect(tools.find((t) => t.name === "render_diagram")?._meta).toEqual({
@@ -55,7 +56,10 @@ describe("MCP server wiring — follows the capabilities the client declares (#2
     expect(result.content).toEqual([
       { type: "text", text: 'Showing "Flow" in the chat — 1 shape, 0 connectors.' },
     ]);
-    expect(result.structuredContent).toMatchObject({ svg: SVG, target: {} });
+    expect(result.structuredContent).toMatchObject({ target: {} });
+    expect(result.structuredContent).not.toHaveProperty("svg");
+    // the picture survives the transport for the view (#251)
+    expect(result._meta).toMatchObject({ [DRAWING_META_KEY]: { svg: SVG } });
     expect((await client.listResources()).resources.map((r) => r.uri)).toEqual([VIEW_URI]);
     const read = await client.readResource({ uri: VIEW_URI });
     expect(read.contents).toEqual([

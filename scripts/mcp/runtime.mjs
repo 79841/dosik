@@ -308,7 +308,9 @@ export const createFileMode = ({
  * to fit its container, because the reader is a chat, not a file browser.
  *
  * Returns the SVG with the run's own account of what it drew (`view`: title
- * and counts — #202).
+ * and counts — #202). With `alternate`, the same input is also drawn in that
+ * theme (`alternate: { theme, svg }`) — the chat view switches themes without
+ * calling back, which some hosts never pass on (#251).
  */
 export const createRenderSvg = ({
   headless = createHeadless(),
@@ -321,8 +323,8 @@ export const createRenderSvg = ({
   remove = rm,
   makeTempDir = () => mkdtemp(join(tmpdir(), "dosik-mcp-")),
 } = {}) => {
-  /** @param {{ port?: number; file?: string; theme: string }} request */
-  return async ({ port, file, theme }) => {
+  /** @param {{ port?: number; file?: string; theme: string; alternate?: string }} request */
+  return async ({ port, file, theme, alternate }) => {
     if (file !== undefined && !exists(file)) throw new ToolError(`No such file: ${file}`);
     const dir = await makeTempDir();
     try {
@@ -333,22 +335,39 @@ export const createRenderSvg = ({
       }
       const out = join(dir, "diagram.svg");
       const report = join(dir, "report.json");
-      await headless([
-        "--in",
-        input,
-        "--export",
-        out,
-        "--report",
-        report,
-        "--theme",
-        theme,
-        "--size",
-        "fit",
-        // a chat draws it on its own background, light or dark (#202)
-        "--background",
-        "none",
+      const alternateOut = join(dir, "alternate.svg");
+      const draw = (/** @type {string} */ to, /** @type {string} */ inTheme, extra = []) =>
+        headless([
+          "--in",
+          input,
+          "--export",
+          to,
+          ...extra,
+          "--theme",
+          inTheme,
+          "--size",
+          "fit",
+          // a chat draws it on its own background, light or dark (#202)
+          "--background",
+          "none",
+        ]);
+      // one input for both, so the two pictures are of the same diagram. Both
+      // runs end before the folder goes; the other theme is extra — if its run
+      // fails, the drawing goes without it
+      const [main, other] = await Promise.allSettled([
+        draw(out, theme, ["--report", report]),
+        alternate === undefined
+          ? Promise.resolve(undefined)
+          : draw(alternateOut, alternate).then(() => read(alternateOut)),
       ]);
-      return { svg: await read(out), view: JSON.parse(await read(report)).view };
+      if (main.status === "rejected") throw main.reason;
+      return {
+        svg: await read(out),
+        view: JSON.parse(await read(report)).view,
+        ...(other.status === "fulfilled" && other.value !== undefined
+          ? { alternate: { theme: alternate, svg: other.value } }
+          : {}),
+      };
     } finally {
       await remove(dir, { recursive: true, force: true });
     }

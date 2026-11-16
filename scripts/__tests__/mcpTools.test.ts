@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import { applyOpsSchema, loadSpec, opNames } from "../mcp/opSchema.mjs";
 import { HEADLESS_FORMATS, WINDOWED_FORMATS } from "../../src/features/headless/cli";
+import { DRAWING_META_KEY as VIEW_DRAWING_KEY } from "../../src/features/mcp-view/diagramView";
 import { elideImages as elideImagesTs } from "../../src/shared/lib/imageData";
 import {
+  DRAWING_META_KEY,
   elideImages,
   FILE_FORMATS,
   liveDeps,
@@ -587,11 +589,31 @@ describe("get_diagram returns images as placeholders (#155)", () => {
       ]);
       expect(content[0]?.text).not.toContain("<svg");
       expect(structuredContent).toEqual({
-        svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
         theme: "light",
         ...VIEW,
         target: { file: "/tmp/a.dosik.json" },
       });
+    });
+
+    it("keeps the picture out of structuredContent — a host may show that to the model (#251)", async () => {
+      const out = (await runTool(
+        "render_diagram",
+        { file: "/tmp/a.dosik.json" },
+        deps(),
+        UI,
+      )) as McpResult;
+      expect(JSON.stringify(out.result.structuredContent)).not.toContain("<svg");
+      // the view's part of the result, which hosts pass to the view and not to the model
+      expect(out.result._meta).toEqual({
+        [DRAWING_META_KEY]: {
+          svg: '<svg xmlns="http://www.w3.org/2000/svg"></svg>',
+          theme: "light",
+        },
+      });
+    });
+
+    it("names the picture's key as the view reads it", () => {
+      expect(DRAWING_META_KEY).toBe(VIEW_DRAWING_KEY);
     });
 
     it("leaves file out of target when the open app is the target — no open-in-app button needed", async () => {
@@ -599,7 +621,55 @@ describe("get_diagram returns images as placeholders (#155)", () => {
       expect(out.result.structuredContent).toMatchObject({ theme: "dark", target: {} });
     });
 
-    it("accepts up to 4MB on UI hosts, since the SVG never passes through the model", async () => {
+    it("carries the drawing in the other theme too — the app matches the host without calling back (#251)", async () => {
+      const d = deps({
+        renderSvg: vi.fn(async () => ({
+          svg: "<svg>light</svg>",
+          view: VIEW,
+          alternate: { theme: "dark", svg: "<svg>dark</svg>" },
+        })),
+      });
+      const out = (await runTool(
+        "render_diagram",
+        { file: "/tmp/a.dosik.json" },
+        d,
+        UI,
+      )) as McpResult;
+      expect(out.result._meta[DRAWING_META_KEY]).toEqual({
+        svg: "<svg>light</svg>",
+        theme: "light",
+        alternate: { theme: "dark", svg: "<svg>dark</svg>" },
+      });
+      // neither picture goes where a model may read it
+      expect(JSON.stringify(out.result.content)).not.toContain("<svg");
+      expect(JSON.stringify(out.result.structuredContent)).not.toContain("<svg");
+    });
+
+    it("leaves the other theme out when both would pass 4MB — the drawing itself still goes (#251)", async () => {
+      const d = deps({
+        renderSvg: vi.fn(async () => ({
+          svg: `<svg>${"x".repeat(2500 * 1024)}</svg>`,
+          view: VIEW,
+          alternate: { theme: "dark", svg: `<svg>${"y".repeat(2500 * 1024)}</svg>` },
+        })),
+      });
+      const out = (await runTool(
+        "render_diagram",
+        { file: "/tmp/a.dosik.json" },
+        d,
+        UI,
+      )) as McpResult;
+      expect(out.result._meta[DRAWING_META_KEY]).toMatchObject({ theme: "light" });
+      expect(out.result._meta[DRAWING_META_KEY]).not.toHaveProperty("alternate");
+    });
+
+    it("asks a text host's render for one theme only — its SVG follows the page itself", async () => {
+      const d = deps();
+      await runTool("render_diagram", { file: "/tmp/a.dosik.json" }, d);
+      expect(d.renderSvg).toHaveBeenCalledWith({ file: "/tmp/a.dosik.json", theme: "auto" });
+    });
+
+    it("accepts a drawing up to 4MB for the chat view", async () => {
       const big = (kb: number) =>
         deps({
           renderSvg: vi.fn(async () => ({
@@ -634,7 +704,7 @@ describe("get_diagram returns images as placeholders (#155)", () => {
     it("targets the open app for file: null — in the UI form too", async () => {
       const d = deps();
       const out = (await runTool("render_diagram", { file: null }, d, UI)) as McpResult;
-      expect(d.renderSvg).toHaveBeenCalledWith({ port: 4517, theme: "light" });
+      expect(d.renderSvg).toHaveBeenCalledWith({ port: 4517, theme: "light", alternate: "dark" });
       expect(out.result.structuredContent).toMatchObject({ target: {} });
     });
 
@@ -669,7 +739,7 @@ describe("get_diagram returns images as placeholders (#155)", () => {
   describe("theme auto (#202)", () => {
     const UI = { view: true };
 
-    it("draws auto as light in the UI form — the app redraws in the host theme", async () => {
+    it("draws auto as light in the UI form, with the other theme alongside — the app shows the host's (#251)", async () => {
       const d = deps();
       const out = (await runTool(
         "render_diagram",
@@ -677,10 +747,18 @@ describe("get_diagram returns images as placeholders (#155)", () => {
         d,
         UI,
       )) as McpResult;
-      expect(d.renderSvg).toHaveBeenCalledWith({ file: "/tmp/a.dosik.json", theme: "light" });
+      expect(d.renderSvg).toHaveBeenCalledWith({
+        file: "/tmp/a.dosik.json",
+        theme: "light",
+        alternate: "dark",
+      });
       expect(out.result.structuredContent).toMatchObject({ theme: "light" });
       await runTool("render_diagram", { file: "/tmp/a.dosik.json", theme: "dark" }, d, UI);
-      expect(d.renderSvg).toHaveBeenLastCalledWith({ file: "/tmp/a.dosik.json", theme: "dark" });
+      expect(d.renderSvg).toHaveBeenLastCalledWith({
+        file: "/tmp/a.dosik.json",
+        theme: "dark",
+        alternate: "light",
+      });
     });
 
     it("says in the text-form description that auto follows the page", () => {

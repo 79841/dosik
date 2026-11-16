@@ -190,11 +190,21 @@ export const toolDefinitions = (spec = loadSpec(), { view = false } = {}) => [
 export const RENDER_LIMIT_BYTES = 256 * 1024;
 
 /**
- * In a chat view the SVG never reaches the model (`structuredContent`), so the
- * context limit above does not apply — pictures easily pass it. This bounds
- * what one message to the view carries (#202).
+ * In a chat view the SVG goes to the view alone, so the context limit above
+ * does not apply — pictures easily pass it. This bounds what one message to
+ * the view carries, both themes together (#202, #251).
  */
 export const VIEW_LIMIT_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Where a chat view's result carries the pictures: the result's `_meta`, meant
+ * for the view — a host does not show it to the model (Claude Code doesn't).
+ * Not `structuredContent` — some hosts show that to the model as data (Claude
+ * Code does), and the SVG would fill its context or pass its cap on a tool
+ * result (#251). The view reads the same key
+ * (`src/features/mcp-view/diagramView.ts`).
+ */
+export const DRAWING_META_KEY = "app.dosik/drawing";
 
 const IMAGE_DATA_URL = /^data:image\/(png|jpeg|gif|webp);base64,([A-Za-z0-9+/]+)(={0,2})$/;
 
@@ -387,15 +397,17 @@ export const runTool = async (name, args, deps, { view = false } = {}) => {
       return deps.exportFile(port, path, ...extra);
     }
     case "render_diagram": {
-      // the chat view draws in the host's theme and asks again when it differs;
-      // a lone SVG follows its page (`auto`)
+      // the chat view shows the host's theme: it gets the drawing in both, so
+      // it never has to call back for one — some hosts don't pass its calls
+      // on (#251). A lone SVG follows its page (`auto`)
       const asked = checkTheme(args?.theme ?? "auto");
       const theme = view && asked === "auto" ? "light" : asked;
+      const alternate = view ? { alternate: theme === "dark" ? "light" : "dark" } : {};
       const file = hasFile(args) ? checkFile(args.file) : undefined;
       const drawn =
         file !== undefined
-          ? await deps.renderSvg({ file, theme })
-          : await deps.renderSvg({ port: await requireBridge(deps), theme });
+          ? await deps.renderSvg({ file, theme, ...alternate })
+          : await deps.renderSvg({ port: await requireBridge(deps), theme, ...alternate });
       const bytes = Buffer.byteLength(drawn.svg, "utf8");
       if (bytes > (view ? VIEW_LIMIT_BYTES : RENDER_LIMIT_BYTES)) {
         throw new ToolError(
@@ -410,14 +422,26 @@ export const runTool = async (name, args, deps, { view = false } = {}) => {
           "The renderer did not report what it drew. Rebuild it (delete dist-cli/) and call this again.",
         );
       }
+      // both pictures past the limit: the other theme stays home, and the view
+      // asks for it when it needs it — or lays this one's own backdrop
+      const carriesAlternate =
+        drawn.alternate !== undefined &&
+        bytes + Buffer.byteLength(drawn.alternate.svg, "utf8") <= VIEW_LIMIT_BYTES;
       return new McpResult({
         content: [{ type: "text", text: viewSummaryText(drawn.view) }],
+        // what a model may read: the summary's facts, never the picture
         structuredContent: {
-          svg: drawn.svg,
           theme,
           ...drawn.view,
           // the view's "Open in Dosik" is for a file; the open canvas is already open
           target: file !== undefined ? { file } : {},
+        },
+        _meta: {
+          [DRAWING_META_KEY]: {
+            svg: drawn.svg,
+            theme,
+            ...(carriesAlternate ? { alternate: drawn.alternate } : {}),
+          },
         },
       });
     }

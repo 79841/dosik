@@ -16,8 +16,17 @@ type Theme = "light" | "dark";
 export interface ToolResult {
   content?: { type: string; text?: string }[];
   structuredContent?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
   isError?: boolean;
 }
+
+/**
+ * Where `render_diagram` puts the pictures: the result's `_meta`, meant for the
+ * view — a host does not show it to the model (Claude Code doesn't), as it may
+ * `structuredContent` (#251). The server writes the same key
+ * (`scripts/mcp/tools.mjs`).
+ */
+export const DRAWING_META_KEY = "app.dosik/drawing";
 
 export interface ViewHost {
   callServerTool(params: {
@@ -27,10 +36,12 @@ export interface ViewHost {
   getHostContext(): { theme?: Theme } | undefined;
 }
 
-/** `render_diagram`'s `structuredContent` (scripts/mcp/tools.mjs) */
+/** `render_diagram`'s result (scripts/mcp/tools.mjs) */
 interface Drawing {
   svg: string;
   theme: Theme;
+  /** the same drawing in the other theme, when the result carried it (#251) */
+  alternate?: { theme: Theme; svg: string };
   title: string;
   target: { file?: string };
 }
@@ -61,20 +72,60 @@ const NOTE_MS = 3000;
 const textOf = (result: ToolResult): string =>
   result.content?.find((part) => part.type === "text")?.text ?? "Something went wrong.";
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 /**
- * The result as a drawing, or null when it carries no SVG. The rest is the
- * server's to fill; a missing piece gets a neutral default rather than a
- * throw inside the host's notification handler (#202). An older
- * server's `page` is ignored — a diagram is one canvas (#229 D17).
+ * The result as a drawing, or null when it carries no SVG. The pictures ride
+ * in `_meta` (#251); an older server put them in `structuredContent`, which
+ * still carries the rest. That is the server's to fill; a missing piece gets a
+ * neutral default rather than a throw inside the host's notification handler
+ * (#202). An older server's `page` is ignored — a diagram is one canvas
+ * (#229 D17).
  */
-const asDrawing = (value: Record<string, unknown> | undefined): Drawing | null => {
-  if (!value || typeof value.svg !== "string") return null;
+const asDrawing = (result: ToolResult): Drawing | null => {
+  const pictures = result._meta?.[DRAWING_META_KEY];
+  // the pictures and their theme come from one place: a stray picture left in
+  // `structuredContent` never stands in for one `_meta` lacks
+  const value: Record<string, unknown> =
+    isRecord(pictures) && typeof pictures.svg === "string"
+      ? {
+          ...result.structuredContent,
+          svg: pictures.svg,
+          theme: pictures.theme,
+          alternate: pictures.alternate,
+        }
+      : { ...result.structuredContent };
+  if (typeof value.svg !== "string") return null;
   const target = value.target as Drawing["target"] | undefined;
+  const theme: Theme = value.theme === "dark" ? "dark" : "light";
+  const alternate = value.alternate as { theme?: unknown; svg?: unknown } | undefined;
+  const other: Theme = theme === "dark" ? "light" : "dark";
   return {
     svg: value.svg,
-    theme: value.theme === "dark" ? "dark" : "light",
+    theme,
+    ...(alternate?.theme === other && typeof alternate.svg === "string"
+      ? { alternate: { theme: other, svg: alternate.svg } }
+      : {}),
     title: typeof value.title === "string" ? value.title : "Diagram",
     target: typeof target?.file === "string" ? { file: target.file } : {},
+  };
+};
+
+/**
+ * `drawing` in `theme` — itself, or the other picture the result carried,
+ * keeping this one as the way back. Null when it has no picture in `theme`:
+ * then only a call can get one (#251).
+ */
+const inTheme = (drawing: Drawing, theme: Theme): Drawing | null => {
+  if (drawing.theme === theme) return drawing;
+  const { alternate } = drawing;
+  if (alternate?.theme !== theme) return null;
+  return {
+    ...drawing,
+    svg: alternate.svg,
+    theme,
+    alternate: { theme: drawing.theme, svg: drawing.svg },
   };
 };
 
@@ -92,14 +143,16 @@ const STYLE_ID = "dsk-view-style";
  * hover. Buttons start from `all: unset`: a host may style every `button`. No backdrop of its own: the drawing sits on the chat's background,
  * like the rest of the conversation (#202) — the server draws the
  * SVG without one too. The exceptions: the zoom hint, which floats over the
- * drawing, and a host that names no theme (`data-backdrop`), whose page may
- * not match the drawing's colours.
+ * drawing, and a drawing whose page may not match its colours — a host that
+ * names no theme, or a picture the view could not have in the host's theme
+ * (#251). Then `data-backdrop` names the drawing's theme, and the stage
+ * takes that theme's canvas colour.
  */
 const css = `
 body { margin: 0; }
-.dsk-view { --bg: ${SURFACE_LIGHT.canvasBg}; --panel: ${SURFACE_LIGHT.panelBg}; --ink: ${CHROME_LIGHT.ink};
+.dsk-view { --panel: ${SURFACE_LIGHT.panelBg}; --ink: ${CHROME_LIGHT.ink};
   --muted: ${CHROME_LIGHT.muted}; --line: ${CHROME_LIGHT.line}; --hover: ${CHROME_LIGHT.hover}; color: var(--ink); }
-.dsk-view[data-theme="dark"] { --bg: ${SURFACE_DARK.canvasBg}; --panel: ${SURFACE_DARK.panelBg};
+.dsk-view[data-theme="dark"] { --panel: ${SURFACE_DARK.panelBg};
   --ink: ${CHROME_DARK.ink}; --muted: ${CHROME_DARK.muted}; --line: ${CHROME_DARK.line}; --hover: ${CHROME_DARK.hover}; }
 .dsk-view {
   --dsk-surface: var(--color-background-primary, var(--panel));
@@ -111,7 +164,10 @@ body { margin: 0; }
   --dsk-radius-sm: var(--border-radius-md, 8px);
   --dsk-button: var(--color-background-secondary, var(--hover));
   --dsk-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.06));
+  --dsk-ring: var(--color-ring-primary, var(--ink));
   font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif); }
+.dsk-view[data-backdrop] { --dsk-surface: var(--panel); --dsk-hover: var(--hover); --dsk-border: var(--line);
+  --dsk-fg: var(--muted); --dsk-fg-strong: var(--ink); --dsk-button: var(--hover); --dsk-ring: var(--ink); }
 .dsk-frame { position: relative; }
 .dsk-panel { background: var(--dsk-surface); border: 1px solid var(--dsk-border); border-radius: var(--dsk-radius);
   box-shadow: var(--dsk-shadow); }
@@ -129,18 +185,26 @@ body { margin: 0; }
 .dsk-controls button[hidden] { display: none; }
 .dsk-controls button svg { display: block; width: 14px; height: 14px; flex: none; }
 .dsk-gap { height: 4px; }
-.dsk-controls button:focus-visible { outline: 2px solid var(--color-ring-primary, var(--ink)); outline-offset: 1px; }
-.dsk-stage:focus-visible { outline: 2px solid var(--color-ring-primary, var(--ink)); outline-offset: -2px; }
+.dsk-controls button:focus-visible { outline: 2px solid var(--dsk-ring); outline-offset: 1px; }
+.dsk-stage:focus-visible { outline: 2px solid var(--dsk-ring); outline-offset: -2px; }
 .dsk-status { position: absolute; left: 8px; bottom: 8px; padding: 4px 8px; font-size: 12px; color: var(--dsk-fg);
   pointer-events: none; }
 .dsk-status:empty { display: none; }
-.dsk-alert { position: absolute; left: 8px; right: 52px; bottom: 8px; padding: 8px 10px; font-size: 12px;
-  color: var(--dsk-fg-strong); }
+.dsk-alert { position: absolute; left: 8px; right: 52px; bottom: 8px; display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 4px 8px 10px; font-size: 12px; line-height: 16px; color: var(--dsk-fg-strong); }
 .dsk-alert[hidden] { display: none; }
+.dsk-alert-text { flex: 1 1 auto; min-width: 0; }
+.dsk-alert button { all: unset; box-sizing: border-box; display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; margin: -2px 0; flex: none; border-radius: 4px; color: var(--dsk-fg); cursor: pointer; }
+.dsk-alert button:hover { color: var(--dsk-fg-strong); }
+.dsk-alert button:focus-visible { outline: 2px solid var(--dsk-ring); outline-offset: 1px; }
+.dsk-alert button svg { display: block; width: 12px; height: 12px; }
 .dsk-stage { position: relative; overflow: hidden; cursor: grab; touch-action: none;
   user-select: none; -webkit-user-select: none; }
 .dsk-stage.dsk-dragging { cursor: grabbing; }
-.dsk-view[data-backdrop] .dsk-stage { background: var(--bg); }
+.dsk-view[data-backdrop] .dsk-stage { border-radius: var(--dsk-radius); }
+.dsk-view[data-backdrop="light"] .dsk-stage { background: ${SURFACE_LIGHT.canvasBg}; }
+.dsk-view[data-backdrop="dark"] .dsk-stage { background: ${SURFACE_DARK.canvasBg}; }
 .dsk-stage > svg { display: block; }
 .dsk-hint { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); padding: 8px 12px;
   font-size: 12px; color: var(--dsk-fg-strong); pointer-events: none; }
@@ -171,6 +235,7 @@ const ICONS = {
     "M16 21h3a2 2 0 0 0 2-2v-3",
   ],
   refresh: ["M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8", "M21 3v5h-5"],
+  dismiss: ["M18 6 6 18", "m6 6 12 12"],
   open: ["M15 3h6v6", "M10 14 21 3", "M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"],
 } as const;
 
@@ -238,6 +303,10 @@ export const mountDiagramView = (root: HTMLElement, host: ViewHost): DiagramView
   const alert = element("div", "dsk-alert dsk-panel");
   alert.setAttribute("role", "alert");
   alert.hidden = true;
+  const alertText = element("span", "dsk-alert-text");
+  // a host that never passes the view's calls on would leave it over the drawing for good (#251)
+  const dismissButton = button("dismiss", "Dismiss");
+  alert.append(alertText, dismissButton);
   const stage = element("div", "dsk-stage");
   stage.tabIndex = 0;
   stage.setAttribute("role", "group");
@@ -278,17 +347,27 @@ export const mountDiagramView = (root: HTMLElement, host: ViewHost): DiagramView
    * into a light chat on a dark-mode system (#202).
    */
   const applyTheme = () => {
-    const theme = hostTheme() ?? drawing?.theme ?? pending?.theme ?? "light";
+    const host = hostTheme();
+    const shown = drawing?.theme ?? pending?.theme ?? "light";
+    // a drawing sits only on a page drawn for it: a host that names no theme
+    // gives no promise its page matches (#202), and a picture left in the
+    // other theme — the redraw failed — would lose its lines on the host's
+    // page (#251). Then it brings its own backdrop.
+    const backdrop =
+      host === undefined ? shown : drawing && drawing.theme !== host ? drawing.theme : null;
+    if (backdrop) root.dataset.backdrop = backdrop;
+    else delete root.dataset.backdrop;
+    // on its own backdrop the view is a card in the drawing's theme: the
+    // controls, alert and focus rings go with it, in Dosik's own colours —
+    // the host's are for its page, and would vanish on the card (#251)
+    const theme = backdrop ?? host ?? shown;
     root.dataset.theme = theme;
-    document.documentElement.style.colorScheme = theme;
-    // a host that names no theme gives no promise its page matches the
-    // drawing's — then the drawing brings its own backdrop (#202)
-    root.toggleAttribute("data-backdrop", hostTheme() === undefined);
+    document.documentElement.style.colorScheme = host ?? theme;
   };
 
   const showAlert = (message: string | null) => {
     alert.hidden = message === null;
-    alert.textContent = message ?? "";
+    alertText.textContent = message ?? "";
   };
 
   const note = (message: string) => {
@@ -379,13 +458,26 @@ export const mountDiagramView = (root: HTMLElement, host: ViewHost): DiagramView
     return true;
   };
 
-  const call = async (name: string, args: Record<string, unknown>): Promise<ToolResult> => {
+  /**
+   * A tool call through the host. A tool that ran and failed answers with
+   * its own reason (`isError`); a throw means no answer came back from the
+   * server — the host refused the call, it timed out, the link dropped. Some
+   * hosts show the view but pass none of its calls on (#251), and their error
+   * is no help to the user ("MCP error -32603: IPC not available …"): the
+   * reason is said in words, with `instead` — what the user can do. The view
+   * may run in any host, so it names none.
+   */
+  const call = async (
+    name: string,
+    args: Record<string, unknown>,
+    instead: string,
+  ): Promise<ToolResult> => {
     try {
       return await host.callServerTool({ name, arguments: args });
-    } catch (error) {
+    } catch {
       return {
         isError: true,
-        content: [{ type: "text", text: error instanceof Error ? error.message : String(error) }],
+        content: [{ type: "text", text: `The request didn't get through to Dosik; ${instead}.` }],
       };
     }
   };
@@ -411,15 +503,21 @@ export const mountDiagramView = (root: HTMLElement, host: ViewHost): DiagramView
     refreshButton.disabled = true;
     status.textContent = "Drawing…";
     const { file } = target;
-    const result = await call("render_diagram", { ...(file !== undefined ? { file } : {}), theme });
+    const result = await call(
+      "render_diagram",
+      { ...(file !== undefined ? { file } : {}), theme },
+      "ask for it again in the chat",
+    );
     if (ticket !== latest) return "stale";
     requested = null;
     refreshButton.disabled = false;
     status.textContent = "";
-    const next = result.isError ? null : asDrawing(result.structuredContent);
-    // drawn in the theme asked for — not matched again, or a server that
-    // answered in another theme would be asked forever
-    if (next && draw(next)) return "shown";
+    const next = result.isError ? null : asDrawing(result);
+    // in the host's theme when the answer carries it — the theme may have
+    // changed while a Refresh was out (#251); else as answered, not matched
+    // again, or a server that answered in another theme would be asked forever
+    const host = hostTheme();
+    if (next && draw((host && inTheme(next, host)) || next)) return "shown";
     if (!next) {
       const reason = textOf(result);
       showAlert(drawing ? `Couldn't refresh — showing the last drawing. ${reason}` : reason);
@@ -433,13 +531,22 @@ export const mountDiagramView = (root: HTMLElement, host: ViewHost): DiagramView
     const theme = hostTheme();
     const subject = pending ?? drawing;
     if (!theme || !subject) return;
-    if (theme === (requested ?? subject.theme)) return;
-    if (theme === subject.theme) {
-      // back to the theme already in hand: the redraw in flight is moot
-      abandonRedraw();
+    const inHand = inTheme(subject, theme);
+    if (inHand === subject) {
+      // back to the theme already in hand: a redraw out for the other one is
+      // moot, and the drawing on screen stays as it is, zoom and all
+      if (requested !== null && requested !== theme) abandonRedraw();
       if (pending) draw(pending);
       return;
     }
+    if (inHand) {
+      // the other picture the result carried, with no call (#251). A Refresh
+      // still out goes on: its answer carries both themes too
+      draw(inHand);
+      if (requested !== null) status.textContent = "Drawing…";
+      return;
+    }
+    if (requested === theme) return;
     void redraw(subject.target, theme);
   };
 
@@ -451,8 +558,16 @@ export const mountDiagramView = (root: HTMLElement, host: ViewHost): DiagramView
   const showResult = (result: ToolResult) => {
     // newer than any redraw in flight
     abandonRedraw();
-    const next = result.isError ? null : asDrawing(result.structuredContent);
+    const next = result.isError ? null : asDrawing(result);
     const theme = hostTheme();
+    const facts = result.isError ? undefined : result.structuredContent?.target;
+    if (!next && isRecord(facts)) {
+      // the facts came, the picture did not — a host that left `_meta` behind
+      // (#251). One call may still fetch it; where calls do not get through
+      // either, that says so, instead of the summary standing as an error
+      void redraw(typeof facts.file === "string" ? { file: facts.file } : {}, theme ?? "light");
+      return;
+    }
     if (!next) {
       // a picture held for the host's theme is still the newest one there is
       if (pending) draw(pending);
@@ -460,8 +575,13 @@ export const mountDiagramView = (root: HTMLElement, host: ViewHost): DiagramView
       showAlert(textOf(result));
       return;
     }
-    if (!theme || theme === next.theme) {
+    if (!theme) {
       draw(next);
+      return;
+    }
+    const inHand = inTheme(next, theme);
+    if (inHand) {
+      draw(inHand);
       return;
     }
     pending = next;
@@ -472,17 +592,25 @@ export const mountDiagramView = (root: HTMLElement, host: ViewHost): DiagramView
     });
   };
 
+  dismissButton.addEventListener("click", () => {
+    showAlert(null);
+    stage.focus({ preventScroll: true });
+  });
   fitButton.addEventListener("click", fitToFrame);
   zoomInButton.addEventListener("click", () => zoomCentre(BUTTON_STEP));
   zoomOutButton.addEventListener("click", () => zoomCentre(1 / BUTTON_STEP));
   refreshButton.addEventListener("click", () => {
-    if (drawing) void redraw(drawing.target, hostTheme() ?? drawing.theme);
+    if (!drawing) return;
+    // pressing again is seen: the last alert goes, and a failure brings it back
+    showAlert(null);
+    void redraw(drawing.target, hostTheme() ?? drawing.theme);
   });
   openButton.addEventListener("click", async () => {
     const file = drawing?.target.file;
     if (file === undefined) return;
     openButton.disabled = true;
-    const result = await call("open_in_dosik", { file });
+    showAlert(null);
+    const result = await call("open_in_dosik", { file }, "ask in the chat to open it");
     openButton.disabled = false;
     if (result.isError) showAlert(`Couldn't open in Dosik. ${textOf(result)}`);
     else note("Opened in Dosik");

@@ -80,7 +80,7 @@ This adds six tools.
 - **SVG is drawn without a window.** Real vectors are built from the document with the same shape components and edge layout function (`layoutEdge`) as the canvas — no `<foreignObject>`. This is a different path from the app's Export SVG (a canvas capture)
 - **In-conversation app.** When the client says it can render MCP Apps (`ui://`), `render_diagram` opens the `ui://dosik/diagram-view` app.
   - It supports zoom and pan, Fit, Refresh, and Open in Dosik (for `file` targets); light and dark follow the host.
-  - The SVG goes only to the app; the model gets a one-line summary.
+  - The SVG, in both themes, goes only to the app (in the result's `_meta`); the model gets a one-line summary and its facts (title, shape and connector counts).
   - Other clients (such as the Claude Code CLI) get the SVG text as before.
   - Verified client: the Claude Desktop chat tab (registered in `claude_desktop_config.json`).
   - The app bundle builds itself into `dist-mcp-view/` on first use (or when its sources change).
