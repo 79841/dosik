@@ -149,7 +149,7 @@ describe("renderVectorSvg — a real vector SVG drawn without a window (#148)", 
   });
 
   it("Can be exported without a background", () => {
-    // Hollow arrowheads are still filled with the background color — what is missing is the background rectangle
+    // No background rectangle; what the canvas colour cut is cut by masks instead (transparentCuts.test.ts, #255)
     const bare = parse(renderVectorSvg(doc, { background: false }));
     expect(bare.querySelector("svg > rect")).toBeNull();
     expect(dom.querySelector("svg > rect")?.getAttribute("fill")).toBe(SURFACE_LIGHT.canvasBg);

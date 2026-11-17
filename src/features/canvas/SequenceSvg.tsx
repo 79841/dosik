@@ -9,6 +9,7 @@ import { visibleActivation, visibleDestroyY } from "../../shared/lib/store/opVal
 import type { FragmentKind } from "../../shared/lib/types";
 import { textWidth } from "../../shared/lib/textLayout";
 import { CORNER_RADIUS } from "./cornerRadius";
+import { CUT, CutMask } from "./CutMask";
 import { MIN_FRAGMENT_BRANCHES } from "../../shared/lib/types";
 
 /*
@@ -119,6 +120,7 @@ export const FragmentSvg = ({
   line,
   text,
   patch,
+  cutId,
   kind,
   branches,
   interactive = true,
@@ -129,19 +131,43 @@ export const FragmentSvg = ({
   line: string;
   /** the operator's colour */
   text: string;
-  /** the canvas colour under the operator — it cuts the dashes */
-  patch: string;
   kind: FragmentKind;
   branches?: number;
   /** the canvas's hit targets; a file written outside the app has no pointer (#152) */
   interactive?: boolean;
-}) => {
+} & (
+  | {
+      /** the canvas colour under the operator — it cuts the dashes */
+      patch: string;
+      cutId?: never;
+    }
+  | {
+      patch?: never;
+      /**
+       * on a drawing with no background, the id of a mask that cuts the dashes
+       * under the operator instead — a patch of canvas colour would show on a
+       * page of any other colour (#255)
+       */
+      cutId: string;
+    }
+)) => {
   const i = 0.75;
   const count = kind === "alt" ? (branches ?? MIN_FRAGMENT_BRANCHES) : 1;
   const hit = interactive ? "pointer-events-auto" : undefined;
   const opW = textWidth(kind, BORDER_TITLE.fontSize - 1) + BORDER_TITLE.padX * 2;
+  const tab = {
+    x: BORDER_TITLE.inset,
+    y: -BORDER_TITLE.height / 2,
+    width: opW,
+    height: BORDER_TITLE.height,
+  };
   return (
     <>
+      {cutId ? (
+        <CutMask id={cutId} area={{ x: -1, y: tab.y - 1, width: w + 2, height: h - tab.y + 2 }}>
+          <rect {...tab} fill={CUT} />
+        </CutMask>
+      ) : null}
       {/* only the painted parts are hit targets: the <svg> root is a CSS box and
           would catch the whole empty interior, and the event would bubble to the
           React Flow wrapper anyway (this is why React Flow itself re-enables
@@ -157,15 +183,9 @@ export const FragmentSvg = ({
         stroke={line}
         strokeWidth={1.5}
         strokeDasharray="4 3"
+        mask={cutId ? `url(#${cutId})` : undefined}
       />
-      <rect
-        className={hit}
-        x={BORDER_TITLE.inset}
-        y={-BORDER_TITLE.height / 2}
-        width={opW}
-        height={BORDER_TITLE.height}
-        fill={patch}
-      />
+      {patch ? <rect className={hit} {...tab} fill={patch} /> : null}
       <text
         className={hit}
         x={BORDER_TITLE.inset + BORDER_TITLE.padX}

@@ -35,10 +35,22 @@ export const MARKER_VIEW_W: Partial<Record<MarkerShape, number>> = {
 };
 
 /**
+ * The heads with a hollow body — the ones `MarkerGlyph` fills with `hollow`.
+ * A drawing on no background cuts these bodies out of the line instead (#255).
+ */
+export const HOLLOW_MARKERS: ReadonlySet<MarkerShape> = new Set<MarkerShape>([
+  "triangle",
+  "diamond-open",
+  "zero-one",
+  "zero-many",
+]);
+
+/**
  * `hollow` fills the open shapes (circle, diamond-open, …) so the line does not
  * show through them. The canvas passes nothing and gets the live theme
  * variable; a file written outside the app passes the concrete background,
- * because a variable means nothing there (#148).
+ * because a variable means nothing there (#148), or `none` when it has no
+ * background and cuts the line under the head instead (#255).
  */
 export const MarkerGlyph = ({
   shape,

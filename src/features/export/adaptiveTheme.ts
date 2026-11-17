@@ -42,8 +42,8 @@ const attributesOf = (tag: string): Map<string, string> =>
 
 const nameOf = (tag: string): string => /^<\/?([\w:-]+)/.exec(tag)?.[1] ?? "";
 
-/** a short name for this drawing, so two of them on one page don't share rules */
-const hashOf = (text: string): string => {
+/** a short name for this drawing, so two of them on one page don't share rules (or ids, `vectorSvg`) */
+export const hashOf = (text: string): string => {
   let hash = 5381;
   for (let i = 0; i < text.length; i += 1) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;
   return hash.toString(36).slice(0, 6);

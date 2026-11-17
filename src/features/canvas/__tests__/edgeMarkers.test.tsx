@@ -2,7 +2,7 @@ import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import type { MarkerShape } from "../../../shared/lib/types";
-import { EdgeMarkerDef, MARKER_REF_X, MarkerGlyph } from "../edgeMarkers";
+import { EdgeMarkerDef, HOLLOW_MARKERS, MARKER_REF_X, MarkerGlyph } from "../edgeMarkers";
 
 const SHAPES: MarkerShape[] = ["arrow", "open", "circle", "diamond", "bar", "many"];
 
@@ -17,6 +17,18 @@ describe("MarkerGlyph", () => {
     }
     const { container } = renderSvg(<MarkerGlyph shape="none" color="#111" />);
     expect(container.querySelector("path, circle, rect")).toBeNull();
+  });
+});
+
+describe("HOLLOW_MARKERS", () => {
+  it("names exactly the heads filled with the hollow colour — a drawing on no background cuts those out (#255)", () => {
+    for (const shape of Object.keys(MARKER_REF_X) as MarkerShape[]) {
+      const { container, unmount } = renderSvg(
+        <MarkerGlyph shape={shape} color="#111111" hollow="#ABCDEF" />,
+      );
+      expect(container.innerHTML.includes("#ABCDEF"), shape).toBe(HOLLOW_MARKERS.has(shape));
+      unmount();
+    }
   });
 });
 
