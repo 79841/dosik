@@ -30,6 +30,10 @@ pub const CLOSE_TAB_ID: &str = "close-tab";
 pub const CLOSE_WINDOW_ID: &str = "close-window";
 /// Dosik ▸ Quit Dosik (⌘Q)
 pub const QUIT_ID: &str = "quit";
+/// Dosik ▸ Settings… (⌘,) — the settings dialog (#252)
+pub const SETTINGS_ID: &str = "settings";
+/// what the front end hears when Settings… is chosen — `useMenuEvents.ts` has the same string
+pub const SETTINGS_EVENT: &str = "menu:settings";
 /// what the front end hears when Close Tab is chosen — `useMenuEvents.ts` has the same string
 pub const CLOSE_TAB_EVENT: &str = "menu:close-tab";
 
@@ -39,6 +43,7 @@ pub enum MenuAction {
     CloseTab,
     CloseWindow,
     Quit,
+    Settings,
 }
 
 pub fn action_for(id: &str) -> Option<MenuAction> {
@@ -46,6 +51,7 @@ pub fn action_for(id: &str) -> Option<MenuAction> {
         CLOSE_TAB_ID => Some(MenuAction::CloseTab),
         CLOSE_WINDOW_ID => Some(MenuAction::CloseWindow),
         QUIT_ID => Some(MenuAction::Quit),
+        SETTINGS_ID => Some(MenuAction::Settings),
         _ => None,
     }
 }
@@ -64,6 +70,9 @@ pub fn on_event<R: tauri::Runtime>(app: &tauri::AppHandle<R>, event: tauri::menu
             }
         }
         Some(MenuAction::Quit) => request_quit(app),
+        Some(MenuAction::Settings) => {
+            let _ = app.emit(SETTINGS_EVENT, ());
+        }
         None => {}
     }
 }
@@ -109,6 +118,8 @@ pub fn build<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<taur
         true,
         &[
             &PredefinedMenuItem::about(app, None, Some(about))?,
+            &PredefinedMenuItem::separator(app)?,
+            &MenuItem::with_id(app, SETTINGS_ID, "Settings…", true, Some("CmdOrCtrl+,"))?,
             &PredefinedMenuItem::separator(app)?,
             &PredefinedMenuItem::services(app, None)?,
             &PredefinedMenuItem::separator(app)?,
@@ -179,6 +190,13 @@ mod tests {
         assert_eq!(action_for(CLOSE_TAB_ID), Some(MenuAction::CloseTab));
         assert_eq!(action_for(CLOSE_WINDOW_ID), Some(MenuAction::CloseWindow));
         assert_eq!(action_for(QUIT_ID), Some(MenuAction::Quit));
+        assert_eq!(action_for(SETTINGS_ID), Some(MenuAction::Settings));
+    }
+
+    #[test]
+    fn settings_event_matches_the_front_end() {
+        // useMenuEvents.ts listens for this exact string
+        assert_eq!(SETTINGS_EVENT, "menu:settings");
     }
 
     #[test]
@@ -193,5 +211,8 @@ mod tests {
         assert_ne!(CLOSE_TAB_ID, CLOSE_WINDOW_ID);
         assert_ne!(QUIT_ID, CLOSE_TAB_ID);
         assert_ne!(QUIT_ID, CLOSE_WINDOW_ID);
+        for id in [CLOSE_TAB_ID, CLOSE_WINDOW_ID, QUIT_ID] {
+            assert_ne!(SETTINGS_ID, id);
+        }
     }
 }

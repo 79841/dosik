@@ -3,8 +3,10 @@ export type AiVendor = "claude" | "openai";
 export type AiAuth = "subscription" | "api-key";
 
 export interface AiSettings {
+  /** the vendor the chat talks to — picked with a model in the composer's menu (#252) */
   vendor: AiVendor;
-  auth: AiAuth;
+  /** how each vendor is reached, chosen in Settings ▸ AI assistant — each vendor keeps its own (#252) */
+  auths: Record<AiVendor, AiAuth>;
   /** one key per vendor, so switching vendors does not throw the other key away */
   keys: Record<AiVendor, string>;
   models: Record<AiVendor, string>;
@@ -40,7 +42,7 @@ const LEGACY_STORAGE_KEY = "modern-diagram.ai-settings";
 
 export const DEFAULT_AI_SETTINGS: AiSettings = {
   vendor: "claude",
-  auth: "subscription",
+  auths: { claude: "subscription", openai: "subscription" },
   keys: { claude: "", openai: "" },
   models: { claude: "claude-opus-5", openai: "gpt-5.6-sol" },
 };
@@ -48,6 +50,13 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
 /** the key and model the current vendor/auth pair actually uses */
 export const activeKey = (s: AiSettings): string => s.keys[s.vendor];
 export const activeModel = (s: AiSettings): string => s.models[s.vendor];
+export const activeAuth = (s: AiSettings): AiAuth => s.auths[s.vendor];
+
+/** a model's name without the "(recommended)" note — what the composer's button reads (#252) */
+export const modelShortLabel = (vendor: AiVendor, id: string): string => {
+  const label = MODELS_BY_VENDOR[vendor].find((m) => m.id === id)?.label;
+  return label ? label.replace(/\s*\(recommended\)$/, "") : id;
+};
 
 /** v1 shape (#119 predecessor): a single provider switch that only knew Claude */
 interface LegacySettings {
@@ -72,6 +81,26 @@ const perVendorStrings = (
   };
 };
 
+const toAuth = (raw: unknown): AiAuth => (raw === "api-key" ? "api-key" : "subscription");
+
+/**
+ * The stored connections: per vendor (`auths`), or the one `auth` the app kept
+ * before #252 — which both vendors take, so nobody's chat changes under them.
+ */
+const perVendorAuths = (
+  raw: Partial<Record<"auth" | "auths", unknown>>,
+): Record<AiVendor, AiAuth> => {
+  if (raw.auths && typeof raw.auths === "object") {
+    const auths = raw.auths as Record<string, unknown>;
+    return { claude: toAuth(auths.claude), openai: toAuth(auths.openai) };
+  }
+  const one = toAuth(raw.auth);
+  return { claude: one, openai: one };
+};
+
+/** a value written before #252: one connection for both vendors */
+const hasSingleAuth = (raw: object): boolean => !("auths" in raw) && "auth" in raw;
+
 /**
  * Merges a stored value into the defaults. v1 values (`provider`/`apiKey`/
  * `model`) become the equivalent Claude pair so nobody has to choose again.
@@ -79,10 +108,11 @@ const perVendorStrings = (
 const normalize = (raw: unknown): AiSettings => {
   if (!raw || typeof raw !== "object") return DEFAULT_AI_SETTINGS;
   if (isLegacy(raw)) {
+    const auth = toAuth(raw.provider);
     return {
       ...DEFAULT_AI_SETTINGS,
       vendor: "claude",
-      auth: raw.provider === "api-key" ? "api-key" : "subscription",
+      auths: { claude: auth, openai: auth },
       keys: {
         ...DEFAULT_AI_SETTINGS.keys,
         claude: typeof raw.apiKey === "string" ? raw.apiKey : "",
@@ -93,10 +123,10 @@ const normalize = (raw: unknown): AiSettings => {
       },
     };
   }
-  const partial = raw as Partial<AiSettings>;
+  const partial = raw as Partial<AiSettings> & { auth?: unknown };
   return {
     vendor: partial.vendor === "openai" ? "openai" : "claude",
-    auth: partial.auth === "api-key" ? "api-key" : "subscription",
+    auths: perVendorAuths(partial),
     keys: perVendorStrings(partial.keys, DEFAULT_AI_SETTINGS.keys),
     models: perVendorStrings(partial.models, DEFAULT_AI_SETTINGS.models),
   };
@@ -110,8 +140,13 @@ export const loadAiSettings = (): AiSettings => {
     const parsed: unknown = JSON.parse(raw);
     const settings = normalize(parsed);
     // write back whenever the stored shape is not the current one (legacy
-    // key, or v1 fields) so the migration happens once
-    const migrated = !stored || (typeof parsed === "object" && parsed !== null && isLegacy(parsed));
+    // key, v1 fields, or the single connection before #252) so the migration
+    // happens once
+    const migrated =
+      !stored ||
+      (typeof parsed === "object" &&
+        parsed !== null &&
+        (isLegacy(parsed) || hasSingleAuth(parsed)));
     if (migrated) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
       localStorage.removeItem(LEGACY_STORAGE_KEY);

@@ -4,7 +4,9 @@ mod chat;
 mod codex;
 mod images;
 mod library;
+mod mcp_install;
 mod open_requests;
+mod plugins;
 mod secrets;
 mod tray;
 
@@ -61,6 +63,45 @@ fn agent_chat_result(
 #[tauri::command]
 fn bridge_port(state: State<'_, AgentState>) -> Option<u16> {
     *state.port.lock().unwrap()
+}
+
+/// Settings ▸ Integrations (#252): the port the bridge asked for, and whether
+/// it has it (it may be held by another app — an installed Dosik, say).
+#[derive(serde::Serialize)]
+struct BridgeStatus {
+    port: u16,
+    listening: bool,
+}
+
+#[tauri::command]
+fn bridge_status(state: State<'_, AgentState>) -> BridgeStatus {
+    let wanted = bridge::wanted_port(std::env::var("DOSIK_PORT").ok().as_deref());
+    match *state.port.lock().unwrap() {
+        Some(port) => BridgeStatus {
+            port,
+            listening: true,
+        },
+        None => BridgeStatus {
+            port: wanted,
+            listening: false,
+        },
+    }
+}
+
+/// Settings ▸ About ▸ Third-party notices: the notices file the bundle
+/// carries, opened from here so the webview needs no right to open paths.
+#[tauri::command(async)]
+fn open_notices(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::path::BaseDirectory;
+    use tauri::Manager;
+    use tauri_plugin_opener::OpenerExt;
+    let path = app
+        .path()
+        .resolve("THIRD_PARTY_NOTICES.txt", BaseDirectory::Resource)
+        .map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -127,6 +168,7 @@ pub fn run() {
     });
     builder
         .on_menu_event(app_menu::on_event)
+        .manage(mcp_install::McpServerState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
@@ -134,6 +176,15 @@ pub fn run() {
         .manage(open_requests::OpenRequests::default())
         .setup(|app| {
             bridge::start_agent_server(app.handle().clone());
+            // the bundled MCP server into the app data, where the AI apps are
+            // pointed (#252) — off the main thread, and never in the way of startup;
+            // its trouble is kept for Settings ▸ Integrations
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                if let Err(error) = mcp_install::ensure(&handle) {
+                    eprintln!("dosik: {error}");
+                }
+            });
             // the menu-bar icon and its menu (#213) — an extra: if the platform
             // cannot make one, the app still starts
             if let Err(error) = tray::create(app.handle()) {
@@ -153,6 +204,8 @@ pub fn run() {
             agent_ops_result,
             agent_chat_result,
             bridge_port,
+            bridge_status,
+            open_notices,
             read_text_file,
             images::read_image_file,
             write_text_file,
@@ -171,13 +224,19 @@ pub fn run() {
             library::delete_project,
             library::library_path,
             library::show_in_finder,
+            library::library_root,
+            library::show_library_in_finder,
             open_requests::take_open_requests,
             secrets::secret_get,
             secrets::secret_set,
-            chat::claude_cli_version,
+            chat::claude_cli_status,
             chat::claude_cli_chat,
-            codex::codex_cli_version,
-            codex::codex_cli_chat
+            codex::codex_cli_status,
+            codex::codex_cli_chat,
+            plugins::plugins_status,
+            plugins::plugin_install,
+            plugins::plugin_remove,
+            plugins::open_claude
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

@@ -38,6 +38,7 @@ export const IconButton = ({
   label,
   onClick,
   disabled,
+  busy,
   pressed,
   expanded,
   tooltip = "below",
@@ -55,6 +56,11 @@ export const IconButton = ({
   label: string;
   onClick: () => void;
   disabled?: boolean;
+  /**
+   * its action is under way: a press waits and assistive tech hears it is
+   * busy; it keeps the focus (aria-disabled, not disabled)
+   */
+  busy?: boolean;
   pressed?: boolean;
   /** set on a button that opens a menu: whether the menu is open */
   expanded?: boolean;
@@ -85,11 +91,13 @@ export const IconButton = ({
       aria-expanded={expanded}
       aria-haspopup={popup}
       aria-keyshortcuts={keyshortcuts}
-      onClick={onClick}
+      aria-busy={busy || undefined}
+      aria-disabled={busy || undefined}
+      onClick={busy ? undefined : onClick}
       disabled={disabled}
       // a pressed toggle and an open menu's button wear `selected` (the design
       // system's "pressed toggle or open menu button"), over the hover wash
-      className={`group/icon relative flex items-center justify-center gap-0.5 text-icon transition-colors hover:bg-hover aria-expanded:bg-selected aria-pressed:bg-selected aria-pressed:text-ink disabled:opacity-35 disabled:hover:bg-transparent ${SIZE_CLASS[size]}`}
+      className={`group/icon relative flex items-center justify-center gap-0.5 transition-colors aria-expanded:bg-selected aria-pressed:bg-selected aria-pressed:text-ink disabled:opacity-35 disabled:hover:bg-transparent ${busy ? "cursor-default text-muted" : "text-icon hover:bg-hover"} ${SIZE_CLASS[size]}`}
     >
       {children}
       <span

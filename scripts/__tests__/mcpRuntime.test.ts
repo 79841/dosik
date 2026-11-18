@@ -18,6 +18,7 @@ import {
   isBundleFresh,
   once,
   REPO,
+  shippedBundle,
   VIEW_BUNDLE,
 } from "../mcp/runtime.mjs";
 
@@ -524,5 +525,30 @@ describe("MCP server runtime (#2)", () => {
       await expect(rendering).rejects.toThrow("render failed");
       expect(order).toEqual(["other done", "removed"]);
     });
+  });
+});
+
+describe("packaged with the app — nothing is built (#252)", () => {
+  it("a shipped bundle runs as it is", async () => {
+    const run = vi.fn(async (..._args: unknown[]) => "ok");
+    const headless = createHeadless({
+      run,
+      bundleFresh: shippedBundle("/x/dosik-headless.mjs", () => true),
+    });
+    await headless(["--in", "a.dosik.json"]);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(run.mock.calls[0]?.[1]).toEqual([HEADLESS_BUNDLE, "--in", "a.dosik.json"]);
+  });
+
+  it("a missing shipped bundle says to reinstall, and builds nothing", async () => {
+    const run = vi.fn(async () => "ok");
+    const headless = createHeadless({
+      run,
+      bundleFresh: shippedBundle("/x/dosik-headless.mjs", () => false),
+    });
+    await expect(headless([])).rejects.toThrow(
+      /missing dosik-headless\.mjs[\s\S]*Settings ▸ Integrations/,
+    );
+    expect(run).not.toHaveBeenCalled();
   });
 });

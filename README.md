@@ -16,7 +16,7 @@ Draw flowcharts, sequence, class, and ER diagrams with a clean look — borderle
 - **Files** — `.dosik.json` files outside the library open with Open file… and save with Save
 - **Export** — Markdown (Mermaid: flowchart, sequenceDiagram, classDiagram, erDiagram) and PNG/SVG images. Export ▾ in the toolbar exports the whole document; right-clicking shapes exports just the selection. Each format can be saved to a file or copied (Copy as Markdown, Copy image, Copy as SVG)
 - **Mermaid** — press ⌘V on the canvas with Mermaid code on the clipboard (bare code or a ` ```mermaid ` block) and it becomes editable shapes (also Home → New ▾ → From Mermaid…). Supports flowchart, sequenceDiagram, classDiagram, and erDiagram, with automatic layout. The right panel previews the current diagram as Mermaid
-- **Light and dark themes** — switch at the bottom of the sidebar
+- **Light and dark themes** — Light, Dark or System in Settings ▸ General (⌘,), or the switch at the bottom of the sidebar
 - **AI agent bridge** — a REST API at `http://127.0.0.1:4517` for external agents to read and edit; edits appear on the canvas immediately, with highlights. Protocol: [docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md); MCP setup below
 
 ## Install
@@ -52,11 +52,21 @@ Requirements: Node 22.13+ (pnpm 11 engines), Rust (stable), macOS/Windows/Linux.
 
 ## Connect AI agents (MCP)
 
-Register Dosik as a tool in an MCP client such as Claude Code or Claude Desktop.
+Open **Settings ▸ Integrations** (⌘,) and install Dosik into:
+
+- **Claude Code** — registered with `claude mcp add --scope user`, for every project
+- **Claude Desktop** — a Dosik extension; Claude Desktop asks you to confirm
+- **ChatGPT and Codex** — one entry in `~/.codex/config.toml`, which the ChatGPT desktop app and the Codex CLI share
+
+The app carries its MCP server and keeps a copy in its app data, refreshed when Dosik updates, so moving or updating Dosik keeps the AI apps working. Claude Code and Codex start it with Node.js 18 or later (the Claude Desktop extension uses Claude's own). Restart the AI app after a change. Dosik writes to `~/.codex/config.toml` and registers with Claude Code's user scope; a `CODEX_HOME` or `CLAUDE_CONFIG_DIR` set only in a shell profile is not seen by an app opened from Finder.
+
+From a checkout, for development:
 
 ```bash
 claude mcp add dosik -- node /absolute/path/to/dosik/scripts/mcp/server.mjs
 ```
+
+`pnpm build:mcp` builds the packaged server into `src-tauri/mcp/` (release builds run it).
 
 This adds six tools.
 
@@ -89,7 +99,7 @@ This adds six tools.
 
 ## Structure
 
-- `src/features/` — chrome (title strip, document tabs), sidebar (library tree), home (dashboard, folder views, Canvas board), library (library model, tabs, autosave), canvas (editor), toolbar, palette (shape bar), editbar (selection edit bar), inspector (selection editing hook), export (md/png/svg), mermaid (paste, preview), agent (bridge hook), ai (chat panel and providers), headless, mcp-view
+- `src/features/` — chrome (title strip, document tabs), settings (the Settings dialog), sidebar (library tree), home (dashboard, folder views, Canvas board), library (library model, tabs, autosave), canvas (editor), toolbar, palette (shape bar), editbar (selection edit bar), inspector (selection editing hook), export (md/png/svg), mermaid (paste, preview), agent (bridge hook), ai (chat panel and providers), headless, mcp-view
 - `src/shared/lib/` — types, color tokens, zustand store (op application and history), edge geometry
 - `src-tauri/` — agent HTTP bridge, library and file I/O, AI CLI spawning and keychain
 - `design/design-system/project/` — design tokens (`tokens.css`, `tokens.json`; generated)

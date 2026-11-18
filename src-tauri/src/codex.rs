@@ -54,7 +54,7 @@ const INSTALL_HINT: &str =
 /// conversation. The sandbox is `workspace-write` (scoped to the working
 /// folder we give it) with network access on so curl can reach the bridge,
 /// and approvals off — a headless run has nobody to ask.
-pub fn codex_args(session_id: Option<&str>, prompt: &str) -> Vec<String> {
+pub fn codex_args(session_id: Option<&str>, model: Option<&str>, prompt: &str) -> Vec<String> {
     let mut args: Vec<String> = vec![
         "exec".into(),
         "--json".into(),
@@ -68,6 +68,11 @@ pub fn codex_args(session_id: Option<&str>, prompt: &str) -> Vec<String> {
         "-c".into(),
         "sandbox_workspace_write.network_access=true".into(),
     ];
+    // the composer's model (#252) — an `exec` option, so before `resume`
+    if let Some(model) = model {
+        args.push("-m".into());
+        args.push(model.into());
+    }
     if let Some(id) = session_id {
         args.push("resume".into());
         args.push(id.into());
@@ -177,31 +182,43 @@ const WINDOWS_UNSUPPORTED: &str =
     "GPT · Subscription is not available on Windows yet: the Codex sandbox blocks the local \
      diagram bridge. Use the API key connection in settings.";
 
+/// The Codex CLI as Settings shows it (#252): version, then sign-in —
+/// `codex login status` exits 0 when signed in (Codex CLI reference).
 #[tauri::command]
-pub async fn codex_cli_version() -> Result<String, String> {
+pub async fn codex_cli_status() -> Result<crate::chat::CliStatus, String> {
+    use crate::chat::CliStatus;
     if cfg!(windows) {
-        return Err(WINDOWS_UNSUPPORTED.to_string());
+        return Ok(CliStatus {
+            version: None,
+            signed_in: None,
+        });
     }
     tauri::async_runtime::spawn_blocking(|| {
-        let cli = find_codex_cli().ok_or_else(|| format!("Codex CLI not found. {INSTALL_HINT}"))?;
-        // same judgement as the chat command: a shim that cannot take the prompt
-        // must not show up as a working CLI
-        ensure_spawnable(
-            &cli,
-            "CODEX_CLI_PATH",
-            "codex.exe (npm's codex.cmd shim cannot take multi-line prompts)",
-        )?;
-        let output = cli_command(cli)
-            .arg("--version")
-            .output()
-            .map_err(|e| format!("Codex CLI could not start ({e}). {INSTALL_HINT}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "Codex CLI could not start ({}). {INSTALL_HINT}",
-                truncated(&String::from_utf8_lossy(&output.stderr), 200)
-            ));
+        let none = CliStatus {
+            version: None,
+            signed_in: None,
+        };
+        let Some(cli) = find_codex_cli() else {
+            return Ok(none);
+        };
+        if ensure_spawnable(&cli, "CODEX_CLI_PATH", "codex.exe").is_err() {
+            return Ok(none);
         }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        let version = crate::chat::output_with_timeout(
+            cli_command(&cli).arg("--version"),
+            crate::chat::CHECK_TIMEOUT,
+        )
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        if version.is_none() {
+            return Ok(none);
+        }
+        let signed_in = crate::chat::output_with_timeout(
+            cli_command(&cli).args(["login", "status"]),
+            crate::chat::CHECK_TIMEOUT,
+        )
+        .map(|o| o.status.success());
+        Ok(CliStatus { version, signed_in })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -221,6 +238,7 @@ pub async fn codex_cli_chat(
     prompt: String,
     system_prompt: String,
     session_id: Option<String>,
+    model: Option<String>,
 ) -> Result<CliChatResponse, CliError> {
     if cfg!(windows) {
         return Err(CliError::new(
@@ -246,7 +264,7 @@ pub async fn codex_cli_chat(
             .map_err(|m| CliError::new(CliErrorKind::Unknown, m))?;
 
         let mut cmd = cli_command(cli);
-        cmd.args(codex_args(session_id.as_deref(), &prompt))
+        cmd.args(codex_args(session_id.as_deref(), model.as_deref(), &prompt))
             .current_dir(&workspace);
         let output = cmd.output().map_err(|e| {
             CliError::new(
@@ -366,7 +384,7 @@ mod tests {
 
     #[test]
     fn args_run_headless_in_a_network_enabled_sandbox_and_resume_a_thread() {
-        let fresh = codex_args(None, "draw it");
+        let fresh = codex_args(None, None, "draw it");
         assert_eq!(fresh[0], "exec");
         assert!(fresh.contains(&"--json".to_string()));
         assert!(fresh.contains(&"--skip-git-repo-check".to_string()));
@@ -381,10 +399,22 @@ mod tests {
         assert_eq!(fresh[fresh.len() - 2], "--");
         assert_eq!(fresh[fresh.len() - 1], "draw it");
 
-        let resumed = codex_args(Some("th_9"), "-- looks like a flag");
+        let resumed = codex_args(Some("th_9"), None, "-- looks like a flag");
         let resume = resumed.iter().position(|a| a == "resume").unwrap();
         assert_eq!(resumed[resume + 1], "th_9");
         assert_eq!(resumed[resumed.len() - 1], "-- looks like a flag");
+        // no model chosen: Codex keeps its configured one
+        assert!(!fresh.contains(&"-m".to_string()));
+    }
+
+    #[test]
+    fn args_carry_the_chosen_model_before_the_resume_subcommand() {
+        let args = codex_args(Some("th_9"), Some("gpt-6-astra"), "go");
+        let m = args.iter().position(|a| a == "-m").unwrap();
+        assert_eq!(args[m + 1], "gpt-6-astra");
+        // an `exec` option: it goes before `resume` and the prompt
+        assert!(m < args.iter().position(|a| a == "resume").unwrap());
+        assert!(m < args.iter().position(|a| a == "--").unwrap());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { Clock, FolderOpen, House, type LucideIcon, PanelLeft } from "lucide-react";
+import { Clock, FolderOpen, House, type LucideIcon, PanelLeft, Settings } from "lucide-react";
 
 import { FOCUS_RING } from "../../shared/lib/palette";
 import { keyshortcuts, shortcutLabel } from "../../shared/lib/shortcutLabel";
@@ -10,6 +10,7 @@ import { useAppStore } from "../library/appStore";
 import { DASHBOARD } from "../library/homeView";
 import { useLibraryStore } from "../library/libraryStore";
 import { openFileAnywhere, showRecent, viewInHome } from "../library/navigation";
+import { openSettings } from "../settings/settingsStore";
 import { ProjectsSection } from "./LibraryTree";
 import { HOME_KEY, RECENT_KEY, selectedKey } from "./treeModel";
 
@@ -85,6 +86,18 @@ export const LibraryBody = () => {
           <FolderOpen {...rowIcon} className="flex-none text-icon" />
           <span className="truncate">Open file…</span>
         </button>
+        <IconButton
+          label="Settings"
+          shortcut={shortcutLabel(",")}
+          keyshortcuts={keyshortcuts(",")}
+          popup="dialog"
+          onClick={() => openSettings()}
+          size={28}
+          tooltip="above"
+          align="end"
+        >
+          <Settings size={SMALL_ICON_SIZE} strokeWidth={ICON_STROKE} aria-hidden="true" />
+        </IconButton>
         <ThemeToggle size={28} tooltip="above" align="end" />
       </div>
     </>

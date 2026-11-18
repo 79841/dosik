@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { parse } from "yaml";
+
+import { MCP_PATHS } from "./paths.mjs";
 
 /**
  * The bridge's op language, read from `docs/openapi.yaml` (#2).
@@ -12,8 +12,8 @@ import { parse } from "yaml";
  * the first time an op grows a field, and the drift is silent: the tool keeps
  * advertising the old shape while the bridge rejects what it asked for.
  */
-const HERE = dirname(fileURLToPath(import.meta.url));
-export const SPEC_PATH = join(HERE, "../../docs/openapi.yaml");
+// `docs/openapi.yaml`, or the copy packaged beside the server (#252)
+export const SPEC_PATH = MCP_PATHS.openapi;
 
 const OPENAPI_PREFIX = "#/components/schemas/";
 

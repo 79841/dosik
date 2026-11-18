@@ -7,21 +7,16 @@ import { makeDoc, makeEdge, makeNode } from "../../../shared/lib/__tests__/testF
 import { useSidebarStore } from "../../../shared/lib/sidebarLayout";
 import { useDiagramStore } from "../../../shared/lib/store";
 import { useToastStore } from "../../../shared/lib/toastStore";
-import { handleCanvasKeyDown } from "../../canvas/canvasKeymap";
 import { handleAppKeyDown } from "../../chrome/appKeymap";
 import { openDocument, resetTabsForTests } from "../../library/tabActions";
 import { clampChatWidth, MAX_CHAT_WIDTH, MIN_CHAT_WIDTH } from "../panelWidth";
 
 vi.mock("../cliProvider", () => ({
   sendWithClaudeCli: vi.fn(),
-  checkClaudeCli: vi.fn(async () => null),
 }));
 vi.mock("../apiProvider", () => ({ sendWithApi: vi.fn() }));
 vi.mock("../codexProvider", () => ({
   sendWithCodexCli: vi.fn(),
-  checkCodexCli: vi.fn(async () => ({
-    error: "Codex CLI not found. Install it with `npm i -g @openai/codex`",
-  })),
 }));
 vi.mock("../openaiProvider", () => ({ sendWithOpenAi: vi.fn() }));
 
@@ -34,6 +29,7 @@ vi.mock("../../mermaid/renderMermaid", () => ({
 }));
 
 const { ChatPanel } = await import("../ChatPanel");
+const { useSettingsStore } = await import("../../settings/settingsStore");
 const { SIDE_PANEL_ID, useChatStore } = await import("../chatStore");
 const { Toolbar } = await import("../../toolbar/Toolbar");
 
@@ -351,67 +347,6 @@ describe("ChatPanel selection chip", () => {
   });
 });
 
-describe("settings — vendor × connection (#119)", () => {
-  const openSettings = async (user: ReturnType<typeof userEvent.setup>) => {
-    useChatStore.setState({ open: true });
-    render(<ChatPanel />);
-    await user.click(screen.getByRole("button", { name: "AI settings" }));
-  };
-
-  beforeEach(() => {
-    localStorage.clear();
-    useChatStore.setState({
-      open: true,
-      messages: [],
-      cliSessionId: null,
-      settings: {
-        vendor: "claude",
-        auth: "subscription",
-        keys: { claude: "", openai: "" },
-        models: { claude: "claude-opus-5", openai: "gpt-5.6-sol" },
-      },
-    });
-  });
-
-  it("changes settings through the Provider and Connection segments", async () => {
-    const user = userEvent.setup();
-    await openSettings(user);
-    await user.click(screen.getByRole("button", { name: "GPT" }));
-    expect(useChatStore.getState().settings.vendor).toBe("openai");
-    await user.click(screen.getByRole("button", { name: "API key" }));
-    expect(useChatStore.getState().settings.auth).toBe("api-key");
-    // Done goes back to the chat, whose model picker says it
-    await user.click(screen.getByRole("button", { name: "Done" }));
-    expect(screen.getByRole("button", { name: /GPT · API key/ })).toBeInTheDocument();
-  });
-
-  it("shows a per-vendor key field and model list for the API key connection, writing only to that vendor's slot", async () => {
-    const user = userEvent.setup();
-    await openSettings(user);
-    await user.click(screen.getByRole("button", { name: "GPT" }));
-    await user.click(screen.getByRole("button", { name: "API key" }));
-    await user.type(screen.getByLabelText("OpenAI API key"), "sk-o");
-    expect(useChatStore.getState().settings.keys).toEqual({ claude: "", openai: "sk-o" });
-    const options = Array.from(screen.getByLabelText("Model").querySelectorAll("option")).map(
-      (o) => o.value,
-    );
-    expect(options).toContain("gpt-6-astra");
-    expect(options).not.toContain("claude-opus-5");
-
-    await user.click(screen.getByRole("button", { name: "Claude" }));
-    expect(screen.getByLabelText("Anthropic API key")).toHaveValue("");
-    expect(useChatStore.getState().settings.keys.openai).toBe("sk-o");
-  });
-
-  it("shows a one-line status of the matching CLI for the Subscription connection", async () => {
-    const user = userEvent.setup();
-    await openSettings(user);
-    expect(await screen.findByText(/Claude Code CLI not found/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "GPT" }));
-    expect(await screen.findByText(/npm i -g @openai\/codex/)).toBeInTheDocument();
-  });
-});
-
 describe("docked side panel — one panel, two views (#194, #219 D12·D13, T22·T27)", () => {
   beforeEach(() => {
     localStorage.clear();
@@ -451,10 +386,10 @@ describe("docked side panel — one panel, two views (#194, #219 D12·D13, T22·
     expect(panel).toHaveClass("nodelete", "flex-none", "bg-surface");
   });
 
-  it("chat header: New chat · AI settings · Close panel — 28 buttons, 15 icons", () => {
+  it("chat header: New chat · AI assistant settings · Close panel — 28 buttons, 15 icons", () => {
     useChatStore.setState({ open: true });
     render(<ChatPanel />);
-    for (const name of ["New chat", "AI settings", "Close panel"]) {
+    for (const name of ["New chat", "AI assistant settings", "Close panel"]) {
       const button = screen.getByRole("button", { name });
       expect(button.className).toMatch(/(^|\s)h-7(\s|$)/);
       expect(button.querySelector("svg")).toHaveAttribute("width", "15");
@@ -579,12 +514,16 @@ describe("messages and composer (#219 D15, T26)", () => {
     expect(screen.getByLabelText("Send")).toBeDisabled();
   });
 
-  it("shows the model picker below the composer — vendor · connection", () => {
+  it("shows the model picker below the composer — the chosen model (#252)", () => {
     useChatStore.setState((st) => ({
-      settings: { ...st.settings, vendor: "claude", auth: "subscription" },
+      settings: {
+        ...st.settings,
+        vendor: "claude",
+        auths: { ...st.settings.auths, claude: "subscription" },
+      },
     }));
     render(<ChatPanel />);
-    expect(screen.getByRole("button", { name: /Claude · Subscription/ })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /Claude Opus 5/ })).toHaveAttribute(
       "aria-haspopup",
       "menu",
     );
@@ -630,9 +569,15 @@ describe("⌘S leaves the chat input alone (#219)", () => {
  * deleted the canvas selection (#219). The switch hands the focus
  * on itself: into the settings view, and back to the composer.
  */
-describe("focus stays inside the panel when moving to and from settings (#219)", () => {
+describe("the panel's way to Settings (#252)", () => {
   beforeEach(() => {
     localStorage.clear();
+    useSettingsStore.setState({
+      open: false,
+      section: "General",
+      lastSection: "General",
+      focus: null,
+    });
     useChatStore.setState({
       open: true,
       view: "chat",
@@ -641,76 +586,41 @@ describe("focus stays inside the panel when moving to and from settings (#219)",
       cliSessionId: null,
       settings: {
         vendor: "claude",
-        auth: "subscription",
+        auths: { claude: "subscription", openai: "subscription" },
         keys: { claude: "", openai: "" },
         models: { claude: "claude-opus-5", openai: "gpt-5.6-sol" },
       },
     });
     select({ node: true });
-    window.addEventListener("keydown", handleCanvasKeyDown);
-  });
-  afterEach(() => window.removeEventListener("keydown", handleCanvasKeyDown));
-
-  const panel = () => screen.getByRole("complementary", { name: "Assistant" });
-  const selectionKept = () =>
-    expect(useDiagramStore.getState().nodes.find((n) => n.id === "n1")?.selected).toBe(true);
-
-  it("AI settings… in the model picker — focuses the first settings control, and Backspace does not delete the selection", async () => {
-    const user = userEvent.setup();
-    render(<ChatPanel />);
-    screen.getByRole("button", { name: /Claude · Subscription/ }).focus();
-    await user.keyboard("{Enter}");
-    screen.getByRole("menuitem", { name: "AI settings…" }).focus();
-    await user.keyboard("{Enter}");
-    expect(screen.getByRole("button", { name: "Done" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Claude" })).toHaveFocus();
-    await user.keyboard("{Backspace}");
-    selectionKept();
   });
 
-  it("Done — returns to the composer, and Backspace does not delete the selection", async () => {
+  it("the header's AI assistant settings opens Settings on AI assistant — the panel keeps no settings of its own", async () => {
     const user = userEvent.setup();
     render(<ChatPanel />);
-    screen.getByRole("button", { name: /Claude · Subscription/ }).focus();
-    await user.keyboard("{Enter}");
-    screen.getByRole("menuitem", { name: "AI settings…" }).focus();
-    await user.keyboard("{Enter}");
-    screen.getByRole("button", { name: "Done" }).focus();
-    await user.keyboard("{Enter}");
-    expect(screen.getByRole("textbox", { name: "Message" })).toHaveFocus();
-    // the message box takes Backspace for its own text; nothing else is touched
-    await user.keyboard("{Backspace}");
-    selectionKept();
+    const toggle = screen.getByRole("button", { name: "AI assistant settings" });
+    expect(toggle).toHaveAttribute("aria-haspopup", "dialog");
+    await user.click(toggle);
+    expect(useSettingsStore.getState()).toMatchObject({ open: true, section: "AI assistant" });
+    expect(screen.queryByRole("button", { name: "Done" })).toBeNull();
   });
 
-  it("returns Done to the header toggle when opened from it — since it is still there", async () => {
+  it("sending without an API key opens Settings on the key field — the draft stays, and focus comes back to the message", async () => {
+    useChatStore.setState((s) => ({
+      settings: { ...s.settings, auths: { ...s.settings.auths, claude: "api-key" } },
+    }));
     const user = userEvent.setup();
     render(<ChatPanel />);
-    const toggle = screen.getByRole("button", { name: "AI settings" });
-    toggle.focus();
-    await user.keyboard("{Enter}");
-    expect(panel()).toContainElement(document.activeElement as HTMLElement);
-    screen.getByRole("button", { name: "Done" }).focus();
-    await user.keyboard("{Enter}");
-    expect(toggle).toHaveFocus();
-    await user.keyboard("{Backspace}");
-    selectionKept();
-  });
-
-  it("sending with Enter without an API key goes to the key field in settings — the draft stays, and Backspace does not delete the selection", async () => {
-    useChatStore.setState((s) => ({ settings: { ...s.settings, auth: "api-key" } }));
-    const user = userEvent.setup();
-    render(<ChatPanel />);
-    await user.type(screen.getByRole("textbox", { name: "Message" }), "draw a box{Enter}");
-    expect(await screen.findByRole("button", { name: "Done" })).toBeInTheDocument();
-    // what is missing is the key — straight to its field, not four Tabs away
-    expect(screen.getByLabelText("Anthropic API key")).toHaveFocus();
-    await user.keyboard("{Backspace}");
-    selectionKept();
-    screen.getByRole("button", { name: "Done" }).focus();
-    await user.keyboard("{Enter}");
     const box = screen.getByRole("textbox", { name: "Message" });
-    expect(box).toHaveFocus();
+    await user.type(box, "draw a box{Enter}");
+    await waitFor(() =>
+      expect(useSettingsStore.getState()).toMatchObject({
+        open: true,
+        section: "AI assistant",
+        focus: "key-claude",
+      }),
+    );
+    expect(useSettingsStore.getState().returnTo).toBe(box);
     expect(box).toHaveValue("draw a box");
+    expect(useDiagramStore.getState().nodes.find((n) => n.id === "n1")?.selected).toBe(true);
   });
 });

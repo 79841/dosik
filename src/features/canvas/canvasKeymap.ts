@@ -74,6 +74,9 @@ const takesBareDestructiveKeys = (target: HTMLElement | null): boolean =>
  * (including text copy/paste in a label editor) must win there.
  */
 export const handleCanvasKeyDown = (e: KeyboardEvent): void => {
+  // a modal dialog (Settings, From Mermaid…) owns the keyboard: Backspace on
+  // one of its buttons must not delete the selection behind it
+  if (document.querySelector("dialog[open]")) return;
   const target = e.target as HTMLElement | null;
   if (takesAllKeys(target)) return;
 

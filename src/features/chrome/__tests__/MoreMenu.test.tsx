@@ -7,6 +7,7 @@ vi.mock("../../library/navigation", () => navigation);
 
 import { useSidebarStore } from "../../../shared/lib/sidebarLayout";
 import { useThemeStore } from "../../../shared/lib/theme";
+import { useSettingsStore } from "../../settings/settingsStore";
 import { MoreMenu } from "../MoreMenu";
 
 const more = () => screen.getByRole("button", { name: "More" });
@@ -20,7 +21,7 @@ describe("⋯ More (#217 R8, D21, T30)", () => {
     useThemeStore.getState().setTheme("light");
   });
 
-  it("Open file… ⌘O · Dark theme · separator · Show sidebar ⌘\\", async () => {
+  it("Open file… ⌘O · Dark theme · Settings… ⌘, · separator · Show sidebar ⌘\\", async () => {
     const user = userEvent.setup();
     render(<MoreMenu />);
     expect(more()).toHaveAttribute("aria-haspopup", "menu");
@@ -30,12 +31,14 @@ describe("⋯ More (#217 R8, D21, T30)", () => {
     expect(items().map((i) => i.textContent)).toEqual([
       "Open file…Ctrl+O",
       "Dark theme",
+      "Settings…Ctrl+,",
       "Show sidebarCtrl+\\",
     ]);
     // the shortcut is shown, not read as part of the name
     expect(items().map((i) => i.getAttribute("aria-keyshortcuts"))).toEqual([
       "Control+O",
       null,
+      "Control+Comma",
       "Control+Backslash",
     ]);
     expect(within(menu()).getByRole("separator")).toBeInTheDocument();
@@ -50,13 +53,24 @@ describe("⋯ More (#217 R8, D21, T30)", () => {
     await user.click(more());
     await user.keyboard("{ArrowDown}");
     expect(items()[1]).toHaveFocus();
-    await user.keyboard("{ArrowDown}{ArrowDown}");
+    await user.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
     expect(items()[0]).toHaveFocus();
     await user.keyboard("{ArrowUp}");
-    expect(items()[2]).toHaveFocus();
+    expect(items()[3]).toHaveFocus();
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(more()).toHaveFocus();
+  });
+
+  it("Settings… opens the settings dialog, which hands focus back to More when it closes (#252)", async () => {
+    const user = userEvent.setup();
+    useSettingsStore.setState({ open: false, returnTo: null });
+    render(<MoreMenu />);
+    await user.click(more());
+    await user.click(screen.getByRole("menuitem", { name: /Settings…/ }));
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(useSettingsStore.getState().open).toBe(true);
+    expect(useSettingsStore.getState().returnTo).toBe(more());
   });
 
   it("choosing an item returns focus to More — it does not stay on the vanished menu (#217)", async () => {

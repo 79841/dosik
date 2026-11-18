@@ -8,6 +8,7 @@ import {
   openFileAnywhere,
 } from "../library/navigation";
 import { saveActiveDocument } from "../library/saveDocument";
+import { openSettings } from "../settings/settingsStore";
 
 /**
  * ⌘\ — or `₩` where a Korean layout puts the won sign on that key, which is
@@ -104,6 +105,11 @@ const handleTabKeys = (e: KeyboardEvent, mac: boolean): boolean => {
     take(e, closeActiveDocumentTab);
     return true;
   }
+  // ⌘, on macOS is Dosik ▸ Settings… — the menu's own, the same way (#252)
+  if (!mac && (e.code === "Comma" || e.key === ",")) {
+    take(e, () => openSettings());
+    return true;
+  }
   return false;
 };
 
@@ -119,7 +125,7 @@ const handleTabKeys = (e: KeyboardEvent, mac: boolean): boolean => {
  * - ⌘S (Ctrl+S): Save — the active document; nothing on Home (#219 D5)
  * - ⌘T / ⌘N: New diagram. ⌃Tab / ⌃⇧Tab, ⌘⇧] / ⌘⇧[: next / previous tab.
  *   ⌘1 Home, ⌘2–⌘8 a document tab, ⌘9 the last. Ctrl+W off macOS: close the
- *   tab.
+ *   tab. Ctrl+, off macOS: Settings (#252).
  *
  * A held key acts once: its repeats are swallowed, not acted on. While a
  * modal dialog is open they are swallowed too, and do nothing.

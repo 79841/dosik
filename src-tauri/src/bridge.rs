@@ -375,12 +375,16 @@ fn handle_request(app: &AppHandle, mut request: tiny_http::Request) {
     let _ = request.respond(response);
 }
 
+/// The port the bridge asks for: `DOSIK_PORT` when it is a port, else 4517.
+/// Settings ▸ Integrations names it when it could not be had (#252).
+pub fn wanted_port(env: Option<&str>) -> u16 {
+    env.and_then(|p| p.parse::<u16>().ok())
+        .unwrap_or(AGENT_PORT)
+}
+
 pub fn start_agent_server(app: AppHandle) {
     std::thread::spawn(move || {
-        let port = std::env::var("DOSIK_PORT")
-            .ok()
-            .and_then(|p| p.parse::<u16>().ok())
-            .unwrap_or(AGENT_PORT);
+        let port = wanted_port(std::env::var("DOSIK_PORT").ok().as_deref());
         let server = match tiny_http::Server::http(("127.0.0.1", port)) {
             Ok(server) => server,
             Err(e) => {
@@ -400,6 +404,14 @@ pub fn start_agent_server(app: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wanted_port_reads_dosik_port_or_falls_back() {
+        assert_eq!(wanted_port(None), AGENT_PORT);
+        assert_eq!(wanted_port(Some("4519")), 4519);
+        assert_eq!(wanted_port(Some("not a port")), AGENT_PORT);
+        assert_eq!(wanted_port(Some("70000")), AGENT_PORT);
+    }
 
     #[test]
     fn request_ids_never_repeat() {

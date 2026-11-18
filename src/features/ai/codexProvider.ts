@@ -19,6 +19,8 @@ export const sendWithCodexCli = (
   userMessage: string,
   sessionId: string | null,
   target: ChatTarget = captureChatTarget(),
+  /** the composer's model (#252); null leaves the CLI on its own default */
+  model: string | null = null,
 ): Promise<CliChatResult> =>
   withChatRoute(target, userMessage, async ({ systemPrompt, prompt }) => {
     try {
@@ -26,6 +28,7 @@ export const sendWithCodexCli = (
         prompt,
         systemPrompt,
         sessionId,
+        model,
       });
       return { text: result.text, sessionId: result.session_id };
     } catch (error) {
@@ -33,12 +36,3 @@ export const sendWithCodexCli = (
       throw new Error(error instanceof Error ? error.message : String(error));
     }
   });
-
-/** Checks whether the Codex CLI is installed and can start; the message on failure is actionable. */
-export const checkCodexCli = async (): Promise<{ version: string } | { error: string }> => {
-  try {
-    return { version: await invoke<string>("codex_cli_version") };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
-  }
-};

@@ -19,6 +19,7 @@
   --on-ink-muted: #a3a3a3;
   --on-ink-line: rgba(255, 255, 255, 0.12);
   --on-ink-soft: rgba(255, 255, 255, 0.72);
+  --scrim: rgba(0, 0, 0, 0.24);
   --danger: #b0243f;
   --success: #2e7535;
   --focus: var(--ink);
@@ -99,6 +100,7 @@
   --on-ink-muted: #5e5e5e;
   --on-ink-line: rgba(0, 0, 0, 0.12);
   --on-ink-soft: rgba(0, 0, 0, 0.6);
+  --scrim: rgba(0, 0, 0, 0.5);
   --danger: #f28fa1;
   --success: #86c78a;
   --glyph-folder: #5a9bff;

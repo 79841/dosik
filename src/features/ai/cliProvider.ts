@@ -77,6 +77,8 @@ export const sendWithClaudeCli = (
   userMessage: string,
   sessionId: string | null,
   target: ChatTarget = captureChatTarget(),
+  /** the composer's model (#252); null leaves the CLI on its own default */
+  model: string | null = null,
 ): Promise<CliChatResult> =>
   withChatRoute(target, userMessage, async ({ systemPrompt, prompt }) => {
     try {
@@ -84,6 +86,7 @@ export const sendWithClaudeCli = (
         prompt,
         systemPrompt,
         sessionId,
+        model,
       });
       return { text: result.text, sessionId: result.session_id };
     } catch (error) {
@@ -91,12 +94,3 @@ export const sendWithClaudeCli = (
       throw new Error(error instanceof Error ? error.message : String(error));
     }
   });
-
-/** Checks whether the Claude Code CLI is installed and reachable. */
-export const checkClaudeCli = async (): Promise<string | null> => {
-  try {
-    return await invoke<string>("claude_cli_version");
-  } catch {
-    return null;
-  }
-};

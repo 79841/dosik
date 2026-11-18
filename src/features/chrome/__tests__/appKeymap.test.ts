@@ -12,6 +12,7 @@ const saving = vi.hoisted(() => ({ saveActiveDocument: vi.fn(async () => {}) }))
 vi.mock("../../library/saveDocument", () => saving);
 
 import { useSidebarStore } from "../../../shared/lib/sidebarLayout";
+import { useSettingsStore } from "../../settings/settingsStore";
 import { handleAppKeyDown } from "../appKeymap";
 
 /** a keydown as the window sees it — `target` is where focus was */
@@ -209,6 +210,15 @@ describe("tab shortcuts (#218 D12, T39)", () => {
     expect(navigation.closeActiveDocumentTab).toHaveBeenCalledTimes(1);
     ignored({ key: "w", code: "KeyW", metaKey: true }, true);
     expect(navigation.closeActiveDocumentTab).toHaveBeenCalledTimes(1);
+  });
+
+  it("Ctrl+, opens Settings outside macOS — ⌘, on macOS is Dosik ▸ Settings…, the menu's (#252)", () => {
+    useSettingsStore.setState({ open: false });
+    handled({ key: ",", code: "Comma", ctrlKey: true }, false);
+    expect(useSettingsStore.getState().open).toBe(true);
+    useSettingsStore.setState({ open: false });
+    ignored({ key: ",", code: "Comma", metaKey: true }, true);
+    expect(useSettingsStore.getState().open).toBe(false);
   });
 
   it("works inside inputs and is ignored while composing text", () => {

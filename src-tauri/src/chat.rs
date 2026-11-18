@@ -14,6 +14,58 @@ pub(crate) fn cli_command<S: AsRef<std::ffi::OsStr>>(program: S) -> std::process
     cmd
 }
 
+/// Runs a short command and waits at most `timeout` — a CLI waiting on a
+/// prompt (a keychain unlock, say) must not leave Settings checking forever.
+/// None when it could not start or ran out of time (it is killed then).
+pub(crate) fn output_with_timeout(
+    cmd: &mut std::process::Command,
+    timeout: std::time::Duration,
+) -> Option<std::process::Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .ok()?;
+    // read both pipes while waiting, so a chatty child cannot fill one and stall
+    let mut out_pipe = child.stdout.take()?;
+    let mut err_pipe = child.stderr.take()?;
+    let out = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = out_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let err = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = err_pipe.read_to_end(&mut buf);
+        buf
+    });
+    let start = std::time::Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if start.elapsed() < timeout => {
+                std::thread::sleep(std::time::Duration::from_millis(25))
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    Some(std::process::Output {
+        status,
+        stdout: out.join().unwrap_or_default(),
+        stderr: err.join().unwrap_or_default(),
+    })
+}
+
+/// how long a version or sign-in check may take
+pub(crate) const CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(8);
+
 pub(crate) fn home_dir() -> String {
     let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
     std::env::var(var).unwrap_or_default()
@@ -84,7 +136,8 @@ fn candidate_paths(home: &str) -> Vec<std::path::PathBuf> {
 
 /// Locates the Claude Code CLI binary, which may not be on PATH when the app
 /// is launched from Finder (macOS) or the Start Menu (Windows).
-fn find_claude_cli() -> Option<std::path::PathBuf> {
+/// the Claude Code CLI — the chat's, and Settings ▸ Integrations' (#252)
+pub(crate) fn find_claude_cli() -> Option<std::path::PathBuf> {
     find_cli_binary("claude", "CLAUDE_CLI_PATH", candidate_paths(&home_dir()))
 }
 
@@ -138,19 +191,50 @@ pub(crate) fn ensure_spawnable(
 
 const CLAUDE_NATIVE_HINT: &str = "claude.exe (irm https://claude.ai/install.ps1 | iex installs it)";
 
+/// What Settings ▸ AI assistant shows for a subscription CLI (#252): its
+/// version when it runs (None: not found or will not start), and whether it is
+/// signed in (None: could not tell).
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct CliStatus {
+    pub version: Option<String>,
+    pub signed_in: Option<bool>,
+}
+
+/// `claude auth status --json` → `loggedIn`; anything else is "could not tell".
+pub fn parse_claude_auth_status(stdout: &str) -> Option<bool> {
+    serde_json::from_str::<serde_json::Value>(stdout.trim())
+        .ok()?
+        .get("loggedIn")?
+        .as_bool()
+}
+
+/// The Claude Code CLI as Settings shows it: version, then sign-in. Not
+/// found, or a shim that cannot take a prompt, is no version.
 #[tauri::command]
-pub async fn claude_cli_version() -> Result<String, String> {
+pub async fn claude_cli_status() -> Result<CliStatus, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let cli = find_claude_cli().ok_or_else(|| "Claude Code CLI not found".to_string())?;
-        ensure_spawnable(&cli, "CLAUDE_CLI_PATH", CLAUDE_NATIVE_HINT)?;
-        let output = cli_command(cli)
-            .arg("--version")
-            .output()
-            .map_err(|e| format!("failed to run claude: {e}"))?;
-        if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        let none = CliStatus {
+            version: None,
+            signed_in: None,
+        };
+        let Some(cli) = find_claude_cli() else {
+            return Ok(none);
+        };
+        if ensure_spawnable(&cli, "CLAUDE_CLI_PATH", CLAUDE_NATIVE_HINT).is_err() {
+            return Ok(none);
         }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        let version = output_with_timeout(cli_command(&cli).arg("--version"), CHECK_TIMEOUT)
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+        if version.is_none() {
+            return Ok(none);
+        }
+        let signed_in = output_with_timeout(
+            cli_command(&cli).args(["auth", "status", "--json"]),
+            CHECK_TIMEOUT,
+        )
+        .and_then(|o| parse_claude_auth_status(&String::from_utf8_lossy(&o.stdout)));
+        Ok(CliStatus { version, signed_in })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -259,6 +343,37 @@ pub fn parse_cli_response(stdout: &str) -> CliChatResponse {
     }
 }
 
+/// `claude -p` for one chat turn: JSON out, the app's system prompt, curl as
+/// the only tool, the session to resume, the model the composer chose (#252),
+/// and the prompt last — after `--`, so a prompt starting with `-` stays one.
+pub fn claude_args(
+    system_prompt: &str,
+    session_id: Option<&str>,
+    model: Option<&str>,
+    prompt: &str,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec![
+        "-p".into(),
+        "--output-format".into(),
+        "json".into(),
+        "--append-system-prompt".into(),
+        system_prompt.into(),
+        "--allowedTools".into(),
+        "Bash(curl:*)".into(),
+    ];
+    if let Some(id) = session_id {
+        args.push("--resume".into());
+        args.push(id.into());
+    }
+    if let Some(model) = model {
+        args.push("--model".into());
+        args.push(model.into());
+    }
+    args.push("--".into());
+    args.push(prompt.into());
+    args
+}
+
 /// Runs one chat turn through the Claude Code CLI in headless mode. The CLI is
 /// authenticated with the user's Claude subscription, and is only allowed to
 /// use curl (against the local diagram bridge) as a tool. The prompt is passed
@@ -268,6 +383,7 @@ pub async fn claude_cli_chat(
     prompt: String,
     system_prompt: String,
     session_id: Option<String>,
+    model: Option<String>,
 ) -> Result<CliChatResponse, CliError> {
     tauri::async_runtime::spawn_blocking(move || {
         let cli = find_claude_cli().ok_or_else(|| {
@@ -282,17 +398,12 @@ pub async fn claude_cli_chat(
             .map_err(|m| CliError::new(CliErrorKind::NotInstalled, m))?;
 
         let mut cmd = cli_command(cli);
-        cmd.arg("-p")
-            .arg("--output-format")
-            .arg("json")
-            .arg("--append-system-prompt")
-            .arg(&system_prompt)
-            .arg("--allowedTools")
-            .arg("Bash(curl:*)");
-        if let Some(id) = &session_id {
-            cmd.arg("--resume").arg(id);
-        }
-        cmd.arg("--").arg(&prompt);
+        cmd.args(claude_args(
+            &system_prompt,
+            session_id.as_deref(),
+            model.as_deref(),
+            &prompt,
+        ));
 
         let output = cmd.output().map_err(|e| {
             CliError::new(
@@ -335,6 +446,65 @@ pub async fn claude_cli_chat(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn output_with_timeout_returns_output_or_gives_up() {
+        let done = output_with_timeout(
+            std::process::Command::new("sh").args(["-c", "echo hi"]),
+            std::time::Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(String::from_utf8_lossy(&done.stdout).trim(), "hi");
+        let started = std::time::Instant::now();
+        assert!(output_with_timeout(
+            std::process::Command::new("sh").args(["-c", "sleep 5"]),
+            std::time::Duration::from_millis(200),
+        )
+        .is_none());
+        assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    }
+
+    #[test]
+    fn claude_auth_status_reads_logged_in() {
+        assert_eq!(
+            parse_claude_auth_status(r#"{"loggedIn":true,"authMethod":"claude.ai"}"#),
+            Some(true)
+        );
+        assert_eq!(
+            parse_claude_auth_status("{\"loggedIn\": false}\n"),
+            Some(false)
+        );
+        assert_eq!(parse_claude_auth_status("Not logged in"), None);
+        assert_eq!(parse_claude_auth_status(r#"{"loggedIn":"yes"}"#), None);
+    }
+
+    #[test]
+    fn claude_args_print_json_with_the_prompt_last() {
+        let args = claude_args("sys", None, None, "--draw");
+        assert_eq!(args[0], "-p");
+        let fmt = args.iter().position(|a| a == "--output-format").unwrap();
+        assert_eq!(args[fmt + 1], "json");
+        let sys = args
+            .iter()
+            .position(|a| a == "--append-system-prompt")
+            .unwrap();
+        assert_eq!(args[sys + 1], "sys");
+        assert!(args.contains(&"Bash(curl:*)".to_string()));
+        assert!(!args.contains(&"--resume".to_string()));
+        assert!(!args.contains(&"--model".to_string()));
+        assert_eq!(args[args.len() - 2], "--");
+        assert_eq!(args[args.len() - 1], "--draw");
+    }
+
+    #[test]
+    fn claude_args_resume_the_session_and_carry_the_chosen_model() {
+        let args = claude_args("sys", Some("s-1"), Some("claude-sonnet-5"), "hi");
+        let resume = args.iter().position(|a| a == "--resume").unwrap();
+        assert_eq!(args[resume + 1], "s-1");
+        let model = args.iter().position(|a| a == "--model").unwrap();
+        assert_eq!(args[model + 1], "claude-sonnet-5");
+        assert!(model < args.iter().position(|a| a == "--").unwrap());
+    }
 
     // #68 — an error result must not leak out as raw JSON
     const LIMIT_STDOUT: &str = r#"{"type":"result","subtype":"error_during_execution","is_error":true,"duration_api_ms":0,"num_turns":0,"result":"You've hit your session limit · resets 5:10am (Asia/Seoul)","total_cost_usd":0,"usage":{"input_tokens":0},"modelUsage":{},"permission_denials":[],"terminal_reason":"api_error","session_id":"abc"}"#;

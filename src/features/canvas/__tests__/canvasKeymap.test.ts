@@ -52,6 +52,29 @@ const press = (
   return { prevented };
 };
 
+describe("a modal dialog owns the keyboard — nothing reaches the canvas under it", () => {
+  beforeEach(() => {
+    useDiagramStore.getState().loadDoc(makeDoc([makeNode({ id: "a" })], []), null);
+    useDiagramStore.setState((s) => ({ nodes: s.nodes.map((n) => ({ ...n, selected: true })) }));
+  });
+
+  it("Backspace on a dialog's button leaves the selection behind it alone", () => {
+    const dialog = document.createElement("dialog");
+    dialog.setAttribute("open", "");
+    document.body.append(dialog);
+    try {
+      expect(press("Backspace", {}, "BUTTON").prevented).toBe(false);
+      expect(press("Delete").prevented).toBe(false);
+      expect(useDiagramStore.getState().nodes).toHaveLength(1);
+    } finally {
+      dialog.remove();
+    }
+    // closed again, the key works as before
+    expect(press("Backspace").prevented).toBe(true);
+    expect(useDiagramStore.getState().nodes).toHaveLength(0);
+  });
+});
+
 describe(".nodelete — blocks only deletion and lets undo and clipboard through (#129)", () => {
   beforeEach(() => {
     useDiagramStore.getState().loadDoc(makeDoc([makeNode({ id: "a" })], []), null);

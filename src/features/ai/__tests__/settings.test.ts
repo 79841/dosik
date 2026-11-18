@@ -1,14 +1,16 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  activeAuth,
   activeKey,
   activeModel,
   DEFAULT_AI_SETTINGS,
   loadAiSettings,
+  modelShortLabel,
   saveAiSettings,
 } from "../settings";
 
-describe("AI settings storage (v2 — vendor × auth, #119)", () => {
+describe("AI settings storage (vendor × auth per vendor, #119, #252)", () => {
   beforeEach(() => {
     localStorage.clear();
   });
@@ -20,7 +22,7 @@ describe("AI settings storage (v2 — vendor × auth, #119)", () => {
   it("reads back the same value after saving", () => {
     const s = {
       vendor: "openai" as const,
-      auth: "api-key" as const,
+      auths: { claude: "subscription" as const, openai: "api-key" as const },
       keys: { claude: "", openai: "sk-o" },
       models: { claude: "claude-opus-5", openai: "gpt-6-astra" },
     };
@@ -28,6 +30,7 @@ describe("AI settings storage (v2 — vendor × auth, #119)", () => {
     expect(loadAiSettings()).toEqual(s);
     expect(activeKey(s)).toBe("sk-o");
     expect(activeModel(s)).toBe("gpt-6-astra");
+    expect(activeAuth(s)).toBe("api-key");
   });
 
   it("migrates v1 claude-cli to Claude · Subscription", () => {
@@ -50,7 +53,7 @@ describe("AI settings storage (v2 — vendor × auth, #119)", () => {
     );
     const s = loadAiSettings();
     expect(s.vendor).toBe("claude");
-    expect(s.auth).toBe("api-key");
+    expect(s.auths).toEqual({ claude: "api-key", openai: "api-key" });
     expect(s.keys).toEqual({ claude: "sk-x", openai: "" });
     expect(s.models).toEqual({ claude: "claude-sonnet-5", openai: "gpt-5.6-sol" });
   });
@@ -78,7 +81,7 @@ describe("AI settings storage (v2 — vendor × auth, #119)", () => {
     );
     const s = loadAiSettings();
     expect(s.vendor).toBe("openai");
-    expect(s.auth).toBe("subscription");
+    expect(s.auths).toEqual({ claude: "subscription", openai: "subscription" });
     expect(s.keys).toEqual({ claude: "", openai: "sk-p" });
     expect(s.models.openai).toBe("gpt-5.6-sol");
   });
@@ -90,7 +93,7 @@ describe("AI settings storage (v2 — vendor × auth, #119)", () => {
     );
     const s = loadAiSettings();
     expect(s.vendor).toBe("claude");
-    expect(s.auth).toBe("subscription");
+    expect(s.auths.claude).toBe("subscription");
     expect(s.keys.claude).toBe("sk-p");
     expect(s.models.claude).toBe("claude-sonnet-5");
   });
@@ -119,6 +122,55 @@ describe("AI settings storage (v2 — vendor × auth, #119)", () => {
     localStorage.setItem("dosik.ai-settings", JSON.stringify({ vendor: "gemini", auth: "magic" }));
     const s = loadAiSettings();
     expect(s.vendor).toBe("claude");
-    expect(s.auth).toBe("subscription");
+    expect(s.auths).toEqual({ claude: "subscription", openai: "subscription" });
+  });
+
+  it("moves a single stored connection (auth) to both vendors, once", () => {
+    localStorage.setItem(
+      "dosik.ai-settings",
+      JSON.stringify({
+        vendor: "openai",
+        auth: "api-key",
+        keys: { claude: "", openai: "sk-o" },
+        models: { claude: "claude-opus-5", openai: "gpt-6-astra" },
+      }),
+    );
+    const s = loadAiSettings();
+    expect(s.auths).toEqual({ claude: "api-key", openai: "api-key" });
+    expect(activeAuth(s)).toBe("api-key");
+    // written back in the per-vendor shape, without the old field
+    const stored = JSON.parse(localStorage.getItem("dosik.ai-settings")!);
+    expect(stored.auths).toEqual({ claude: "api-key", openai: "api-key" });
+    expect(stored).not.toHaveProperty("auth");
+  });
+
+  it("keeps per-vendor connections apart", () => {
+    localStorage.setItem(
+      "dosik.ai-settings",
+      JSON.stringify({ vendor: "claude", auths: { claude: "api-key", openai: "subscription" } }),
+    );
+    const s = loadAiSettings();
+    expect(s.auths).toEqual({ claude: "api-key", openai: "subscription" });
+    expect(activeAuth(s)).toBe("api-key");
+    expect(activeAuth({ ...s, vendor: "openai" })).toBe("subscription");
+  });
+
+  it("an unknown per-vendor connection falls back to subscription for that vendor only", () => {
+    localStorage.setItem(
+      "dosik.ai-settings",
+      JSON.stringify({ auths: { claude: "magic", openai: "api-key" } }),
+    );
+    expect(loadAiSettings().auths).toEqual({ claude: "subscription", openai: "api-key" });
+  });
+});
+
+describe("modelShortLabel (#252)", () => {
+  it("drops the (recommended) note the menus carry", () => {
+    expect(modelShortLabel("claude", "claude-opus-5")).toBe("Claude Opus 5");
+    expect(modelShortLabel("openai", "gpt-6-astra")).toBe("GPT-6 Astra");
+  });
+
+  it("falls back to the id for a model the list does not know", () => {
+    expect(modelShortLabel("claude", "claude-next")).toBe("claude-next");
   });
 });

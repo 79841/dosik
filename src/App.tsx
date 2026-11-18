@@ -29,6 +29,8 @@ import { EDITOR_TOAST_BOTTOM, TOAST_BOTTOM } from "./shared/lib/editorLayout";
 import { useDockedWidth, useSidebarStore } from "./shared/lib/sidebarLayout";
 import { ErrorBoundary } from "./shared/ui/ErrorBoundary";
 import { Toaster } from "./shared/ui/Toaster";
+import { SettingsDialog } from "./features/settings/SettingsDialog";
+import { useSettingsStore } from "./features/settings/settingsStore";
 
 /**
  * The editor's sheet (#219 D1): the toolbar row (the diagram's path and
@@ -122,6 +124,8 @@ const Frame = () => {
   const docked = useDockedWidth();
   const view = useAppStore((s) => s.view);
   const activeTab = useAppStore((s) => s.activeTab);
+  // the Settings dialog shows the toasts while it is up — the sheet's would sit under it (#252)
+  const settingsOpen = useSettingsStore((s) => s.open);
 
   // What keeps the documents safe renders nothing, so it lives here, outside
   // the content's boundary: a crash screen in the sheet still asks about
@@ -178,13 +182,14 @@ const Frame = () => {
           <ErrorBoundary>
             <Shell />
           </ErrorBoundary>
-          {/* every "Saved" / "Error: …" the app raises is shown here and nowhere else */}
-          <Toaster />
+          {/* every "Saved" / "Error: …" the app raises is shown here — or in Settings while it is up */}
+          {settingsOpen ? null : <Toaster />}
         </div>
       </div>
       {/* mounted through a drag that hides the sidebar, so the same gesture can bring it back */}
       {!hidden || resizing ? <SidebarResizeEdge /> : null}
       <SidebarPeek />
+      <SettingsDialog />
     </div>
   );
 };

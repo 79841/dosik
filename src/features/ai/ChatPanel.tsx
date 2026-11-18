@@ -1,6 +1,5 @@
 import {
   ArrowUp,
-  Check,
   Code,
   MessageSquarePlus,
   Pencil,
@@ -8,21 +7,19 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { type Ref, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { ACCENT_BUTTON, TEXT_MUTED, TEXT_MUTED_HOVER } from "../../shared/lib/palette";
+import { ACCENT_BUTTON, TEXT_MUTED } from "../../shared/lib/palette";
 import { useDiagramStore } from "../../shared/lib/store";
 import { ICON_STROKE, IconButton, SMALL_ICON_SIZE } from "../../shared/ui/IconButton";
 import { PLAIN_TEXT } from "../../shared/ui/plainText";
 import { MermaidPreview } from "../mermaid/MermaidPreview";
+import { openSettings } from "../settings/settingsStore";
 import { sendChatTurn } from "./chatActions";
 import { panelToggleId, SIDE_PANEL_ID, useChatStore } from "./chatStore";
-import { checkClaudeCli } from "./cliProvider";
-import { checkCodexCli } from "./codexProvider";
 import { ModelPicker } from "./ModelPicker";
 import { chatRoom, clampChatWidth, MAX_CHAT_WIDTH, MIN_CHAT_WIDTH } from "./panelWidth";
 import { selectionChipLabel, summarizeSelection } from "./selectionContext";
-import { type AiAuth, type AiVendor, MODELS_BY_VENDOR } from "./settings";
 import { useChatWidth } from "./useChatWidth";
 
 const headerIcon = {
@@ -61,177 +58,6 @@ const SelectionChip = () => {
   );
 };
 
-const Segmented = <T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: { id: T; label: string }[];
-  onChange: (v: T) => void;
-}) => (
-  <fieldset className="m-0 border-0 p-0">
-    <legend
-      className={`mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] ${TEXT_MUTED}`}
-    >
-      {label}
-    </legend>
-    <div className="flex gap-0.5 rounded-[7px] bg-frame p-0.5">
-      {options.map((o) => (
-        <button
-          key={o.id}
-          type="button"
-          aria-pressed={value === o.id}
-          onClick={() => onChange(o.id)}
-          className={`h-6 flex-1 rounded-(--radius-control) px-2 text-[12px] transition-colors ${
-            value === o.id
-              ? "bg-surface font-semibold text-ink shadow-segment"
-              : `font-medium ${TEXT_MUTED} ${TEXT_MUTED_HOVER}`
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  </fieldset>
-);
-
-type CliStatus = { version: string } | { error: string } | undefined;
-
-/** one line about the local CLI the subscription connection would use */
-const CliStatusLine = ({ status }: { status: CliStatus }) => {
-  if (status === undefined) return <span className={`${TEXT_MUTED}`}>Checking CLI…</span>;
-  if ("version" in status)
-    return (
-      <span className="inline-flex items-center gap-1 text-success">
-        <Check size={12} strokeWidth={2.5} aria-hidden="true" />
-        {status.version}
-      </span>
-    );
-  return <span className="text-danger">{status.error}</span>;
-};
-
-const SettingsView = ({ onClose, ref }: { onClose: () => void; ref: Ref<HTMLDivElement> }) => {
-  const settings = useChatStore((s) => s.settings);
-  const setSettings = useChatStore((s) => s.setSettings);
-  const [claudeStatus, setClaudeStatus] = useState<CliStatus>(undefined);
-  const [codexStatus, setCodexStatus] = useState<CliStatus>(undefined);
-
-  useEffect(() => {
-    void checkClaudeCli().then((v) =>
-      setClaudeStatus(
-        v
-          ? { version: v }
-          : { error: "Claude Code CLI not found — install it and sign in with your subscription" },
-      ),
-    );
-    void checkCodexCli().then(setCodexStatus);
-  }, []);
-
-  const vendor = settings.vendor;
-  const cliStatus = vendor === "claude" ? claudeStatus : codexStatus;
-
-  return (
-    <div
-      ref={ref}
-      className="mx-auto flex w-full max-w-sm flex-col gap-4 overflow-y-auto px-3 pt-1 pb-3"
-    >
-      <Segmented<AiVendor>
-        label="Provider"
-        value={vendor}
-        options={[
-          { id: "claude", label: "Claude" },
-          { id: "openai", label: "GPT" },
-        ]}
-        onChange={(v) => setSettings({ ...settings, vendor: v })}
-      />
-      <Segmented<AiAuth>
-        label="Connection"
-        value={settings.auth}
-        options={[
-          { id: "subscription", label: "Subscription" },
-          { id: "api-key", label: "API key" },
-        ]}
-        onChange={(a) => setSettings({ ...settings, auth: a })}
-      />
-
-      {settings.auth === "subscription" ? (
-        <div className="rounded-(--radius-card) bg-frame px-2.5 py-2">
-          {cliStatus !== undefined && "error" in cliStatus ? null : (
-            // the blurb describes the working case; an error line below says what is actually true
-            <p className={`text-[11px] leading-snug ${TEXT_MUTED}`}>
-              {vendor === "claude"
-                ? "Uses your local Claude Code CLI signed in with a Claude Pro/Max subscription. No API key needed."
-                : "Uses your local Codex CLI signed in with a ChatGPT subscription. No API key needed."}
-            </p>
-          )}
-          <p className="mt-1 text-[10.5px] font-medium">
-            <CliStatusLine status={cliStatus} />
-          </p>
-        </div>
-      ) : (
-        <>
-          <div>
-            <p
-              className={`mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] ${TEXT_MUTED}`}
-            >
-              {vendor === "claude" ? "Anthropic API key" : "OpenAI API key"}
-            </p>
-            <input
-              {...PLAIN_TEXT}
-              type="password"
-              aria-label={vendor === "claude" ? "Anthropic API key" : "OpenAI API key"}
-              value={settings.keys[vendor]}
-              onChange={(e) =>
-                setSettings({ ...settings, keys: { ...settings.keys, [vendor]: e.target.value } })
-              }
-              placeholder={vendor === "claude" ? "sk-ant-..." : "sk-..."}
-              className="h-7 w-full rounded-(--radius-button) bg-frame px-2 text-[12px] text-ink outline-none focus:ring-2 focus:ring-primary/40"
-            />
-            <p className={`mt-1 text-[10.5px] ${TEXT_MUTED}`}>
-              Pay-per-use. The key is kept in this device's system keychain.
-            </p>
-          </div>
-          <div>
-            <p
-              className={`mb-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] ${TEXT_MUTED}`}
-            >
-              Model
-            </p>
-            <select
-              aria-label="Model"
-              value={settings.models[vendor]}
-              onChange={(e) =>
-                setSettings({
-                  ...settings,
-                  models: { ...settings.models, [vendor]: e.target.value },
-                })
-              }
-              className="h-7 w-full rounded-(--radius-button) bg-frame px-1.5 text-[12px] text-ink outline-none"
-            >
-              {MODELS_BY_VENDOR[vendor].map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </>
-      )}
-
-      <button
-        type="button"
-        onClick={onClose}
-        className={`h-7 rounded-(--radius-button) px-3 text-[12px] font-semibold ${ACCENT_BUTTON}`}
-      >
-        Done
-      </button>
-    </div>
-  );
-};
-
 /** grows the composer with its content, capped by the element's own max-height */
 const autoGrow = (el: HTMLTextAreaElement): void => {
   el.style.height = "auto";
@@ -260,17 +86,10 @@ export const ChatPanel = () => {
   const titleId = useId();
 
   const [input, setInput] = useState("");
-  const [showSettings, setShowSettings] = useState(false);
   const [resizing, setResizing] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const asideRef = useRef<HTMLElement>(null);
-  const settingsRef = useRef<HTMLDivElement>(null);
-  /** what had the keyboard when the settings view opened */
-  const settingsOpenerRef = useRef<HTMLElement | null>(null);
-  /** the next opening of the settings view lands on the API key field */
-  const settingsKeyFirstRef = useRef(false);
-  const settingsShownRef = useRef(showSettings);
   /** ends the drag in flight, so an unmount mid-gesture cannot strand the cursor */
   const dragRef = useRef<(() => void) | null>(null);
 
@@ -294,43 +113,10 @@ export const ChatPanel = () => {
 
   // the composer's height follows its text, and the text rewraps when the panel
   // is resized — `onChange` alone leaves it stale after either
-  // biome-ignore lint/correctness/useExhaustiveDependencies: input, width, showSettings, open and view are the triggers — the text, the wrap and a remount of the composer all change the needed height
+  // biome-ignore lint/correctness/useExhaustiveDependencies: input, width, open and view are the triggers — the text, the wrap and a remount of the composer all change the needed height
   useLayoutEffect(() => {
     if (inputRef.current) autoGrow(inputRef.current);
-  }, [input, width, showSettings, open, view]);
-
-  // The settings view takes the composer's place, and the control that had
-  // the keyboard can go with it — the model picker's button, the message box,
-  // Done. The focus would fall to <body>, outside `.nodelete`, where the next
-  // Backspace deletes the canvas selection (#219). So the switch
-  // hands the focus on: into the settings view, and back out to what opened
-  // it if that is still here (the header toggle), else to the message box.
-  useLayoutEffect(() => {
-    if (settingsShownRef.current === showSettings) return;
-    settingsShownRef.current = showSettings;
-    if (showSettings) {
-      const field = settingsKeyFirstRef.current
-        ? 'input[type="password"]'
-        : "button, input, select";
-      settingsKeyFirstRef.current = false;
-      settingsRef.current?.querySelector<HTMLElement>(field)?.focus();
-      return;
-    }
-    const opener = settingsOpenerRef.current;
-    settingsOpenerRef.current = null;
-    const back = opener?.isConnected && asideRef.current?.contains(opener) ? opener : null;
-    (back ?? inputRef.current)?.focus();
-  }, [showSettings]);
-
-  /**
-   * Every way into or out of the settings view goes through here, for the
-   * focus. `toKey`: a send stopped for want of a key lands on the key field.
-   */
-  const showSettingsView = (show: boolean, toKey = false) => {
-    if (show) settingsOpenerRef.current = document.activeElement as HTMLElement | null;
-    settingsKeyFirstRef.current = show && toKey;
-    setShowSettings(show);
-  };
+  }, [input, width, open, view]);
 
   const resizeBy = (delta: number) => {
     // from the store, not the render closure: key auto-repeat fires faster than
@@ -388,8 +174,10 @@ export const ChatPanel = () => {
     setInput("");
     const result = await sendChatTurn(text);
     if (result === "needs-api-key") {
+      // the draft stays; Settings opens on the key field, and closing it comes back here
       setInput(text);
-      showSettingsView(true, true);
+      const { vendor } = useChatStore.getState().settings;
+      openSettings("AI assistant", { returnTo: inputRef.current, focus: `key-${vendor}` });
     }
   };
 
@@ -432,10 +220,10 @@ export const ChatPanel = () => {
                 <MessageSquarePlus {...headerIcon} />
               </IconButton>
               <IconButton
-                label="AI settings"
+                label="AI assistant settings"
                 size={28}
-                pressed={showSettings}
-                onClick={() => showSettingsView(!showSettings)}
+                popup="dialog"
+                onClick={() => openSettings("AI assistant")}
               >
                 <SlidersHorizontal {...headerIcon} />
               </IconButton>
@@ -447,12 +235,10 @@ export const ChatPanel = () => {
         </div>
       </div>
 
-      {/* the chat's state (what is typed, the settings view) lives here, above
-          the switch, so a look at the preview does not lose it */}
+      {/* the chat's state (what is typed) lives here, above the switch, so a
+          look at the preview does not lose it */}
       {!chat ? (
         <MermaidPreview />
-      ) : showSettings ? (
-        <SettingsView ref={settingsRef} onClose={() => showSettingsView(false)} />
       ) : (
         <>
           <div
@@ -545,7 +331,7 @@ export const ChatPanel = () => {
                 className="block max-h-32 w-full resize-none overflow-y-auto bg-transparent text-[12px] leading-normal text-ink outline-none placeholder:text-muted"
               />
               <div className="mt-1 flex items-center gap-2">
-                <ModelPicker onSettings={() => showSettingsView(true)} />
+                <ModelPicker />
                 <button
                   type="button"
                   onClick={() => void send()}

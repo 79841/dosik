@@ -15,7 +15,7 @@ const rootStyle = () => document.documentElement.style;
 
 beforeEach(() => {
   localStorage.clear();
-  useThemeStore.setState({ theme: "light" });
+  useThemeStore.setState({ theme: "light", preference: "light" });
   applyThemeToDom("light");
 });
 
@@ -112,6 +112,70 @@ describe("useThemeStore", () => {
     const fresh = await import("../theme");
     expect(matchMediaMock).toHaveBeenCalledWith("(prefers-color-scheme: dark)");
     expect(fresh.useThemeStore.getState().theme).toBe("dark");
+  });
+});
+
+describe("theme preference — Light / Dark / System (#252)", () => {
+  /** a fake media query whose change listener the test can fire */
+  const fakeSystem = (dark: boolean) => {
+    const listeners: ((e: { matches: boolean }) => void)[] = [];
+    const mql = {
+      matches: dark,
+      addEventListener: (_: string, fn: (e: { matches: boolean }) => void) => listeners.push(fn),
+      removeEventListener: () => {},
+    };
+    vi.stubGlobal("matchMedia", vi.fn().mockReturnValue(mql));
+    return {
+      flip: (next: boolean) => {
+        mql.matches = next;
+        for (const fn of listeners) fn({ matches: next });
+      },
+    };
+  };
+
+  it("System follows macOS — now and when it changes", async () => {
+    const system = fakeSystem(false);
+    vi.resetModules();
+    const fresh = await import("../theme");
+    fresh.initTheme();
+    fresh.useThemeStore.getState().setPreference("system");
+    expect(fresh.useThemeStore.getState().theme).toBe("light");
+    expect(localStorage.getItem("dosik.theme")).toBe("system");
+    system.flip(true);
+    expect(fresh.useThemeStore.getState().theme).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("dark");
+  });
+
+  it("a picked theme stays put when macOS changes", async () => {
+    const system = fakeSystem(false);
+    vi.resetModules();
+    const fresh = await import("../theme");
+    fresh.initTheme();
+    fresh.useThemeStore.getState().setPreference("light");
+    system.flip(true);
+    expect(fresh.useThemeStore.getState().theme).toBe("light");
+  });
+
+  it("nothing saved, or System saved, starts on System", async () => {
+    fakeSystem(true);
+    vi.resetModules();
+    let fresh = await import("../theme");
+    expect(fresh.useThemeStore.getState().preference).toBe("system");
+    expect(fresh.useThemeStore.getState().theme).toBe("dark");
+    localStorage.setItem("dosik.theme", "system");
+    vi.resetModules();
+    fresh = await import("../theme");
+    expect(fresh.useThemeStore.getState().preference).toBe("system");
+  });
+
+  it("the quick switch picks the opposite of what shows, leaving System", async () => {
+    fakeSystem(true);
+    vi.resetModules();
+    const fresh = await import("../theme");
+    fresh.useThemeStore.getState().setPreference("system");
+    fresh.useThemeStore.getState().toggleTheme();
+    expect(fresh.useThemeStore.getState().preference).toBe("light");
+    expect(fresh.useThemeStore.getState().theme).toBe("light");
   });
 });
 

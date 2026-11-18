@@ -27,6 +27,7 @@
     "ops": "node scripts/dosik-ops.mjs",
     "mcp": "node scripts/mcp/server.mjs",
     "build:headless": "vite build --config vite.headless.config.ts",
+    "build:mcp": "node scripts/build-mcp.mjs",
     "headless": "node dist-cli/dosik-headless.mjs"
   },
   "dependencies": {
@@ -63,6 +64,7 @@
     "@vitest/coverage-v8": "^4.1.12",
     "@vitest/ui": "^4.1.12",
     "@xyflow/system": "0.0.82",
+    "fflate": "0.8.3",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "~5.8.3",

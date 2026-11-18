@@ -1,10 +1,10 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, join } from "node:path";
 
+import { MCP_PATHS } from "./paths.mjs";
 import { ToolError } from "./tools.mjs";
 
 /**
@@ -16,8 +16,9 @@ import { ToolError } from "./tools.mjs";
  * `tools.mjs` is the decisions; this is the effects, and both are testable
  * (#2).
  */
-export const REPO = join(dirname(fileURLToPath(import.meta.url)), "../..");
-export const HEADLESS_BUNDLE = join(REPO, "dist-cli/dosik-headless.mjs");
+// the repository — or, packaged with the app, the server's own folder (#252, paths.mjs)
+export const REPO = MCP_PATHS.root;
+export const HEADLESS_BUNDLE = MCP_PATHS.headlessBundle;
 const VITE_BIN = join(REPO, "node_modules/vite/bin/vite.js");
 
 /**
@@ -25,9 +26,7 @@ const VITE_BIN = join(REPO, "node_modules/vite/bin/vite.js");
  * a rename there would otherwise leave `open_in_dosik` asking macOS for an app
  * that no longer exists under that name (#149).
  */
-export const BUNDLE_ID = JSON.parse(
-  readFileSync(join(REPO, "src-tauri/tauri.conf.json"), "utf8"),
-).identifier;
+export const BUNDLE_ID = MCP_PATHS.bundleId;
 
 /**
  * A bundle older than the source it was built from is not a cache, it is a
@@ -50,7 +49,25 @@ const newestMtime = (dir) => {
 };
 
 /** whether `bundle` is newer than `src/` and the config that built it */
-const freshness = (bundle, config) => () =>
+/**
+ * Packaged with the app (#252): the bundle shipped beside the server. There
+ * are no sources to build it from — present, or the install is broken.
+ */
+export const shippedBundle =
+  (bundle, exists = existsSync) =>
+  () => {
+    if (!exists(bundle)) {
+      throw new ToolError(
+        `Dosik's MCP server is missing ${basename(bundle)}. Install it again from Dosik's Settings ▸ Integrations.`,
+      );
+    }
+    return true;
+  };
+
+const freshness = (bundle, config) =>
+  MCP_PATHS.packaged ? shippedBundle(bundle) : sourceFreshness(bundle, config);
+
+const sourceFreshness = (bundle, config) => () =>
   isBundleFresh({
     bundleMtime: existsSync(bundle) ? statSync(bundle).mtimeMs : null,
     // the build config shapes the bundle as much as the sources do (#151)
@@ -64,7 +81,7 @@ const HEADLESS_CONFIG = "vite.headless.config.ts";
 const bundleIsFresh = freshness(HEADLESS_BUNDLE, HEADLESS_CONFIG);
 
 /** the chat view's script (#202), inlined into the `ui://` resource */
-export const VIEW_BUNDLE = join(REPO, "dist-mcp-view/diagram-view.js");
+export const VIEW_BUNDLE = MCP_PATHS.viewBundle;
 const VIEW_CONFIG = "vite.mcp-view.config.ts";
 
 /**

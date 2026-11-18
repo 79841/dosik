@@ -1641,6 +1641,30 @@ pub fn show_in_finder(app: AppHandle, kind: ItemKind, id: String) -> Result<(), 
     .map_err(|e| e.to_string())
 }
 
+/// The library's own folder (`projects/`) for Settings ▸ General (#252),
+/// shown with `~` like the path card.
+#[tauri::command]
+pub fn library_root(app: AppHandle) -> Result<ItemPath, String> {
+    let path = library_dir(&app)?;
+    let home = app.path().home_dir().ok();
+    Ok(ItemPath {
+        shown: shown_path(&path, home.as_deref()),
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// Settings ▸ General ▸ Show in Finder: the library folder opens (#252, the
+/// same opening as a folder's Show in Finder, #238).
+#[tauri::command(async)]
+pub fn show_library_in_finder(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let path = library_dir(&app)?;
+    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(path.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

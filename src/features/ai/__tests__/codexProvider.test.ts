@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { checkCodexCli, sendWithCodexCli } from "../codexProvider";
+import { sendWithCodexCli } from "../codexProvider";
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -23,8 +23,18 @@ describe("codexProvider (#119)", () => {
       prompt: expect.stringMatching(/\/api\/chat\/[^/]+\/ops[\s\S]*draw a flow$/),
       systemPrompt: expect.stringContaining("curl"),
       sessionId: "th_1",
+      model: null,
     });
     expect(result).toEqual({ text: "drew it", sessionId: "th_2" });
+  });
+
+  it("sendWithCodexCli: passes the chosen model to codex_cli_chat (#252)", async () => {
+    bridgeAnd(() => ({ text: "drew it", session_id: "th_2" }));
+    await sendWithCodexCli("draw a flow", null, undefined, "gpt-6-astra");
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      "codex_cli_chat",
+      expect.objectContaining({ model: "gpt-6-astra" }),
+    );
   });
 
   it("turns structured errors into Codex wording", async () => {
@@ -38,16 +48,5 @@ describe("codexProvider (#119)", () => {
     await expect(sendWithCodexCli("x", null)).rejects.toThrow("switch to the API key connection");
     mockedInvoke.mockResolvedValueOnce(4517).mockRejectedValueOnce(cliError("unknown", "boom"));
     await expect(sendWithCodexCli("x", null)).rejects.toThrow("Codex CLI failed: boom");
-  });
-
-  it("checkCodexCli: a version, or an error with actionable guidance", async () => {
-    mockedInvoke.mockResolvedValueOnce("codex-cli 0.116.0");
-    expect(await checkCodexCli()).toEqual({ version: "codex-cli 0.116.0" });
-    mockedInvoke.mockRejectedValueOnce(
-      new Error("Codex CLI not found. Install it with `npm i -g @openai/codex`"),
-    );
-    expect(await checkCodexCli()).toEqual({
-      error: expect.stringContaining("npm i -g @openai/codex"),
-    });
   });
 });

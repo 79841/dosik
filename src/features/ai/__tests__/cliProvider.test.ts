@@ -2,13 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { captureChatTarget, chatTurn } from "../chatTarget";
-import {
-  BRIDGE_DOWN,
-  checkClaudeCli,
-  formatCliError,
-  isCliError,
-  sendWithClaudeCli,
-} from "../cliProvider";
+import { BRIDGE_DOWN, formatCliError, isCliError, sendWithClaudeCli } from "../cliProvider";
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -28,8 +22,18 @@ describe("cliProvider", () => {
       prompt: expect.stringMatching(/\/api\/chat\/[^/]+\/ops[\s\S]*draw a login flow$/),
       systemPrompt: expect.any(String),
       sessionId: "s-8",
+      model: null,
     });
     expect(result).toEqual({ text: "reply", sessionId: "s-9" });
+  });
+
+  it("sendWithClaudeCli: passes the chosen model to the command (#252)", async () => {
+    bridgeAnd(() => ({ text: "reply", session_id: "s-9" }));
+    await sendWithClaudeCli("hi", null, undefined, "claude-sonnet-5");
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      "claude_cli_chat",
+      expect.objectContaining({ model: "claude-sonnet-5" }),
+    );
   });
 
   describe("address for this turn (#167)", () => {
@@ -68,16 +72,6 @@ describe("cliProvider", () => {
       expect(token).toBeDefined();
       expect(chatTurn(token ?? "")).toBeUndefined();
     });
-  });
-
-  it("checkClaudeCli: a version string on success", async () => {
-    mockedInvoke.mockResolvedValue("1.2.3 (Claude Code)");
-    expect(await checkClaudeCli()).toBe("1.2.3 (Claude Code)");
-  });
-
-  it("checkClaudeCli: null on failure (CLI shown as not installed)", async () => {
-    mockedInvoke.mockRejectedValue(new Error("not found"));
-    expect(await checkClaudeCli()).toBeNull();
   });
 
   // #68 — structured errors are thrown as one human-readable line

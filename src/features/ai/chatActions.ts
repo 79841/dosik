@@ -6,7 +6,7 @@ import { sendWithClaudeCli } from "./cliProvider";
 import { sendWithCodexCli } from "./codexProvider";
 import { sendWithOpenAi } from "./openaiProvider";
 import { withSelectionContext } from "./selectionContext";
-import { activeKey, activeModel } from "./settings";
+import { activeAuth, activeKey, activeModel } from "./settings";
 
 export type SendResult = "sent" | "needs-api-key" | "ignored";
 
@@ -23,7 +23,8 @@ export const sendChatTurn = async (rawText: string): Promise<SendResult> => {
   const text = rawText.trim();
   if (!text || store.busy) return "ignored";
   const { settings } = store;
-  if (settings.auth === "api-key" && !activeKey(settings)) {
+  const auth = activeAuth(settings);
+  if (auth === "api-key" && !activeKey(settings)) {
     return "needs-api-key";
   }
 
@@ -46,9 +47,10 @@ export const sendChatTurn = async (rawText: string): Promise<SendResult> => {
   store.addMessage("user", text, payload);
   store.setBusy(true);
   try {
-    if (settings.auth === "subscription") {
+    if (auth === "subscription") {
       const send = settings.vendor === "claude" ? sendWithClaudeCli : sendWithCodexCli;
-      const result = await send(payload, store.cliSessionId, target);
+      // the composer's model goes to the CLI too (#252) — without it the menu's choice would do nothing
+      const result = await send(payload, store.cliSessionId, target, activeModel(settings));
       // The session id belongs to the CLI that answered. The model picker
       // works while a turn is out: if the connection changed meanwhile, the
       // id would ask the other CLI to resume a conversation it never had —
@@ -57,7 +59,7 @@ export const sendChatTurn = async (rawText: string): Promise<SendResult> => {
       if (
         now.conversation === conversation &&
         now.settings.vendor === settings.vendor &&
-        now.settings.auth === settings.auth
+        activeAuth(now.settings) === auth
       ) {
         now.setCliSessionId(result.sessionId);
       }

@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -11,6 +11,7 @@ import { useToastStore } from "../../../shared/lib/toastStore";
 import { useAppStore } from "../../library/appStore";
 import { blankDoc, type FolderMeta } from "../../library/libraryApi";
 import { useLibraryStore } from "../../library/libraryStore";
+import { useSettingsStore } from "../../settings/settingsStore";
 import { openDocument, resetTabsForTests, showHomeTab } from "../../library/tabActions";
 import { resetUnsavedGuardForTests } from "../../library/unsavedGuard";
 import { resetAutosaveForTests } from "../../library/useAutosave";
@@ -67,6 +68,12 @@ describe("docked sidebar (#217 R2, T28)", () => {
       "aria-keyshortcuts",
     );
     expect(within(aside).getByRole("button", { name: "Switch to dark theme" })).toBeInTheDocument();
+    // the gear between them opens Settings (#252)
+    const gear = within(aside).getByRole("button", { name: /^Settings/ });
+    expect(gear).toHaveAttribute("aria-haspopup", "dialog");
+    expect(gear).toHaveAttribute("aria-keyshortcuts");
+    fireEvent.click(gear);
+    expect(useSettingsStore.getState().open).toBe(true);
     // keys from here must not reach the canvas (D27)
     expect(aside).toHaveClass("nodelete");
   });

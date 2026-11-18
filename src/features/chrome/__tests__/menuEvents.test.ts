@@ -10,7 +10,8 @@ const navigation = vi.hoisted(() => ({ closeActiveDocumentTab: vi.fn(async () =>
 vi.mock("../../library/navigation", () => navigation);
 
 import { useAppStore } from "../../library/appStore";
-import { CLOSE_TAB_EVENT, useMenuEvents } from "../useMenuEvents";
+import { useSettingsStore } from "../../settings/settingsStore";
+import { CLOSE_TAB_EVENT, SETTINGS_EVENT, useMenuEvents } from "../useMenuEvents";
 
 const mockedListen = vi.mocked(listen);
 const mockedWindow = vi.mocked(getCurrentWindow);
@@ -66,6 +67,46 @@ describe("macOS menu events (#218 D12, T40)", () => {
     // the File menu's two items and their keys (D12)
     expect(rust).toMatch(/"Close Tab"[\s\S]*?Some\("CmdOrCtrl\+W"\)/);
     expect(rust).toMatch(/"Close Window"[\s\S]*?Some\("CmdOrCtrl\+Shift\+W"\)/);
+  });
+
+  it("⌘W with Settings up closes Settings — not the tab or the window behind it (#252)", async () => {
+    useAppStore.setState({ activeTab: "tab-1", view: "editor" });
+    useSettingsStore.setState({ open: true });
+    const handler = await closeTabHandler();
+    handler();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useSettingsStore.getState().open).toBe(false);
+    expect(navigation.closeActiveDocumentTab).not.toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it("⌘W with another dialog up (From Mermaid…) does nothing", async () => {
+    useAppStore.setState({ activeTab: "tab-1", view: "editor" });
+    useSettingsStore.setState({ open: false });
+    const dialog = document.createElement("dialog");
+    dialog.setAttribute("open", "");
+    document.body.append(dialog);
+    const handler = await closeTabHandler();
+    handler();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(navigation.closeActiveDocumentTab).not.toHaveBeenCalled();
+    dialog.remove();
+  });
+
+  it("Dosik ▸ Settings… (⌘,) opens the settings dialog (#252)", async () => {
+    useSettingsStore.setState({ open: false });
+    renderHook(() => useMenuEvents());
+    await waitFor(() =>
+      expect(mockedListen).toHaveBeenCalledWith(SETTINGS_EVENT, expect.any(Function)),
+    );
+    const handler = mockedListen.mock.calls.find(
+      ([name]) => name === SETTINGS_EVENT,
+    )![1] as () => void;
+    handler();
+    expect(useSettingsStore.getState().open).toBe(true);
+    const rust = readFileSync(join(process.cwd(), "src-tauri/src/app_menu.rs"), "utf8");
+    expect(rust).toContain(`pub const SETTINGS_EVENT: &str = "${SETTINGS_EVENT}";`);
+    expect(rust).toMatch(/"Settings…"[\s\S]*?Some\("CmdOrCtrl\+,"\)/);
   });
 
   it("⌘Q becomes a window close request — AppKit's terminate skips close-requested and would not ask about unsaved external tabs (#218)", () => {

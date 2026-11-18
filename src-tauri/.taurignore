@@ -1,0 +1,3 @@
+# the MCP server `pnpm build:mcp` writes here is a bundle resource, not source:
+# rebuilding it must not restart `tauri dev`
+mcp/

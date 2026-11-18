@@ -35,3 +35,7 @@ __pycache__/
 # Local-only: private working notes, and worktrees kept inside the clone
 /.workbench
 .worktrees/
+
+# the MCP server packaged with the app — built by `pnpm build:mcp`; the README keeps the folder
+/src-tauri/mcp/*
+!/src-tauri/mcp/README.md

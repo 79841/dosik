@@ -1,3 +1,4 @@
+import path from "node:path";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
@@ -27,8 +28,12 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`, and local folders that hold
-      //    other checkouts and notes (.worktrees, .workbench)
-      ignored: ["**/src-tauri/**", "**/.worktrees/**", "**/.workbench/**"],
+      //    other checkouts and notes (.worktrees, .workbench). Anchored to this
+      //    checkout: a `**/.worktrees/**` glob also matches every file of a
+      //    checkout that itself lives in `.worktrees/`, and hot reload stops there
+      ignored: ["src-tauri", ".worktrees", ".workbench"].map(
+        (dir) => `${path.resolve(__dirname, dir)}/**`,
+      ),
     },
   },
   // scan only this checkout's page for dependencies, not the copies in .worktrees

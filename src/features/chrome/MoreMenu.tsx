@@ -1,4 +1,12 @@
-import { Ellipsis, FolderOpen, type LucideIcon, Moon, PanelLeftOpen, Sun } from "lucide-react";
+import {
+  Ellipsis,
+  FolderOpen,
+  type LucideIcon,
+  Moon,
+  PanelLeftOpen,
+  Settings,
+  Sun,
+} from "lucide-react";
 import { useRef, useState } from "react";
 
 import { FOCUS_ITEM } from "../../shared/lib/palette";
@@ -9,6 +17,7 @@ import { useMenuKeys } from "../../shared/lib/useMenuKeys";
 import { useOutsideDismiss } from "../../shared/lib/useOutsideDismiss";
 import { ICON_STROKE, IconButton, SMALL_ICON_SIZE } from "../../shared/ui/IconButton";
 import { openFileAnywhere } from "../library/navigation";
+import { openSettings } from "../settings/settingsStore";
 
 const MenuItem = ({
   label,
@@ -111,6 +120,18 @@ export const MoreMenu = () => {
             label={theme === "dark" ? "Light theme" : "Dark theme"}
             icon={theme === "dark" ? Sun : Moon}
             onSelect={pick(() => useThemeStore.getState().toggleTheme())}
+          />
+          <MenuItem
+            label="Settings…"
+            icon={Settings}
+            shortcut={shortcutLabel(",")}
+            keys={keyshortcuts(",")}
+            onSelect={() => {
+              // focus comes back to More when Settings closes
+              const more = ref.current?.querySelector<HTMLElement>("button") ?? null;
+              setOpen(false);
+              openSettings(undefined, { returnTo: more });
+            }}
           />
           <hr className="my-1 h-px flex-none border-0 bg-line" />
           <MenuItem

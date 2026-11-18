@@ -9,7 +9,6 @@ const { cliMock, apiMock, codexMock, openaiMock } = vi.hoisted(() => ({
 
 vi.mock("../cliProvider", () => ({
   sendWithClaudeCli: cliMock,
-  checkClaudeCli: vi.fn(async () => null),
 }));
 vi.mock("../apiProvider", () => ({ sendWithApi: apiMock }));
 vi.mock("../codexProvider", () => ({ sendWithCodexCli: codexMock }));
@@ -17,13 +16,13 @@ vi.mock("../openaiProvider", () => ({ sendWithOpenAi: openaiMock }));
 
 const subscription = (vendor: "claude" | "openai" = "claude") => ({
   vendor,
-  auth: "subscription" as const,
+  auths: { claude: "subscription" as const, openai: "subscription" as const },
   keys: { claude: "", openai: "" },
   models: { claude: "claude-opus-5", openai: "gpt-5.6-sol" },
 });
 const apiKey = (vendor: "claude" | "openai" = "claude", key = "sk-test") => ({
   vendor,
-  auth: "api-key" as const,
+  auths: { claude: "api-key" as const, openai: "api-key" as const },
   keys: { claude: vendor === "claude" ? key : "", openai: vendor === "openai" ? key : "" },
   models: { claude: "claude-opus-5", openai: "gpt-5.6-sol" },
 });
@@ -195,16 +194,48 @@ describe("routing for the four combinations (#119)", () => {
   it("GPT · Subscription → Codex CLI, records the thread id", async () => {
     useChatStore.setState({ settings: subscription("openai") });
     await sendChatTurn("hi");
-    expect(codexMock).toHaveBeenCalledWith(expect.stringContaining("hi"), null, {
-      session: expect.any(Number),
-      stopped: null,
-    });
+    expect(codexMock).toHaveBeenCalledWith(
+      expect.stringContaining("hi"),
+      null,
+      { session: expect.any(Number), stopped: null },
+      "gpt-5.6-sol",
+    );
     expect(cliMock).not.toHaveBeenCalled();
     expect(useChatStore.getState().cliSessionId).toBe("th1");
     expect(useChatStore.getState().messages.at(-1)).toMatchObject({
       role: "assistant",
       text: "codex",
     });
+  });
+
+  it("Claude · Subscription → Claude Code CLI with the chosen model (#252)", async () => {
+    useChatStore.setState({
+      settings: {
+        ...subscription("claude"),
+        models: { claude: "claude-haiku-4-5", openai: "gpt-5.6-sol" },
+      },
+    });
+    await sendChatTurn("hi");
+    expect(cliMock).toHaveBeenCalledWith(
+      expect.stringContaining("hi"),
+      null,
+      expect.anything(),
+      "claude-haiku-4-5",
+    );
+  });
+
+  it("each vendor goes its own way: Claude by API key while GPT stays on its subscription (#252)", async () => {
+    useChatStore.setState({
+      settings: {
+        vendor: "openai",
+        auths: { claude: "api-key", openai: "subscription" },
+        keys: { claude: "sk-a", openai: "" },
+        models: { claude: "claude-opus-5", openai: "gpt-6-astra" },
+      },
+    });
+    await sendChatTurn("hi");
+    expect(codexMock).toHaveBeenCalled();
+    expect(apiMock).not.toHaveBeenCalled();
   });
 
   it("GPT · API key → OpenAI, with the vendor's key and model", async () => {

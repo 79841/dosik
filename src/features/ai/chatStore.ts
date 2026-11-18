@@ -4,7 +4,13 @@ import { create } from "zustand";
 import { chatRoom, clampChatWidth, loadChatWidth, saveChatWidth } from "./panelWidth";
 import { bindKeyStore, keychainAvailable, scheduleKeySave } from "./keychain";
 import { loadPanelPrefs, savePanelPrefs } from "./panelPrefs";
-import { type AiSettings, type AiVendor, loadAiSettings, saveAiSettings } from "./settings";
+import {
+  type AiSettings,
+  type AiVendor,
+  activeAuth,
+  loadAiSettings,
+  saveAiSettings,
+} from "./settings";
 
 export type ChatRole = "user" | "assistant" | "activity" | "error";
 
@@ -119,9 +125,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((s) => ({
       settings,
       // a CLI session id belongs to one CLI; resuming it under another vendor
-      // or connection would be wrong, so a change of either starts fresh
+      // or connection would be wrong, so a change of either starts fresh. A
+      // model change keeps it: both CLIs resume a session under another model
       cliSessionId:
-        s.settings.vendor === settings.vendor && s.settings.auth === settings.auth
+        s.settings.vendor === settings.vendor && activeAuth(s.settings) === activeAuth(settings)
           ? s.cliSessionId
           : null,
     }));
