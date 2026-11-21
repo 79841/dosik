@@ -154,3 +154,60 @@ describe("Window config (#125, #127, #217)", () => {
     }
   });
 });
+
+/**
+ * Windows reads `tauri.windows.conf.json` over the base the same way macOS
+ * reads its own: the `windows` array is replaced whole, so every base field
+ * is repeated. What it adds is Windows' own.
+ */
+describe("Window config on Windows (the canvas's Win-Caption)", () => {
+  const base = mainWindow("src-tauri/tauri.conf.json");
+  const win = mainWindow("src-tauri/tauri.windows.conf.json");
+  /** what Windows adds to the base */
+  const WINDOWS_ONLY = new Set(["dragDropEnabled", "scrollBarStyle", "visible"]);
+
+  it("hands drags to the page — the shape strip's drag and drop is HTML5, which Tauri's own file drop would take", () => {
+    expect(win.dragDropEnabled).toBe(false);
+  });
+
+  it("scrollbars are WebView2's fluent overlay — no gutter, thin while scrolling", () => {
+    expect(win.scrollBarStyle).toBe("fluentOverlay");
+  });
+
+  it("the window starts hidden — Rust places it on the work area, then shows it", () => {
+    expect(win.visible).toBe(false);
+  });
+
+  it("every base window setting is there with the same value, and nothing else is added", () => {
+    expect(windowsOf("src-tauri/tauri.windows.conf.json")).toHaveLength(
+      windowsOf("src-tauri/tauri.conf.json").length,
+    );
+    for (const key of Object.keys(base)) expect(win[key], key).toEqual(base[key]);
+    for (const key of Object.keys(win)) {
+      if (!(key in base)) expect(WINDOWS_ONLY.has(key), key).toBe(true);
+    }
+  });
+
+  it("the macOS file adds none of them", () => {
+    const mac = mainWindow("src-tauri/tauri.macos.conf.json");
+    for (const key of WINDOWS_ONLY) expect(mac[key], key).toBeUndefined();
+  });
+});
+
+describe("the Windows app manifest", () => {
+  const manifest = readFileSync(join(process.cwd(), "src-tauri/windows-app-manifest.xml"), "utf8");
+
+  it("declares Windows 10 and later — a layered child window (the Snap layouts spot) needs it", () => {
+    expect(manifest).toContain('<supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>');
+  });
+
+  it("keeps Tauri's own dependency on Common Controls 6 — dialogs and menus look like Windows'", () => {
+    expect(manifest).toMatch(/name="Microsoft\.Windows\.Common-Controls"\s+version="6\.0\.0\.0"/);
+  });
+
+  it("is the one the build gives Windows", () => {
+    expect(readFileSync(join(process.cwd(), "src-tauri/build.rs"), "utf8")).toContain(
+      'app_manifest(include_str!("windows-app-manifest.xml"))',
+    );
+  });
+});

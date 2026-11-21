@@ -32,3 +32,15 @@ keyring = "4.2.0"
 # Settings ▸ Integrations edits ~/.codex/config.toml without disturbing the rest (#252)
 toml_edit = "0.25"
 
+# The window frame off macOS (window_frame.rs): the window menu, Snap layouts
+# on Maximize, the webview's browser keys. The versions Tauri already uses
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
