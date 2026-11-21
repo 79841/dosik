@@ -14,7 +14,7 @@ import { LEGACY_URI_KEY, VIEW_URI, viewSummaryText } from "./view.mjs";
  * file to the app.
  *
  * **The target is in the arguments.** Without `file` a tool works on the canvas
- * open in the app; with it, on that `.dosik.json`, through the headless data
+ * open in the app; with it, on that `.dosik` file, through the headless data
  * layer and with no app at all (draw.io's split, #149). A closed app is never a
  * reason to switch silently: the agent would believe it edited the canvas while
  * the user's screen stayed as it was.
@@ -54,12 +54,17 @@ export const WINDOWED = ["png"];
 const NEEDS_APP =
   " Without `file`, requires the Dosik app to be open — this server does not start it.";
 
+/**
+ * What `file` takes. The app reads a file again when it changes on disk, so
+ * a file it has open may be edited here too — the tab follows.
+ */
 const FILE_PARAM = {
   type: "string",
   description:
-    "Absolute path to a `.dosik.json`. With it, the tool works on that file and needs no app; " +
-    "without it, on the diagram open in the app. If the app has this very file open, leave " +
-    "`file` out — the window does not reload it.",
+    "Absolute path to a `.dosik` file (an older `.dosik.json` works too). " +
+    "A `.dosik` file is JSON (the same document as get_diagram). With it, the tool works on " +
+    "that file and needs no app; without it, on the diagram open in the app. A tab in the app " +
+    "that has the file open reads it again after the change.",
 };
 
 const THEMES = ["auto", "light", "dark"];
@@ -117,7 +122,7 @@ export const toolDefinitions = (spec = loadSpec(), { view = false } = {}) => [
   {
     name: "get_diagram",
     description:
-      "Read a diagram as the `.dosik.json` document shape — the one open in Dosik, or `file`. " +
+      "Read a diagram as the document a `.dosik` file holds — the one open in Dosik, or `file`. " +
       "An image node's `src` reads as an `elided:<type>;<KB>KB` placeholder; send it back unchanged on that node to keep the picture." +
       NEEDS_APP,
     inputSchema: { type: "object", properties: { file: FILE_PARAM } },
@@ -127,7 +132,8 @@ export const toolDefinitions = (spec = loadSpec(), { view = false } = {}) => [
     description:
       "Edit a diagram. Operations apply in order. On the open diagram the canvas updates as they " +
       "land, highlighting what changed; with `file` they apply to that file, which is created when " +
-      "it does not exist yet, and nothing is written unless every operation applies. " +
+      "it does not exist yet (a new file is a `.dosik`), and nothing is written unless every " +
+      "operation applies. " +
       "A diagram is one canvas; `new_diagram` starts another diagram in the app (not with `file`) " +
       "and the operations after it go to that one. " +
       `Available operations: ${opNames(spec).join(", ")}.` +
@@ -146,6 +152,7 @@ export const toolDefinitions = (spec = loadSpec(), { view = false } = {}) => [
     name: "export_diagram",
     description:
       `Write a diagram — the open one, or \`file\` — to \`path\`. The format comes from the extension: ${FILE_FORMATS.join(", ")}. ` +
+      "A `.dosik` path gets the document itself, as the app saves it. " +
       "SVG is drawn from the document as true vector. PNG is not available here — it is " +
       "captured from the rendered canvas, so it needs the app's own Export menu." +
       NEEDS_APP,
@@ -167,15 +174,20 @@ export const toolDefinitions = (spec = loadSpec(), { view = false } = {}) => [
   {
     name: "open_in_dosik",
     description:
-      "Open a `.dosik.json` in the installed Dosik app, so the user can see and edit it there. " +
+      "Open a `.dosik` file in the installed Dosik app, so the user can see and edit it there. " +
       "It opens in a new tab and becomes the active one (a file already open just comes to the " +
-      "front). Use it only when the user asks to open or show the file in the app — the other " +
-      "tools never need it. Afterwards edit without `file`: edits without `file` go to the " +
-      "active tab, which is this document now, and the app does not reload the file. macOS only " +
-      "for now.",
+      "front; one inside a library project opens as that library diagram). Use it only when the " +
+      "user asks to open or show the file in the app — the other tools never need it. " +
+      "Afterwards edit without `file`: edits without `file` go to the active tab, which is this " +
+      "document now, and the canvas highlights what changed. macOS only for now.",
     inputSchema: {
       type: "object",
-      properties: { file: { type: "string", description: "Absolute path to a `.dosik.json`." } },
+      properties: {
+        file: {
+          type: "string",
+          description: "Absolute path to a `.dosik` file (an older `.dosik.json` works too).",
+        },
+      },
       required: ["file"],
     },
   },
@@ -242,18 +254,22 @@ function withFile(schema) {
   return { ...schema, properties: { ...schema.properties, file: FILE_PARAM } };
 }
 
+/** a diagram's file: `.dosik`, or the older `.dosik.json` — either in any case */
+export const isDiagramFile = (path) => /\.dosik(\.json)?$/i.test(path);
+
 /**
  * `file` as the target: absolute (the CLI runs with the repo as its cwd, so a
- * relative path would land inside the checkout) and a `.dosik.json` (anything
- * else is not a document this app reads).
+ * relative path would land inside the checkout) and a `.dosik` — or an older
+ * `.dosik.json` (anything else is not a document this app reads). That a new
+ * file is a `.dosik` is the file mode's to say: only it knows what exists.
  */
 export const checkFile = (file) => {
   if (typeof file !== "string" || file.length === 0) {
-    throw new ToolError("`file` must be a string path to a `.dosik.json`.");
+    throw new ToolError("`file` must be a string path to a `.dosik` file.");
   }
   if (!isAbsolute(file)) throw new ToolError(`\`file\` must be absolute (got: ${file}).`);
-  if (!file.toLowerCase().endsWith(".dosik.json")) {
-    throw new ToolError(`\`file\` must be a \`.dosik.json\` (got: ${file}).`);
+  if (!isDiagramFile(file)) {
+    throw new ToolError(`\`file\` must be a \`.dosik\` file (got: ${file}).`);
   }
   return file;
 };
@@ -263,16 +279,19 @@ const hasFile = (args) => args?.file !== undefined && args?.file !== null;
 
 /**
  * `open_in_dosik` only hands the path to the OS; the app decides whether it is
- * a diagram, and it also opens the legacy `.mdgram.json` and plain `.json`.
- * The editing tools stay on `.dosik.json` — they write, so they choose the form.
+ * a diagram, and besides `.dosik` it also opens the legacy `.mdgram.json` and
+ * plain `.json`. The editing tools stay on `.dosik` — they write, so they
+ * choose the form.
  */
 const checkOpenable = (file) => {
   if (typeof file !== "string" || file.length === 0) {
     throw new ToolError("`file` must be a string path to a diagram.");
   }
   if (!isAbsolute(file)) throw new ToolError(`\`file\` must be absolute (got: ${file}).`);
-  if (!file.toLowerCase().endsWith(".json")) {
-    throw new ToolError(`\`file\` must be a diagram \`.json\` (got: ${file}).`);
+  if (!isDiagramFile(file) && !file.toLowerCase().endsWith(".json")) {
+    throw new ToolError(
+      `\`file\` must be a diagram — a \`.dosik\` file, or an older \`.json\` (got: ${file}).`,
+    );
   }
   return file;
 };
@@ -280,8 +299,8 @@ const checkOpenable = (file) => {
 /** what an open window means for the other tools — said on the way in and on the way out */
 const OPENED_NOTE =
   "The file is now open in the Dosik app, in its own tab and on screen. From here on, edit it " +
-  "without `file` — that edits the active tab while it stays the active one. The app does not " +
-  "reload the file, so `file` edits would not show, and the user's next Save would overwrite them.";
+  "without `file` — that edits the active tab while it stays the active one, and the canvas " +
+  "highlights what changed.";
 
 /**
  * Reaching the live canvas — and only reaching it.
@@ -304,7 +323,7 @@ export const requireBridge = async (deps) => {
   }
   throw new ToolError(
     `Dosik is not running (nothing answers on port ${port}). Open the Dosik app, then call this again — this server does not start it. ` +
-      "To work without the app, pass `file` with a `.dosik.json` path instead.",
+      "To work without the app, pass `file` with a `.dosik` path instead.",
   );
 };
 

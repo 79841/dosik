@@ -266,14 +266,18 @@ describe("MCP tools (#2)", () => {
   });
 
   describe("file mode — the target is explicit in the arguments (#149)", () => {
-    const FILE = "/tmp/plan.dosik.json";
+    const FILE = "/tmp/plan.dosik";
 
     it("advertises a file argument on read, edit and export", () => {
       const byName = Object.fromEntries(toolDefinitions().map((t) => [t.name, t.inputSchema]));
-      for (const name of ["get_diagram", "apply_ops", "export_diagram"]) {
+      for (const name of ["get_diagram", "apply_ops", "export_diagram", "render_diagram"]) {
         const props = (byName[name] as { properties: Record<string, { description?: string }> })
           .properties;
-        expect(props.file?.description).toMatch(/\.dosik\.json/);
+        expect(props.file?.description).toMatch(/`\.dosik`/);
+        // a model that has never seen the format learns it is the document it reads
+        expect(props.file?.description).toContain(
+          "A `.dosik` file is JSON (the same document as get_diagram)",
+        );
       }
     });
 
@@ -315,16 +319,43 @@ describe("MCP tools (#2)", () => {
       );
     });
 
-    it("requires file to be an absolute .dosik.json path", async () => {
+    it("requires file to be an absolute .dosik path", async () => {
       const d = deps();
-      await expect(runTool("get_diagram", { file: "plan.dosik.json" }, d)).rejects.toThrow(
-        /absolute/,
-      );
+      await expect(runTool("get_diagram", { file: "plan.dosik" }, d)).rejects.toThrow(/absolute/);
       await expect(runTool("get_diagram", { file: "/tmp/plan.json" }, d)).rejects.toThrow(
-        /\.dosik\.json/,
+        /`\.dosik`/,
+      );
+      await expect(runTool("get_diagram", { file: "/tmp/plan.dosikx" }, d)).rejects.toThrow(
+        /`\.dosik`/,
       );
       await expect(runTool("get_diagram", { file: 3 }, d)).rejects.toThrow(/string/);
       expect(d.fileMode.read).not.toHaveBeenCalled();
+    });
+
+    it("still takes an older .dosik.json — read, edited and exported where it is", async () => {
+      const d = deps();
+      const old = "/tmp/Old Plan.DOSIK.JSON";
+      await runTool("get_diagram", { file: old }, d);
+      await runTool("apply_ops", { file: old, ops: [{ op: "clear" }] }, d);
+      await runTool("export_diagram", { file: old, path: "/tmp/plan.svg" }, d);
+      expect(d.fileMode.read).toHaveBeenCalledWith(old);
+      expect(d.fileMode.apply).toHaveBeenCalledWith(old, [{ op: "clear" }]);
+      expect(d.fileMode.exportTo).toHaveBeenCalledWith(old, "/tmp/plan.svg");
+      await runTool("get_diagram", { file: "/tmp/UPPER.DOSIK" }, d);
+      expect(d.fileMode.read).toHaveBeenCalledWith("/tmp/UPPER.DOSIK");
+    });
+
+    it("says a new file is a .dosik", () => {
+      const tool = toolDefinitions().find((t) => t.name === "apply_ops");
+      expect(tool?.description).toMatch(/a new file is a `\.dosik`/i);
+    });
+
+    it("exports to a .dosik — the document itself", async () => {
+      const d = deps();
+      await runTool("export_diagram", { file: FILE, path: "/tmp/copy.dosik" }, d);
+      expect(d.fileMode.exportTo).toHaveBeenCalledWith(FILE, "/tmp/copy.dosik");
+      const tool = toolDefinitions().find((t) => t.name === "export_diagram");
+      expect(tool?.description).toMatch(/\bdosik\b/);
     });
 
     it("runs file-mode exports through the same format check", async () => {
@@ -345,10 +376,10 @@ describe("MCP tools (#2)", () => {
   describe("open_in_dosik (#149)", () => {
     it("opens the file in the installed app", async () => {
       const d = deps();
-      await expect(
-        runTool("open_in_dosik", { file: "/tmp/plan.dosik.json" }, d),
-      ).resolves.toMatchObject({ opened: "/tmp/plan.dosik.json" });
-      expect(d.openInApp).toHaveBeenCalledWith("/tmp/plan.dosik.json");
+      await expect(runTool("open_in_dosik", { file: "/tmp/plan.dosik" }, d)).resolves.toMatchObject(
+        { opened: "/tmp/plan.dosik" },
+      );
+      expect(d.openInApp).toHaveBeenCalledWith("/tmp/plan.dosik");
       // not through the bridge — the OS opens it
       expect(d.probeBridge).not.toHaveBeenCalled();
     });
@@ -356,15 +387,22 @@ describe("MCP tools (#2)", () => {
     it("requires file and runs the same check", async () => {
       const d = deps();
       await expect(runTool("open_in_dosik", {}, d)).rejects.toThrow(/`file` is required/);
-      await expect(runTool("open_in_dosik", { file: "a.dosik.json" }, d)).rejects.toThrow(
-        /absolute/,
-      );
+      await expect(runTool("open_in_dosik", { file: "a.dosik" }, d)).rejects.toThrow(/absolute/);
       expect(d.openInApp).not.toHaveBeenCalled();
     });
 
     it("says in the description that other tools must not call it as a side effect — only when the user asks", () => {
       const tool = toolDefinitions().find((t) => t.name === "open_in_dosik");
       expect(tool?.description).toMatch(/only when the user asks/);
+    });
+
+    it("takes a .dosik — says so in its description", () => {
+      const tool = toolDefinitions().find((t) => t.name === "open_in_dosik") as {
+        description: string;
+        inputSchema: { properties: { file: { description: string } } };
+      };
+      expect(tool.description).toMatch(/`\.dosik`/);
+      expect(tool.inputSchema.properties.file.description).toMatch(/`\.dosik`/);
     });
 
     it("mentions tabs in the description — opens as a new active tab, and edits without file go to the active tab (#218)", () => {
@@ -406,8 +444,8 @@ describe("MCP tools (#2)", () => {
   });
 
   describe("hardening (#151)", () => {
-    it("says to edit without file after open_in_dosik — the open window does not reread the file", async () => {
-      const out = (await runTool("open_in_dosik", { file: "/tmp/plan.dosik.json" }, deps())) as {
+    it("says to edit without file after open_in_dosik — the edits land on the open tab", async () => {
+      const out = (await runTool("open_in_dosik", { file: "/tmp/plan.dosik" }, deps())) as {
         note: string;
       };
       expect(out.note).toMatch(/without `file`/);
@@ -415,11 +453,23 @@ describe("MCP tools (#2)", () => {
       expect(tool?.description).toMatch(/without `file`/);
     });
 
-    it("lets open_in_dosik pass legacy .json files the app opens — the app decides", async () => {
+    it("no longer says the app does not read the file again — it does now", async () => {
+      const out = (await runTool("open_in_dosik", { file: "/tmp/plan.dosik" }, deps())) as {
+        note: string;
+      };
+      const said = `${JSON.stringify(toolDefinitions())} ${out.note}`;
+      expect(said).not.toMatch(/not reload|does not reread|would not show|overwrite them/i);
+    });
+
+    it("lets open_in_dosik pass .dosik and the legacy .json files the app opens — the app decides", async () => {
       const d = deps();
       await runTool("open_in_dosik", { file: "/tmp/old.mdgram.json" }, d);
       expect(d.openInApp).toHaveBeenCalledWith("/tmp/old.mdgram.json");
-      await expect(runTool("open_in_dosik", { file: "/tmp/a.txt" }, d)).rejects.toThrow(/\.json/);
+      await runTool("open_in_dosik", { file: "/tmp/Flow.DOSIK" }, d);
+      expect(d.openInApp).toHaveBeenCalledWith("/tmp/Flow.DOSIK");
+      await expect(runTool("open_in_dosik", { file: "/tmp/a.txt" }, d)).rejects.toThrow(
+        /`\.dosik`/,
+      );
     });
 
     it("treats file: null as absent — for clients that fill optional arguments with null", async () => {

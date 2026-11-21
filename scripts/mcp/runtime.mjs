@@ -202,7 +202,7 @@ export const createExportFile = ({
     const doc = await readDiagram(port);
     const dir = await makeTempDir();
     try {
-      const scratch = join(dir, "diagram.dosik.json");
+      const scratch = join(dir, "diagram.dosik");
       await write(scratch, JSON.stringify(doc));
       await headless(["--in", scratch, "--export", path, ...(theme ? ["--theme", theme] : [])]);
       return { written: path };
@@ -214,8 +214,11 @@ export const createExportFile = ({
 
 /**
  * The file mode (#149): the same three moves as the live canvas, on a
- * `.dosik.json` and with no app, through the headless CLI — the data layer the
+ * `.dosik` file and with no app, through the headless CLI — the data layer the
  * app itself uses, so a file edited here is the file the app would write.
+ *
+ * An older `.dosik.json` is read and edited where it is; a new file is always
+ * a `.dosik` — the form the app saves and the OS opens it from.
  */
 export const createFileMode = ({
   headless = createHeadless(),
@@ -264,7 +267,7 @@ export const createFileMode = ({
       requireExisting(file);
       return wrapped(file, () =>
         inScratch(async (dir) => {
-          const out = join(dir, "out.dosik.json");
+          const out = join(dir, "out.dosik");
           await headless(["--in", file, "--out", out]);
           return JSON.parse(await read(out));
         }),
@@ -272,8 +275,14 @@ export const createFileMode = ({
     },
 
     apply: (file, ops) =>
-      serialized(file, () =>
-        inScratch(async (dir) => {
+      serialized(file, () => {
+        if (!exists(file) && /\.dosik\.json$/i.test(file)) {
+          const suggested = `${file.slice(0, -".json".length)}`;
+          throw new ToolError(
+            `A new diagram file is a \`.dosik\` — there is no ${file} to edit. Use ${suggested} instead.`,
+          );
+        }
+        return inScratch(async (dir) => {
           const opsPath = join(dir, "ops.json");
           const reportPath = join(dir, "report.json");
           await write(opsPath, JSON.stringify({ ops }));
@@ -302,8 +311,8 @@ export const createFileMode = ({
             return report;
           }
           return JSON.parse(await read(reportPath));
-        }),
-      ),
+        });
+      }),
 
     exportTo: async (file, path, { theme } = {}) => {
       requireExisting(file);
@@ -321,7 +330,7 @@ export const createFileMode = ({
 
 /**
  * Draws a diagram as vector SVG through the headless CLI (#148) — the open
- * canvas (via a scratch copy, like the live export) or a `.dosik.json`. Sized
+ * canvas (via a scratch copy, like the live export) or a `.dosik` file. Sized
  * to fit its container, because the reader is a chat, not a file browser.
  *
  * Returns the SVG with the run's own account of what it drew (`view`: title
@@ -347,7 +356,7 @@ export const createRenderSvg = ({
     try {
       let input = file;
       if (input === undefined) {
-        input = join(dir, "diagram.dosik.json");
+        input = join(dir, "diagram.dosik");
         await write(input, JSON.stringify(await readDiagram(port)));
       }
       const out = join(dir, "diagram.svg");
