@@ -309,7 +309,12 @@ const look = (lib) => {
       .map((e) => paths.join(defaultLocation, e.name))
       .filter((p) => !projects.some((q) => within(paths, q.path, p) || sameFolder(lib, q.path, p)))
       .sort((a, b) => naturalCmp(paths.basename(a), paths.basename(b)));
-    for (const p of fresh) projects.push(projectEntry(p, "default"));
+    // each by name among the projects — where the app puts one it finds there
+    for (const p of fresh) {
+      const name = paths.basename(p);
+      const at = projects.findIndex((q) => naturalCmp(paths.basename(q.path), name) > 0);
+      projects.splice(at === -1 ? projects.length : at, 0, projectEntry(p, "default"));
+    }
   }
   const added = [];
   for (const note of readNotes(lib)) {

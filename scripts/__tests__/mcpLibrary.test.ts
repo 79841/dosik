@@ -133,11 +133,12 @@ describe("list_projects", () => {
         project(join(library, "Removed")),
       ],
     });
+    // a folder new in the library folder takes its place by name, as the app gives it
     expect(listProjects(lib).projects).toEqual([
+      { name: "Extra", path: join(library, "Extra"), missing: false },
       { name: "Repo", path: join(work, "Repo"), missing: false },
       { name: "Mine", path: join(library, "Mine"), missing: false },
       { name: "Gone", path: join(work, "Gone"), missing: true },
-      { name: "Extra", path: join(library, "Extra"), missing: false },
     ]);
   });
 
