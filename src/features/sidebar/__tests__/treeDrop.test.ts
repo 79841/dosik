@@ -4,6 +4,8 @@ import type { FolderMeta, ItemKey, ProjectMeta } from "../../library/libraryApi"
 import { MAX_FOLDER_DEPTH } from "../../library/libraryApi";
 import { placedInList } from "../../library/libraryTree";
 import {
+  AUTO_UNFOLD_MS,
+  autoUnfoldKey,
   type DropTarget,
   dragView,
   dropAt,
@@ -12,6 +14,7 @@ import {
   placementNotice,
   ROW_HEIGHT,
   ROW_PITCH,
+  refoldAfterDrag,
   rowBoxes,
 } from "../treeDrop";
 import { buildTree, folderKey, type TreeKey, visibleRows } from "../treeModel";
@@ -400,5 +403,59 @@ describe("dragView — the rows with the drop's preview (#260 R2)", () => {
       }
     }
     expect(checked).toBeGreaterThan(100);
+  });
+});
+
+describe("autoUnfoldKey — the folder a drag resting on it would unfold (#260 R3)", () => {
+  it("waits 600ms", () => {
+    expect(AUTO_UNFOLD_MS).toBe(600);
+  });
+
+  it("into a collapsed folder or project that has something in it — its key", () => {
+    const s = dragScene("diagram:pyt", library(), ["pay", "my-diagrams"]);
+    const chk = s.target(s.top("folder:chk") + 15);
+    expect(chk).toMatchObject({ kind: "into", row: "folder:chk" });
+    expect(autoUnfoldKey(chk, s.rows)).toBe("folder:chk");
+    expect(autoUnfoldKey(s.target(s.top("folder:onb") + 15), s.rows)).toBe("folder:onb");
+  });
+
+  it("nothing for an unfolded folder, an empty one, a slot or no target", () => {
+    const s = dragScene("diagram:pyt");
+    expect(autoUnfoldKey(s.target(s.top("folder:chk") + 15), s.rows)).toBeNull();
+    // arc holds nothing: nothing to unfold
+    expect(s.target(s.top("folder:arc") + 15)).toMatchObject({ kind: "into" });
+    expect(autoUnfoldKey(s.target(s.top("folder:arc") + 15), s.rows)).toBeNull();
+    expect(autoUnfoldKey(s.target(s.top("diagram:led") + 3), s.rows)).toBeNull();
+    expect(autoUnfoldKey(null, s.rows)).toBeNull();
+  });
+
+  it("never itself or a folder inside it — those take no drop", () => {
+    const s = dragScene("folder:chk", library(), ["pay"]);
+    expect(autoUnfoldKey(s.target(s.top("folder:chk") + 15), s.rows)).toBeNull();
+  });
+});
+
+describe("refoldAfterDrag — what a drag unfolded folds back when it ends (#260 R3)", () => {
+  const nested = (): FolderMeta[] => [
+    folder("p", [], [folder("a", [diagram("d")], [folder("b", [diagram("e")])]), folder("c")]),
+  ];
+
+  it("dropped in an unfolded folder, or anywhere under it: it stays open", () => {
+    expect(refoldAfterDrag(["folder:a"], "a", nested())).toEqual([]);
+    expect(refoldAfterDrag(["folder:a", "folder:b"], "b", nested())).toEqual([]);
+  });
+
+  it("cancelled, or dropped outside it: it folds back — each folder on its own", () => {
+    expect(refoldAfterDrag(["folder:a", "folder:b"], null, nested())).toEqual([
+      "folder:a",
+      "folder:b",
+    ]);
+    expect(refoldAfterDrag(["folder:a", "folder:b"], "a", nested())).toEqual(["folder:b"]);
+    expect(refoldAfterDrag(["folder:a"], "c", nested())).toEqual(["folder:a"]);
+    expect(refoldAfterDrag(["folder:a"], "p", nested())).toEqual(["folder:a"]);
+  });
+
+  it("nothing unfolded, nothing folds", () => {
+    expect(refoldAfterDrag([], null, nested())).toEqual([]);
   });
 });

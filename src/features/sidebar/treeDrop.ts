@@ -314,3 +314,37 @@ export const dropAt = ({
   const first = rows[hit.at + 1];
   return first ? slot(rowId, 0, { row: first.key, edge: "top", level: row.level + 1 }) : null;
 };
+
+/** how long a drag rests on a collapsed folder before it unfolds (#260 R3) — intent, not motion: reduced motion keeps it */
+export const AUTO_UNFOLD_MS = 600;
+
+/**
+ * The folder a drag resting on `target` would unfold (#260 R3): into a
+ * collapsed folder or project with something in it. Never the dragged item
+ * or anything under it, nor where it may not go — `dropAt` gives no target
+ * there.
+ */
+export const autoUnfoldKey = (
+  target: DropTarget | null,
+  rows: readonly TreeRow[],
+): TreeKey | null => {
+  if (target?.kind !== "into") return null;
+  const row = rows.find((r) => r.key === target.row);
+  return row?.expandable && !row.expanded ? row.key : null;
+};
+
+/**
+ * Of the folders a drag unfolded, the ones that fold back when it ends
+ * (#260 R3): all of them when it was called off (`dropParent` `null`), else
+ * those the drop did not go into — itself or anywhere under it. Each on its
+ * own; a folder the user had unfolded is not in `opened`.
+ */
+export const refoldAfterDrag = (
+  opened: readonly TreeKey[],
+  dropParent: string | null,
+  folders: readonly FolderMeta[],
+): TreeKey[] =>
+  opened.filter((key) => {
+    const id = idOf(key);
+    return dropParent === null || id === null || !isInside(folders, dropParent, id);
+  });
