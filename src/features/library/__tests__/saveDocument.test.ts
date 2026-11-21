@@ -73,15 +73,16 @@ describe("saveActiveDocument (#219 D5, T20)", () => {
     expect(mockedAsk).not.toHaveBeenCalled();
   });
 
-  it("without a path, a dialog picks one and that path becomes the document's", async () => {
+  it("without a path, a dialog picks one — a .dosik by default (#253 R11) — and that path becomes the document's", async () => {
     openExternalAndEdit(null);
-    mockedSave.mockResolvedValue("/tmp/picked.dosik.json");
+    mockedSave.mockResolvedValue("/tmp/picked.dosik");
     await saveActiveDocument();
-    expect(mockedSave).toHaveBeenCalledWith(
-      expect.objectContaining({ defaultPath: "Ext.dosik.json" }),
-    );
-    expect(written()?.path).toBe("/tmp/picked.dosik.json");
-    expect(useDiagramStore.getState().filePath).toBe("/tmp/picked.dosik.json");
+    expect(mockedSave).toHaveBeenCalledWith({
+      defaultPath: "Ext.dosik",
+      filters: [{ name: "Dosik Diagram", extensions: ["dosik"] }],
+    });
+    expect(written()?.path).toBe("/tmp/picked.dosik");
+    expect(useDiagramStore.getState().filePath).toBe("/tmp/picked.dosik");
     expect(toasts()).toEqual(["Saved"]);
   });
 

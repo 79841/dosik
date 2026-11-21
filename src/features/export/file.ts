@@ -39,7 +39,10 @@ export const saveBinaryFile = async (
 export const pickDiagramPath = async (): Promise<string | null> => {
   const path = await open({
     multiple: false,
-    filters: [{ name: "Dosik Diagram", extensions: ["dosik.json", "mdgram.json", "json"] }],
+    // `.dosik` (#253 R11), the older `.dosik.json`, and any JSON
+    filters: [
+      { name: "Dosik Diagram", extensions: ["dosik", "dosik.json", "mdgram.json", "json"] },
+    ],
   });
   return typeof path === "string" ? path : null;
 };
@@ -53,7 +56,7 @@ const parseDiagramText = (contents: string): DiagramDoc => {
   return doc;
 };
 
-/** reads and checks a `.dosik.json` at a known path — a picked one, or the OS's (#149) */
+/** reads and checks a diagram file at a known path — a picked one, or the OS's (#149) */
 export const readDiagramFile = async (path: string): Promise<DiagramDoc> =>
   parseDiagramText(await invoke<string>("read_text_file", { path }));
 

@@ -94,6 +94,9 @@ export const renameFolderTo = (folder: FolderMeta, name: string): Promise<void> 
 
 const tabIds = () => new Set(useAppStore.getState().tabs.map((t) => t.id));
 
+/** what every delete's question ends with: it goes to the Trash, never for good (#253 D14) */
+const TO_TRASH = "It will be moved to the Trash.";
+
 /**
  * Asks, and resolves whether to go ahead. The dialog is async and the bridge
  * is not: an agent's ops arriving while it was up may have made a diagram and
@@ -137,8 +140,8 @@ export const deleteFolderAsking = (folder: FolderMeta): Promise<boolean> =>
     const go = await confirmDelete(
       folder.name,
       counts.length === 0
-        ? `Delete the ${kind} “${folder.name}”?`
-        : `Delete the ${kind} “${folder.name}” and everything in it (${counts.join(", ")})? This cannot be undone.`,
+        ? `Delete the ${kind} “${folder.name}”? ${TO_TRASH}`
+        : `Delete the ${kind} “${folder.name}” and everything in it (${counts.join(", ")})? ${TO_TRASH}`,
       kind === "folder" ? "Delete folder" : "Delete project",
     );
     if (!go) return false;
@@ -306,7 +309,7 @@ export const deleteDiagramAsking = (diagram: ProjectMeta): Promise<boolean> =>
   guarded(async () => {
     const go = await confirmDelete(
       diagram.title,
-      `Delete “${diagram.title}”? This cannot be undone.`,
+      `Delete “${diagram.title}”? ${TO_TRASH}`,
       "Delete diagram",
     );
     if (!go) return false;

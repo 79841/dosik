@@ -62,6 +62,17 @@ describe("pickDiagramPath · readDiagramFile — picking and reading are separat
     expect(mockedInvoke).not.toHaveBeenCalled();
   });
 
+  it("offers .dosik first, the older .dosik.json and plain JSON still (#253 R11)", async () => {
+    mockedOpen.mockResolvedValue("/tmp/ok.dosik");
+    expect(await pickDiagramPath()).toBe("/tmp/ok.dosik");
+    expect(mockedOpen).toHaveBeenLastCalledWith({
+      multiple: false,
+      filters: [
+        { name: "Dosik Diagram", extensions: ["dosik", "dosik.json", "mdgram.json", "json"] },
+      ],
+    });
+  });
+
   it("Rejects a file without nodes/edges arrays", async () => {
     mockedInvoke.mockResolvedValue(JSON.stringify({ hello: "world" }));
     await expect(readDiagramFile("/tmp/bad.json")).rejects.toThrow("Not a valid diagram file");

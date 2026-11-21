@@ -76,8 +76,8 @@ export const Dashboard = () => {
       ) : empty ? (
         <div className="mt-5">
           <HomeNotice title="No diagrams yet">
-            Start one above, open a .dosik.json file, or send ops to the bridge — a diagram is
-            created for them.
+            Start one above, open a .dosik file, or send ops to the bridge — a diagram is created
+            for them.
           </HomeNotice>
         </div>
       ) : (

@@ -99,7 +99,7 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
     it("asks with the diagram count, and leaves it when declined", async () => {
       await deleteFolderAsking(work());
       expect(mockedAsk.mock.calls[0]![0]).toBe(
-        "Delete the project “Work” and everything in it (2 diagrams)? This cannot be undone.",
+        "Delete the project “Work” and everything in it (2 diagrams)? It will be moved to the Trash.",
       );
       expect(mockedAsk.mock.calls[0]![1]).toMatchObject({ title: "Delete project" });
       expect(calls("delete_folder")).toHaveLength(0);
@@ -288,7 +288,9 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
       expect(await deleteDiagramAsking(loginFlow())).toBe(false);
       mockedAsk.mockResolvedValue(true);
       expect(await deleteDiagramAsking(loginFlow())).toBe(true);
-      expect(mockedAsk.mock.calls[0]![0]).toContain("Login flow");
+      expect(mockedAsk.mock.calls[0]![0]).toBe(
+        "Delete “Login flow”? It will be moved to the Trash.",
+      );
       expect(calls("delete_project")[0]![1]).toEqual({ id: "p1" });
     });
 
@@ -444,14 +446,16 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
     it("deleting a folder — asks with the folder and diagram counts of everything below, briefly when empty (D12)", async () => {
       await deleteFolderAsking(find("chk"));
       expect(mockedAsk.mock.calls[0]).toEqual([
-        "Delete the folder “Checkout” and everything in it (1 folder, 3 diagrams)? This cannot be undone.",
+        "Delete the folder “Checkout” and everything in it (1 folder, 3 diagrams)? It will be moved to the Trash.",
         expect.objectContaining({ title: "Delete folder" }),
       ]);
       await deleteFolderAsking(find("empty"));
-      expect(mockedAsk.mock.calls[1]![0]).toBe("Delete the folder “Empty”?");
+      expect(mockedAsk.mock.calls[1]![0]).toBe(
+        "Delete the folder “Empty”? It will be moved to the Trash.",
+      );
       await deleteFolderAsking(find("pay"));
       expect(mockedAsk.mock.calls[2]![0]).toBe(
-        "Delete the project “Payments” and everything in it (3 folders, 4 diagrams)? This cannot be undone.",
+        "Delete the project “Payments” and everything in it (3 folders, 4 diagrams)? It will be moved to the Trash.",
       );
       expect(calls("delete_folder")).toHaveLength(0);
     });

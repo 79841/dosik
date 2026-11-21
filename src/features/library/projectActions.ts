@@ -10,7 +10,7 @@ import { discardPendingAutosave, writeProjectThroughChain } from "./useAutosave"
  */
 
 /**
- * Opens an external `.dosik.json` the user picks. The file stays external —
+ * Opens an external `.dosik` file the user picks. The file stays external —
  * not autosaved, not listed. Resolves where a tab opened just now went: on
  * screen, or `"beside"` it when the user went elsewhere while it was read
  * (#218). A cancel, or a file that was open already (its tab comes

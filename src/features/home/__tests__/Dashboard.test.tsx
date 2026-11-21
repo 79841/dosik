@@ -346,7 +346,7 @@ describe("dashboard states (#220 D20, T25)", () => {
     expect(screen.getByText("No diagrams yet")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Start one above, open a .dosik.json file, or send ops to the bridge — a diagram is created for them.",
+        "Start one above, open a .dosik file, or send ops to the bridge — a diagram is created for them.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/New diagrams go to/)).toBeNull();

@@ -7,7 +7,7 @@ import { serializeProject } from "./libraryApi";
 
 /**
  * Guards the edits of an *external* file (#123). A library project is
- * autosaved, so closing it loses nothing; an external `.dosik.json` (Open…)
+ * autosaved, so closing it loses nothing; an external `.dosik` file (Open…)
  * is written only on Save. Since tabs (#218 D8) nothing but closing — its
  * tab, or the window — drops a document, so that is where this asks. The
  * baseline is the serialized document as it was last known to match the

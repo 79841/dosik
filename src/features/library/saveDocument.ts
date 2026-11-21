@@ -35,8 +35,9 @@ export const saveActiveDocument = async (): Promise<void> => {
     const from = documentOnScreen();
     const path = await saveTextFile(
       contents,
-      [{ name: "Dosik Diagram", extensions: ["dosik.json"] }],
-      `${exportFileBase(title)}.dosik.json`,
+      // a new file is a `.dosik` (#253 R11); one opened as `.dosik.json` keeps its path
+      [{ name: "Dosik Diagram", extensions: ["dosik"] }],
+      `${exportFileBase(title)}.dosik`,
       filePath,
     );
     if (!path) return;

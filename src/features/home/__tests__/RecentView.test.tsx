@@ -182,9 +182,17 @@ describe("Recent view (#220 D10, T26)", () => {
     useLibraryStore.setState({ folders: [{ ...library()[0]!, diagrams: [] }] });
     const { unmount } = render(<RecentView />);
     expect(screen.getByText("No diagrams yet")).toBeInTheDocument();
+    expect(
+      screen.getByText("Start one from Home, open a .dosik file, or send ops to the bridge."),
+    ).toBeInTheDocument();
     unmount();
     useLibraryStore.setState({ folders: [], readFailed: true });
     render(<RecentView />);
     expect(screen.getByText("Couldn't load your projects")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Dosik couldn't read its library folder. Try again, or open a .dosik file from the sidebar.",
+      ),
+    ).toBeInTheDocument();
   });
 });
