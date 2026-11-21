@@ -59,9 +59,9 @@ paths:
       responses:
         "200":
           description: |
-            The diagram as JSON (same shape as a `.dosik.json` file) plus
-            `project` — which library diagram this is, or `null` (a project is the
-            folder the diagram sits in).
+            The diagram as JSON (the same document a `.dosik` file holds) plus
+            `project` — which library diagram this is, or `null`. A project is a
+            folder on disk and a library diagram a `<title>.dosik` file in it.
           content:
             application/json:
               schema:
@@ -93,8 +93,7 @@ paths:
         While the Home tab is active a batch that does not start with
         `new_diagram` first creates a new library diagram, opens it in a new
         tab (the other tabs stay as they are) and applies the ops there — in
-        the folder Home shows (a project or a folder; not a stray listing of
-        diagrams with no folder on disk), else in the project picked with the
+        the folder Home shows (a project or a folder), else in the project picked with the
         dashboard's Change, else in the most recently edited project; the
         response says which diagram in `project`. A batch that starts with
         `new_diagram` makes that one only. A batch that starts with a removed
@@ -601,6 +600,13 @@ components:
         y1: { type: number }
     SetTitleOp:
       type: object
+      description: |
+        Renames the diagram. A library diagram is called what its file is
+        called, so the app renames its `<title>.dosik` file when it saves — the
+        title made safe for every file system (`/ \ : * ? " < > |` become `-`,
+        leading and trailing dots and spaces go), with " 2" when another item
+        in the folder has the name. The title then reads as the name the file
+        got (`GET /api/diagram`). `set_diagram` renames it the same way.
       required: [op, title]
       properties:
         op: { type: string, const: set_title }
@@ -670,7 +676,7 @@ components:
         op: { type: string, const: clear }
     SetDiagramOp:
       type: object
-      description: "Replaces the whole diagram — title, nodes and edges (one undo step in the app brings the previous one back). A diagram is one canvas: a `doc` with a `pages` key is refused (\"set_diagram: a document with pages is not supported — a diagram is one canvas (send nodes and edges)\"). After the batch, the viewport fits what the document ended with (zooming out as needed, never in past 100%); an empty result returns it to the origin."
+      description: "Replaces the whole diagram — title, nodes and edges (one undo step in the app brings the previous one back); a new `title` renames a library diagram's file as `set_title` does. A diagram is one canvas: a `doc` with a `pages` key is refused (\"set_diagram: a document with pages is not supported — a diagram is one canvas (send nodes and edges)\"). After the batch, the viewport fits what the document ended with (zooming out as needed, never in past 100%); an empty result returns it to the origin."
       required: [op, doc]
       properties:
         op: { type: string, const: set_diagram }
@@ -679,7 +685,8 @@ components:
       type: object
       description: |
         Starts another library diagram in a new tab, the active one; the ops
-        after it in the batch go to it. Only `POST /api/ops` takes it — a chat
+        after it in the batch go to it. The diagram is a new `<title>.dosik`
+        file in its folder. Only `POST /api/ops` takes it — a chat
         turn edits the diagram it was sent from, and the MCP server's `file`
         mode edits one file. Errors (the ops after it are then not applied):
         `title` not a string → "new_diagram: title must be a string"; a
@@ -688,7 +695,7 @@ components:
       required: [op]
       properties:
         op: { type: string, const: new_diagram }
-        title: { type: string, description: 'The new diagram''s title — blank or left out: "Untitled Diagram".' }
+        title: { type: string, description: 'The new diagram''s title, which is its file''s name (`<title>.dosik`) — made safe for every file system, with " 2" when the folder has one by that name; blank or left out: "Untitled Diagram". The title then reads as the name the file got.' }
         folder:
           type: string
           description: "The folder to save it in, at any depth (a project or a folder inside one) — an id from `project.path` of `GET /api/diagram`. Left out: the folder of the diagram on screen, else the one Home shows, else the project picked on Home, else the most recently edited project."
@@ -721,8 +728,7 @@ components:
         the diagram sits in) — the active tab's.
         `null` when that document is an external file (opened with Open) or the
         Home tab's blank. Ops arriving while the Home tab is active create a new
-        diagram in a new tab first — in the project Home shows (unless it is a
-        stray listing with no folder), else the one
+        diagram in a new tab first — in the folder Home shows, else the project
         picked on Home, else the most recently edited one — so this is always
         set in that case.
       oneOf:
@@ -731,7 +737,7 @@ components:
           required: [id, title, path]
           properties:
             id: { type: string }
-            title: { type: string }
+            title: { type: string, description: "The diagram's name — its file's name without `.dosik`." }
             path:
               type: array
               description: "The folders the diagram is in, from its top project down to the folder that holds it — `[]` while the library listing does not have it yet (a diagram just made). Their ids are what `new_diagram.folder` takes."

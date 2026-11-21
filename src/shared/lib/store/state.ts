@@ -211,7 +211,7 @@ export interface DiagramState {
   /**
    * Shapes held by the last copy. App-internal and value-based, not a set of
    * ids: the originals may be deleted — or a whole other file opened — before
-   * the paste. Never reaches a snapshot or `.dosik.json`; both only carry
+   * the paste. Never reaches a snapshot or a `.dosik` file; both only carry
    * title/nodes/edges.
    */
   clipboard: ClipboardFragment | null;
