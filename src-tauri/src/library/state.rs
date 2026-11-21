@@ -218,7 +218,7 @@ pub fn save(dir: &Path, state: &LibraryState) -> Result<(), String> {
 /// path is dropped, and so is an id seen before, a key that could step out
 /// of its project, a board of the wrong shape. Only a value that is no
 /// object at all is no record.
-fn from_value(value: &Value) -> Option<LibraryState> {
+pub(super) fn from_value(value: &Value) -> Option<LibraryState> {
     let top = value.as_object()?;
     let mut seen = std::collections::HashSet::new();
     let mut projects = Vec::new();

@@ -990,6 +990,27 @@ fn list_once(dir: &Path) -> (Vec<FolderMeta>, Vec<OrderFix>) {
     (out, fixes)
 }
 
+/// The library as it lists, with where each folder and diagram is — read
+/// only: no diagram is adopted, no order written down, nothing made. What
+/// the move to real folders reads (`migrate`).
+pub(super) struct ReadOnly {
+    /// every project, in the user's order, with its folders and diagrams in
+    /// theirs; diagrams at the top of the library under My Diagrams — or, with
+    /// no such project, in a stray listing last
+    pub folders: Vec<FolderMeta>,
+    /// where each diagram id is found first
+    pub diagram_paths: std::collections::HashMap<String, PathBuf>,
+}
+
+pub(super) fn read_only(dir: &Path) -> ReadOnly {
+    let seen = first_seen(dir);
+    let (folders, _) = list_once(dir);
+    ReadOnly {
+        folders,
+        diagram_paths: seen.diagrams,
+    }
+}
+
 /// How new a folder is, everything under it counted — the listing's
 /// `updatedAt`, from file times alone.
 fn newest_under(path: &Path, depth: usize) -> u64 {

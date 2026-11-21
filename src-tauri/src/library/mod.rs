@@ -18,6 +18,8 @@ mod folders;
 #[allow(dead_code)]
 mod listing;
 #[allow(dead_code)]
+mod migrate;
+#[allow(dead_code)]
 mod names;
 #[allow(dead_code)]
 mod ops;
