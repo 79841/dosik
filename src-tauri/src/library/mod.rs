@@ -14,6 +14,8 @@ mod ctx;
 #[allow(dead_code)]
 mod disk;
 #[allow(dead_code)]
+mod folders;
+#[allow(dead_code)]
 mod listing;
 #[allow(dead_code)]
 mod names;
