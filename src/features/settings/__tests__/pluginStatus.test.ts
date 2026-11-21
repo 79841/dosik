@@ -10,10 +10,12 @@ const facts = (over: Partial<PluginFacts> = {}): PluginFacts => ({
   appVersion: "0.2.0",
   claudeCode: { cli: true, registered: null },
   claudeDesktop: { app: true, installedVersion: null },
-  codex: { registered: null },
+  codex: { config: "~/.codex/config.toml", registered: null },
   ...over,
 });
-const row = (f: PluginFacts, target: string) => pluginRows(f).find((r) => r.target === target)!;
+/** a row as on a Mac — the Windows block asks for its own */
+const row = (f: PluginFacts, target: string) =>
+  pluginRows(f, true).find((r) => r.target === target)!;
 const ours = { command: "/usr/local/bin/node", args: [SERVER], commandFound: true };
 const repo = {
   command: "node",
@@ -43,7 +45,9 @@ describe("plugin rows (#252, the canvas's Settings-Plugins and Settings-States)"
       status: "Installed",
       action: { label: "Remove", kind: "ghost", does: "remove" },
     });
-    expect(row(facts({ codex: { registered: repo } }), "codex")).toMatchObject({
+    expect(
+      row(facts({ codex: { config: "~/.codex/config.toml", registered: repo } }), "codex"),
+    ).toMatchObject({
       tone: "warn",
       status: "Old path",
       action: { label: "Update", kind: "secondary", does: "install" },
@@ -122,7 +126,9 @@ describe("plugin rows (#252, the canvas's Settings-Plugins and Settings-States)"
       command: "/Users/a/.nvm/versions/node/v22.18.0/bin/node",
       commandFound: false,
     };
-    expect(row(facts({ codex: { registered: gone } }), "codex")).toMatchObject({
+    expect(
+      row(facts({ codex: { config: "~/.codex/config.toml", registered: gone } }), "codex"),
+    ).toMatchObject({
       status: "Old path",
       action: { label: "Update" },
     });
@@ -132,5 +138,28 @@ describe("plugin rows (#252, the canvas's Settings-Plugins and Settings-States)"
     expect(olderVersion("0.1.0", "0.2.0")).toBe(true);
     expect(olderVersion("0.10.0", "0.9.0")).toBe(false);
     expect(olderVersion("1.0.0", "1.0.0")).toBe(false);
+  });
+});
+
+describe("plugin rows on Windows (the canvas's Win-Settings-States)", () => {
+  it("no Node: this PC does not have it", () => {
+    expect(row(facts({ node: null }), "codex").description).toBe(
+      "The MCP server runs on Node.js, which this Mac does not have",
+    );
+    expect(
+      pluginRows(facts({ node: null }), false).find((r) => r.target === "codex")?.description,
+    ).toBe("The MCP server runs on Node.js, which this PC does not have");
+  });
+
+  it("the Codex config is named where it is — Rust's shown path, C:\\Users\\… on Windows", () => {
+    const windows = facts({
+      codex: { config: "C:\\Users\\someone\\.codex\\config.toml", registered: null },
+    });
+    expect(pluginRows(windows, false).find((r) => r.target === "codex")?.description).toBe(
+      "The ChatGPT desktop app and Codex CLI share C:\\Users\\someone\\.codex\\config.toml",
+    );
+    expect(row(facts(), "codex").description).toBe(
+      "The ChatGPT desktop app and Codex CLI share ~/.codex/config.toml",
+    );
   });
 });

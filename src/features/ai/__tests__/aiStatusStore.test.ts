@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
+import { forgetPlatform, pretendMac } from "../../../test/platform";
 
 const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
@@ -7,6 +8,10 @@ const { useAiStatusStore, checkCli, checkKey, forgetKeyCheck, isConnected } = aw
   "../aiStatusStore"
 );
 const { DEFAULT_AI_SETTINGS } = await import("../settings");
+
+// GPT's subscription is macOS's: these suites run as on a Mac (jsdom names no platform)
+beforeEach(pretendMac);
+afterEach(forgetPlatform);
 
 describe("AI status (#252)", () => {
   beforeEach(() => {
@@ -119,5 +124,18 @@ describe("AI status (#252)", () => {
     expect(isConnected(s, cli("ok"), "openai")).toBe(true);
     expect(isConnected(s, cli("missing"), "openai")).toBe(false);
     expect(isConnected(s, cli("signed-out"), "openai")).toBe(false);
+  });
+
+  it("off macOS a stored GPT subscription is connected only by its API key", () => {
+    forgetPlatform();
+    const s = {
+      ...DEFAULT_AI_SETTINGS,
+      auths: { claude: "subscription" as const, openai: "subscription" as const },
+      keys: { claude: "", openai: "" },
+    };
+    const cli = { claude: { state: "ok" }, openai: { state: "ok", version: "1" } } as never;
+    expect(isConnected(s, cli, "openai")).toBe(false);
+    expect(isConnected({ ...s, keys: { claude: "", openai: "sk" } }, cli, "openai")).toBe(true);
+    expect(isConnected(s, cli, "claude")).toBe(true);
   });
 });

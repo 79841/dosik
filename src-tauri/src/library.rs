@@ -706,8 +706,12 @@ fn item_path(dir: &Path, kind: ItemKind, id: &str) -> Result<PathBuf, String> {
 }
 
 /// `path` from `~` when it is under `home` — by whole components, so
-/// `/Users/a2` is not under `/Users/a`.
-fn shown_path(path: &Path, home: Option<&Path>) -> String {
+/// `/Users/a2` is not under `/Users/a`. On Windows the whole path, as File
+/// Explorer shows it: `~` is no Windows idiom.
+pub(crate) fn shown_path(path: &Path, home: Option<&Path>, windows: bool) -> String {
+    if windows {
+        return path.to_string_lossy().into_owned();
+    }
     match home.and_then(|home| path.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
         Some(rest) => format!("~/{}", rest.to_string_lossy()),
@@ -1620,7 +1624,7 @@ pub fn library_path(app: AppHandle, kind: ItemKind, id: String) -> Result<ItemPa
     let path = item_path(&library_dir(&app)?, kind, &id)?;
     let home = app.path().home_dir().ok();
     Ok(ItemPath {
-        shown: shown_path(&path, home.as_deref()),
+        shown: shown_path(&path, home.as_deref(), cfg!(windows)),
         path: path.to_string_lossy().into_owned(),
     })
 }
@@ -1648,7 +1652,7 @@ pub fn library_root(app: AppHandle) -> Result<ItemPath, String> {
     let path = library_dir(&app)?;
     let home = app.path().home_dir().ok();
     Ok(ItemPath {
-        shown: shown_path(&path, home.as_deref()),
+        shown: shown_path(&path, home.as_deref(), cfg!(windows)),
         path: path.to_string_lossy().into_owned(),
     })
 }
@@ -1768,24 +1772,42 @@ mod tests {
         assert_eq!(
             shown_path(
                 Path::new("/Users/someone/Library/Application Support/x"),
-                Some(home)
+                Some(home),
+                false
             ),
             "~/Library/Application Support/x"
         );
         // outside it, or a name that only starts the same: as it is
         assert_eq!(
-            shown_path(Path::new("/Volumes/data/x"), Some(home)),
+            shown_path(Path::new("/Volumes/data/x"), Some(home), false),
             "/Volumes/data/x"
         );
         assert_eq!(
-            shown_path(Path::new("/Users/someone2/x"), Some(home)),
+            shown_path(Path::new("/Users/someone2/x"), Some(home), false),
             "/Users/someone2/x"
         );
         // the home folder itself, and no home folder known
-        assert_eq!(shown_path(Path::new("/Users/someone"), Some(home)), "~");
         assert_eq!(
-            shown_path(Path::new("/Users/someone/x"), None),
+            shown_path(Path::new("/Users/someone"), Some(home), false),
+            "~"
+        );
+        assert_eq!(
+            shown_path(Path::new("/Users/someone/x"), None, false),
             "/Users/someone/x"
+        );
+    }
+
+    #[test]
+    fn a_path_on_windows_is_shown_whole_as_file_explorer_shows_it() {
+        let path = Path::new(r"C:\Users\someone\AppData\Roaming\app.dosik.desktop\projects");
+        assert_eq!(
+            shown_path(path, Some(Path::new(r"C:\Users\someone")), true),
+            r"C:\Users\someone\AppData\Roaming\app.dosik.desktop\projects"
+        );
+        // with no home folder known, the same
+        assert_eq!(
+            shown_path(path, None, true),
+            r"C:\Users\someone\AppData\Roaming\app.dosik.desktop\projects"
         );
     }
 

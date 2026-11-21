@@ -1,14 +1,21 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { forgetPlatform, pretendMac } from "../../../test/platform";
 import {
   activeAuth,
   activeKey,
+  authAvailable,
+  effectiveAuth,
   activeModel,
   DEFAULT_AI_SETTINGS,
   loadAiSettings,
   modelShortLabel,
   saveAiSettings,
 } from "../settings";
+
+// GPT's subscription is macOS's: these suites run as on a Mac (jsdom names no platform)
+beforeEach(pretendMac);
+afterEach(forgetPlatform);
 
 describe("AI settings storage (vendor × auth per vendor, #119, #252)", () => {
   beforeEach(() => {
@@ -172,5 +179,28 @@ describe("modelShortLabel (#252)", () => {
 
   it("falls back to the id for a model the list does not know", () => {
     expect(modelShortLabel("claude", "claude-next")).toBe("claude-next");
+  });
+});
+
+describe("GPT's subscription off macOS — the Codex CLI does not run there (the canvas's Win-Settings)", () => {
+  const gptSubscription = {
+    ...DEFAULT_AI_SETTINGS,
+    vendor: "openai" as const,
+    auths: { claude: "subscription" as const, openai: "subscription" as const },
+  };
+
+  it("only GPT's subscription is out, and only off macOS", () => {
+    expect(authAvailable("openai", "subscription", false)).toBe(false);
+    expect(authAvailable("openai", "api-key", false)).toBe(true);
+    expect(authAvailable("claude", "subscription", false)).toBe(true);
+    expect(authAvailable("openai", "subscription", true)).toBe(true);
+  });
+
+  it("a stored GPT subscription works as the API key off macOS — the stored choice stays", () => {
+    expect(effectiveAuth(gptSubscription, "openai", false)).toBe("api-key");
+    expect(activeAuth(gptSubscription, false)).toBe("api-key");
+    expect(effectiveAuth(gptSubscription, "claude", false)).toBe("subscription");
+    expect(effectiveAuth(gptSubscription, "openai", true)).toBe("subscription");
+    expect(gptSubscription.auths.openai).toBe("subscription");
   });
 });

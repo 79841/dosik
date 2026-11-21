@@ -1,3 +1,5 @@
+import { isMacPlatform } from "../../shared/lib/windowChrome";
+
 export type AiVendor = "claude" | "openai";
 /** how the vendor is reached — the local CLI signed in with a subscription, or a pay-per-use key */
 export type AiAuth = "subscription" | "api-key";
@@ -50,7 +52,28 @@ export const DEFAULT_AI_SETTINGS: AiSettings = {
 /** the key and model the current vendor/auth pair actually uses */
 export const activeKey = (s: AiSettings): string => s.keys[s.vendor];
 export const activeModel = (s: AiSettings): string => s.models[s.vendor];
-export const activeAuth = (s: AiSettings): AiAuth => s.auths[s.vendor];
+/**
+ * Whether a connection can be used here: GPT's subscription goes through the
+ * Codex CLI, which Dosik does not run off macOS (`codex.rs`).
+ */
+export const authAvailable = (
+  vendor: AiVendor,
+  auth: AiAuth,
+  mac: boolean = isMacPlatform(),
+): boolean => mac || vendor !== "openai" || auth !== "subscription";
+
+/**
+ * The connection a vendor uses here: the stored one, or the API key where it
+ * cannot be used. The stored choice is not written over.
+ */
+export const effectiveAuth = (
+  s: AiSettings,
+  vendor: AiVendor,
+  mac: boolean = isMacPlatform(),
+): AiAuth => (authAvailable(vendor, s.auths[vendor], mac) ? s.auths[vendor] : "api-key");
+
+export const activeAuth = (s: AiSettings, mac: boolean = isMacPlatform()): AiAuth =>
+  effectiveAuth(s, s.vendor, mac);
 
 /** a model's name without the "(recommended)" note — what the composer's button reads (#252) */
 export const modelShortLabel = (vendor: AiVendor, id: string): string => {

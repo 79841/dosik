@@ -114,11 +114,14 @@ export const Segmented = <T extends string>({
   value,
   options,
   onChange,
+  disabled = [],
 }: {
   label: string;
   value: T;
   options: readonly T[];
   onChange: (value: T) => void;
+  /** segments shown but not to be picked — dimmed, skipped by the arrows (Win-Settings) */
+  disabled?: readonly T[];
 }) => {
   const group = useRef<HTMLDivElement>(null);
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -126,7 +129,13 @@ export const Segmented = <T extends string>({
     if (step === undefined) return;
     e.preventDefault();
     e.stopPropagation();
-    const next = (options.indexOf(value) + step + options.length) % options.length;
+    // the next segment that can be picked, round; none other than this one: stay
+    let next = options.indexOf(value);
+    for (let i = 0; i < options.length; i++) {
+      next = (next + step + options.length) % options.length;
+      if (!disabled.includes(options[next] as T)) break;
+    }
+    if (options[next] === value || disabled.includes(options[next] as T)) return;
     onChange(options[next] as T);
     group.current?.querySelectorAll<HTMLElement>("[role=radio]")[next]?.focus();
   };
@@ -140,6 +149,7 @@ export const Segmented = <T extends string>({
     >
       {options.map((option) => {
         const on = option === value;
+        const off = disabled.includes(option);
         return (
           // biome-ignore lint/a11y/useSemanticElements: a segmented control — a button that is a radio, the design's segment, not a native dot
           <button
@@ -147,12 +157,15 @@ export const Segmented = <T extends string>({
             type="button"
             role="radio"
             aria-checked={on}
+            disabled={off}
             tabIndex={on ? 0 : -1}
             onClick={() => onChange(option)}
             className={`flex h-6 items-center rounded-(--radius-control) px-2.5 text-[12px] transition-colors ${FOCUS_RING} ${
               on
                 ? "bg-surface font-semibold text-ink shadow-segment"
-                : "font-medium text-icon hover:text-ink"
+                : off
+                  ? "cursor-default font-medium text-icon opacity-35"
+                  : "font-medium text-icon hover:text-ink"
             }`}
           >
             {option}

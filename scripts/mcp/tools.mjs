@@ -171,8 +171,8 @@ export const toolDefinitions = (spec = loadSpec(), { view = false } = {}) => [
       "It opens in a new tab and becomes the active one (a file already open just comes to the " +
       "front). Use it only when the user asks to open or show the file in the app — the other " +
       "tools never need it. Afterwards edit without `file`: edits without `file` go to the " +
-      "active tab, which is this document now, and the app does not reload the file. macOS only " +
-      "for now.",
+      "active tab, which is this document now, and the app does not reload the file. macOS and " +
+      "Windows.",
     inputSchema: {
       type: "object",
       properties: { file: { type: "string", description: "Absolute path to a `.dosik.json`." } },

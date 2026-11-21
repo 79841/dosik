@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
+import { forgetPlatform, pretendMac } from "../../../test/platform";
 
 const { cliMock, apiMock, codexMock, openaiMock } = vi.hoisted(() => ({
   cliMock: vi.fn(),
@@ -43,6 +44,10 @@ const resetChat = () => {
   useDiagramStore.setState({ nodes: [], edges: [] });
 };
 
+// GPT's subscription is macOS's: these suites run as on a Mac (jsdom names no platform)
+beforeEach(pretendMac);
+afterEach(forgetPlatform);
+
 describe("sendChatTurn", () => {
   beforeEach(resetChat);
 
@@ -50,6 +55,20 @@ describe("sendChatTurn", () => {
     expect(await sendChatTurn("   ")).toBe("ignored");
     useChatStore.setState({ busy: true });
     expect(await sendChatTurn("hello")).toBe("ignored");
+    expect(cliMock).not.toHaveBeenCalled();
+  });
+
+  it("off macOS a stored GPT subscription asks for the API key — the Codex CLI never runs", async () => {
+    forgetPlatform();
+    useChatStore.setState({
+      settings: {
+        vendor: "openai",
+        auths: { claude: "subscription", openai: "subscription" },
+        keys: { claude: "", openai: "" },
+        models: { claude: "claude-opus-5", openai: "gpt-5.6-sol" },
+      },
+    });
+    expect(await sendChatTurn("hello")).toBe("needs-api-key");
     expect(cliMock).not.toHaveBeenCalled();
   });
 

@@ -23,6 +23,8 @@ describe("build:mcp (#252)", () => {
       },
     });
     expect(manifest.description.length).toBeGreaterThan(10);
+    // Claude Desktop on macOS and Windows: the server is plain Node
+    expect(manifest.compatibility.platforms).toEqual(["darwin", "win32"]);
     expect(SERVER_ENTRY).toBe("server/server.mjs");
   });
 

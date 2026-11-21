@@ -15,14 +15,13 @@ import {
 import { useSettingsStore } from "../settingsStore";
 
 /** the paths and commands in a row's description, set as code like the board */
-const CODE = ["claude mcp add", "~/.codex/config.toml"];
-const withCode = (text: string) =>
+const withCode = (text: string, code: readonly string[]) =>
   text
-    .split(new RegExp(`(${CODE.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`))
+    .split(new RegExp(`(${code.map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`))
     .map((part, i) =>
       // the split alternates text and code; position is the identity
       // biome-ignore lint/suspicious/noArrayIndexKey: a fixed sentence's pieces
-      CODE.includes(part) ? <Mono key={i}>{part}</Mono> : <Fragment key={i}>{part}</Fragment>,
+      code.includes(part) ? <Mono key={i}>{part}</Mono> : <Fragment key={i}>{part}</Fragment>,
     );
 
 /** the agent bridge the AI apps reach Dosik through (`bridge_status`) — its port is fixed */
@@ -138,7 +137,11 @@ export const IntegrationsSection = () => {
               // each row works on its own app: one under way leaves the others usable (Settings-States)
               const working = busy.includes(row.target);
               return (
-                <Row key={row.target} title={row.title} description={withCode(row.description)}>
+                <Row
+                  key={row.target}
+                  title={row.title}
+                  description={withCode(row.description, ["claude mcp add", facts.codex.config])}
+                >
                   {/* hidden while it works, but kept: its words changing is what gets read out */}
                   <Status tone={row.tone} hidden={working}>
                     {row.status}

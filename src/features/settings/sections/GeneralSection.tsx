@@ -3,7 +3,9 @@ import { FolderOpen } from "lucide-react";
 
 import { type ThemePreference, useThemeStore } from "../../../shared/lib/theme";
 import { toastError } from "../../../shared/lib/toastStore";
+import { showInLabel } from "../../library/fileManager";
 import { Button, Group, Groups, Row, Segmented, useLoaded } from "../parts";
+import { platformCopy } from "../platformCopy";
 
 const THEMES = ["Light", "Dark", "System"] as const;
 type ThemeLabel = (typeof THEMES)[number];
@@ -29,7 +31,7 @@ export const GeneralSection = () => {
   return (
     <Groups>
       <Group title="Appearance">
-        <Row title="Theme" description="Follow macOS, or pick one">
+        <Row title="Theme" description={platformCopy().theme}>
           <Segmented
             label="Theme"
             value={LABEL[preference]}
@@ -44,7 +46,7 @@ export const GeneralSection = () => {
             icon={FolderOpen}
             onClick={() => void invoke("show_library_in_finder").catch(toastError)}
           >
-            Show in Finder
+            {showInLabel()}
           </Button>
         </Row>
       </Group>

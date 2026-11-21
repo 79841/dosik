@@ -2,7 +2,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, win32 } from "node:path";
 
 import { MCP_PATHS } from "./paths.mjs";
 import { ToolError } from "./tools.mjs";
@@ -391,25 +391,79 @@ export const createRenderSvg = ({
   };
 };
 
+/** the per-user installer's uninstall entry on Windows — it says where Dosik went */
+const UNINSTALL_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Dosik";
+/** the app's program on Windows: the bundle's product name */
+const WINDOWS_EXE = "Dosik.exe";
+
+/** the folder in `reg query`'s answer for InstallLocation, or null */
+export const parseInstallLocation = (regOutput) => {
+  const match = /InstallLocation\s+REG_(?:EXPAND_)?SZ\s+(.+)/i.exec(regOutput);
+  return match ? match[1].trim() : null;
+};
+
+/**
+ * Where Dosik's program may be on Windows: where its uninstall entry says it
+ * was installed (the user may have picked a folder), then the per-user
+ * installer's default, `%LOCALAPPDATA%\Dosik`.
+ */
+export const windowsAppCandidates = ({ installLocation, localAppData }) =>
+  [installLocation, localAppData && win32.join(localAppData, "Dosik")]
+    .filter(Boolean)
+    .map((dir) => win32.join(dir, WINDOWS_EXE));
+
+/** starts a program and lets it go — the app stays up after the server is done */
+const spawnAndForget = (command, args) =>
+  new Promise((resolve, reject) => {
+    const child = nodeSpawn(command, args, { detached: true, stdio: "ignore" });
+    child.once("error", reject);
+    child.once("spawn", () => {
+      child.unref();
+      resolve();
+    });
+  });
+
 /**
  * Hands a file to the installed app (#149) — the explicit way to put a diagram
- * in front of the user, like draw.io's `open_drawio_*`. By bundle id and not
+ * in front of the user, like draw.io's `open_drawio_*`. The installed app, not
  * `pnpm tauri dev`: the reason the server stopped starting the app (#2) holds
- * here too.
+ * here too. macOS: by bundle id. Windows: the program the installer put down,
+ * started with the file and not waited for — a Dosik already running takes
+ * the file over and comes to the front.
  */
 export const createOpenInApp = ({
   run = createRun(),
   platform = process.platform,
   exists = existsSync,
   bundleId = BUNDLE_ID,
+  spawnDetached = spawnAndForget,
+  env = process.env,
 } = {}) => {
-  return async (file) => {
-    if (platform !== "darwin") {
+  const openOnWindows = async (file) => {
+    const installLocation = await run("reg", [
+      "query",
+      UNINSTALL_KEY,
+      "/v",
+      "InstallLocation",
+    ]).then(parseInstallLocation, () => null);
+    const candidates = windowsAppCandidates({ installLocation, localAppData: env.LOCALAPPDATA });
+    const exe = candidates.find((path) => exists(path));
+    if (!exe) {
       throw new ToolError(
-        "open_in_dosik is macOS only for now. Open the file from the Dosik app's Open… button.",
+        `Dosik is not installed (no ${WINDOWS_EXE} in ${candidates.join(" or ") || "the usual places"}). Install the app, or work on the file with the other tools' \`file\` argument.`,
+      );
+    }
+    await spawnDetached(exe, [file]);
+    return { opened: file };
+  };
+  return async (file) => {
+    if (platform !== "darwin" && platform !== "win32") {
+      throw new ToolError(
+        "open_in_dosik works on macOS and Windows. Open the file from the Dosik app's Open… button.",
       );
     }
     if (!exists(file)) throw new ToolError(`No such file: ${file}`);
+    if (platform === "win32") return openOnWindows(file);
     try {
       await run("open", ["-b", bundleId, file]);
     } catch (error) {
