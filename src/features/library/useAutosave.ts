@@ -4,7 +4,12 @@ import { useDiagramStore } from "../../shared/lib/store";
 import { documentMayHaveChanged } from "../../shared/lib/store/document";
 import { toastError } from "../../shared/lib/toastStore";
 import { useAppStore } from "./appStore";
-import { type FileStamp, saveProjectContents, serializeProject } from "./libraryApi";
+import {
+  type FileStamp,
+  type SaveOutcome,
+  saveProjectContents,
+  serializeProject,
+} from "./libraryApi";
 
 /** how long after the last edit the project is written */
 export const AUTOSAVE_DEBOUNCE_MS = 500;
@@ -30,6 +35,16 @@ const lastWritten = new Map<string, string>();
 const baseStamps = new Map<string, FileStamp>();
 /** project writes sent to disk this session — what a listing read after them is up to date with */
 let writesSent = 0;
+/** per diagram: its writes sent and not settled yet */
+const writing = new Map<string, number>();
+/**
+ * Per diagram: moved on by every read of it from disk. A write queued
+ * before the read is dropped — it would put back what the read replaced.
+ */
+const generations = new Map<string, number>();
+const generationOf = (id: string): number => generations.get(id) ?? 0;
+/** diagrams gone from disk since they were read — never written again until read again */
+const gone = new Set<string>();
 
 /** why a save was not written — the file changed on disk, or is gone (#253 D12, D13) */
 export type SaveRefusal = "changedOnDisk" | "gone";
@@ -99,6 +114,8 @@ export const writeProjectThroughChain = (id: string, force = false): Promise<boo
   // project (or an external file) since this was scheduled, writing it under
   // the old id would put the wrong document in that project's file
   if (useDiagramStore.getState().projectId !== id) return inFlight.then(() => true);
+  // gone from disk: a write would be refused, or make it again elsewhere
+  if (gone.has(id)) return inFlight.then(() => false);
   const contents = serializeProject(useDiagramStore.getState().toDoc());
   const previous = lastWritten.get(id);
   if (!force && previous === contents) return inFlight.then(() => true);
@@ -107,6 +124,8 @@ export const writeProjectThroughChain = (id: string, force = false): Promise<boo
   // skipped while the stale bytes are still on their way to the file
   lastWritten.set(id, contents);
   writesSent++;
+  const generation = generationOf(id);
+  writing.set(id, (writing.get(id) ?? 0) + 1);
   const rollBack = () => {
     if (lastWritten.get(id) === contents) {
       if (previous === undefined) lastWritten.delete(id);
@@ -116,10 +135,16 @@ export const writeProjectThroughChain = (id: string, force = false): Promise<boo
   // the base is read as the write starts, not as it is scheduled: the one
   // before it on the chain may have moved it on
   const attempt = inFlight
-    .then(() => saveProjectContents(id, contents, undefined, baseStamps.get(id)))
+    .then((): Promise<SaveOutcome | "dropped"> | "dropped" =>
+      // read from disk since it was queued: what it holds is older than the tab
+      generationOf(id) === generation
+        ? saveProjectContents(id, contents, undefined, baseStamps.get(id))
+        : "dropped",
+    )
     .then(
       (outcome) => {
         // on the chain itself, so the next write starts from this stamp
+        if (outcome === "dropped") return outcome;
         if (outcome.kind === "saved") {
           if (outcome.stamp !== undefined) baseStamps.set(id, outcome.stamp);
         } else rollBack();
@@ -130,13 +155,16 @@ export const writeProjectThroughChain = (id: string, force = false): Promise<boo
         throw error;
       },
     );
+  const settled = () => {
+    const left = (writing.get(id) ?? 1) - 1;
+    if (left > 0) writing.set(id, left);
+    else writing.delete(id);
+  };
   // the chain itself never rejects — a failure must not take later writes down
-  inFlight = attempt.then(
-    () => undefined,
-    () => undefined,
-  );
+  inFlight = attempt.then(settled, settled);
   return attempt.then(
     (outcome) => {
+      if (outcome === "dropped") return true;
       if (outcome.kind === "saved") {
         if (outcome.name !== undefined) takeSavedName(id, titleIn(contents), outcome.name);
         return true;
@@ -166,10 +194,35 @@ export const noteProjectContents = (
   lastWritten.set(id, serializeProject(doc));
   if (stamp === undefined) baseStamps.delete(id);
   else baseStamps.set(id, stamp);
+  generations.set(id, generationOf(id) + 1);
+  gone.delete(id);
 };
 
 /** the stamp the next save of `id` brings as its base — what its tab last saw */
 export const baseStampOf = (id: string): FileStamp | undefined => baseStamps.get(id);
+
+/**
+ * Whether the diagram `id`, as `doc` holds it, has edits its file may not
+ * have yet (#253 D12): a write waiting to go, one on its way, or bytes no
+ * write has carried.
+ */
+export const hasUnwrittenEdits = (
+  id: string,
+  doc: Parameters<typeof serializeProject>[0],
+): boolean =>
+  pending === id || (writing.get(id) ?? 0) > 0 || lastWritten.get(id) !== serializeProject(doc);
+
+/**
+ * The diagram `id` is gone from disk (#253 D13): nothing pending or queued
+ * for it is written — a write would only be refused, or make it again.
+ */
+export const forgetProject = (id: string): void => {
+  if (pending === id) discardPendingAutosave();
+  gone.add(id);
+  generations.set(id, generationOf(id) + 1);
+  lastWritten.delete(id);
+  baseStamps.delete(id);
+};
 
 const writeNow = (id: string): Promise<void> => writeProjectThroughChain(id).then(() => undefined);
 
@@ -232,5 +285,8 @@ export const resetAutosaveForTests = (): void => {
   inFlight = Promise.resolve();
   lastWritten.clear();
   baseStamps.clear();
+  writing.clear();
+  generations.clear();
+  gone.clear();
   writesSent = 0;
 };

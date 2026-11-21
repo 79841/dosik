@@ -17,6 +17,7 @@ import { Home } from "./features/home/Home";
 import { useAppStore } from "./features/library/appStore";
 import { useAutosave } from "./features/library/useAutosave";
 import { useFlushOnClose } from "./features/library/useFlushOnClose";
+import { useLibraryWatch } from "./features/library/useLibraryWatch";
 import { useOpenRequests } from "./features/library/useOpenRequests";
 import { useTabSession } from "./features/library/tabSession";
 import { useTrayActions } from "./features/library/useTrayActions";
@@ -140,6 +141,8 @@ const Frame = () => {
   useFlushOnClose();
   // the tabs across restarts: saved as they change, the active one reopened (#218 D15)
   useTabSession();
+  // what changes on disk outside the app reaches the library and the tabs (#253)
+  useLibraryWatch();
 
   // ⌘\, ⌘O and the tab keys, on Home and in the editor alike (#217 D22,
   // #218 D12) — in the capture phase, so a tab key reaches nothing else

@@ -11,6 +11,7 @@ import {
   AUTOSAVE_DEBOUNCE_MS,
   baseStampOf,
   flushAutosave,
+  forgetProject,
   noteProjectContents,
   onSaveRefused,
   resetAutosaveForTests,
@@ -361,6 +362,22 @@ describe("useAutosave (#114)", () => {
       expect(tab?.doc?.title).toBe("Flow 2");
       expect(useDiagramStore.getState().title).toBe("Other");
       useAppStore.getState().commitTabs({ tabs: [], activeTab: null });
+    });
+
+    it("a diagram gone from disk is not written again until it is read again (D13)", async () => {
+      renderHook(() => useAutosave());
+      useDiagramStore.getState().openProject("p1", blankDoc());
+      noteProjectContents("p1", blankDoc(), "1-10-aa");
+      forgetProject("p1");
+      addNode("a");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      await flushAutosave();
+      expect(saves()).toHaveLength(0);
+      // found again (Locate…) and read: written as ever
+      noteProjectContents("p1", useDiagramStore.getState().toDoc(), "2-10-bb");
+      addNode("b");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(saves()[0]![1]).toMatchObject({ base: "2-10-bb" });
     });
 
     it("a save Rust refuses is told to the tabs, and its bytes count as unwritten (D11)", async () => {

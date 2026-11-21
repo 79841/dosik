@@ -44,12 +44,24 @@ export const pickDiagramPath = async (): Promise<string | null> => {
   return typeof path === "string" ? path : null;
 };
 
-/** reads and checks a `.dosik.json` at a known path — a picked one, or the OS's (#149) */
-export const readDiagramFile = async (path: string): Promise<DiagramDoc> => {
-  const contents = await invoke<string>("read_text_file", { path });
+/** a diagram file's text, checked — a document with pages (#229 D2) or of another shape throws */
+const parseDiagramText = (contents: string): DiagramDoc => {
   const doc: unknown = JSON.parse(contents);
   // a document with pages was never shipped: it does not open (#229 D2)
   if (isMultiPage(doc)) throw new Error(MULTI_PAGE_ERROR);
   if (!isDiagramDocShape(doc)) throw new Error("Not a valid diagram file");
   return doc;
+};
+
+/** reads and checks a `.dosik.json` at a known path — a picked one, or the OS's (#149) */
+export const readDiagramFile = async (path: string): Promise<DiagramDoc> =>
+  parseDiagramText(await invoke<string>("read_text_file", { path }));
+
+/**
+ * The same, with the very text the file holds — what a tab compares with
+ * the bytes it last wrote there, to know a change of its own (#253 D12).
+ */
+export const readDiagramText = async (path: string): Promise<{ doc: DiagramDoc; text: string }> => {
+  const text = await invoke<string>("read_text_file", { path });
+  return { doc: parseDiagramText(text), text };
 };

@@ -63,6 +63,30 @@ pub fn roots(lib: &Library, st: &LibraryState) -> BTreeSet<Root> {
     out
 }
 
+/// What the watch of files open in tabs outside the library adds: each
+/// one's folder by itself — unless a folder of the library's watch holds it
+/// already, whose watch must never be shared or let go with it.
+pub fn file_roots(files: &[PathBuf], library: &BTreeSet<Root>) -> BTreeSet<Root> {
+    let covered: Vec<PathBuf> = library
+        .iter()
+        .filter(|r| r.recursive)
+        .map(|r| normalized(&r.path))
+        .collect();
+    files
+        .iter()
+        .filter_map(|file| file.parent())
+        .filter(|dir| {
+            let dir = normalized(dir);
+            !covered.iter().any(|root| dir.starts_with(root))
+        })
+        .map(|dir| Root {
+            path: dir.to_path_buf(),
+            recursive: false,
+        })
+        .filter(|root| !library.contains(root))
+        .collect()
+}
+
 /// The file system's events, gathered into batches of paths.
 pub struct Watcher {
     armed: Mutex<Armed>,
@@ -513,6 +537,27 @@ mod tests {
         let mut expected = vec![flow, far];
         expected.sort();
         assert_eq!(told, expected);
+    }
+
+    #[test]
+    fn a_file_outside_the_library_has_its_folder_watched_unless_the_library_watches_it() {
+        let (lib, _) = library("watch-files");
+        let library = roots(&lib, &record(&lib));
+        let base = lib.default_location.parent().unwrap().to_path_buf();
+        let files = [
+            base.join("Mine").join("a.dosik.json"),
+            base.join("Mine").join("b.dosik"),
+            // in a project: the library's watch has it
+            lib.default_location.join("P").join("c.dosik"),
+            base.join("Ext").join("Sub").join("d.dosik"),
+        ];
+        assert_eq!(
+            file_roots(&files, &library),
+            BTreeSet::from([Root {
+                path: base.join("Mine"),
+                recursive: false,
+            }])
+        );
     }
 
     #[test]

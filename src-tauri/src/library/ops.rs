@@ -206,7 +206,10 @@ pub fn load(lib: &Library, id: &str) -> Result<Loaded, String> {
 /// older `.dosik.json` — unless `base`, the stamp its tab last saw, is no
 /// longer what is on disk. A new one goes into the folder `folder`, or the
 /// most recently edited project, or a new "My Diagrams" when there is none;
-/// it is named by its title and goes on top of its folder.
+/// it is named by its title and goes on top of its folder. One that comes
+/// with a `base` was read from disk: the library no longer having it means
+/// it is gone — removed outside the app and forgotten by a listing — and it
+/// is never made again somewhere else.
 pub fn save(
     lib: &Library,
     id: &str,
@@ -262,6 +265,9 @@ pub fn save(
             name: diagram_stem(&file).unwrap_or_default().to_string(),
             stamp,
         });
+    }
+    if base.is_some() {
+        return Ok(SaveOutcome::Gone);
     }
     let target = match folder {
         Some(folder) => folder_at(&st, folder)?,
@@ -624,6 +630,13 @@ pub(crate) mod tests {
         );
         assert!(names_in(&p_dir(&lib)).is_empty());
         assert!(load(&lib, "d1").is_err());
+        // forgotten by a listing since: still gone, not made anew elsewhere
+        list(&lib).unwrap();
+        assert_eq!(
+            save(&lib, "d1", &titled("Flow"), None, Some(&stamp)).unwrap(),
+            SaveOutcome::Gone
+        );
+        assert!(names_in(&p_dir(&lib)).is_empty());
     }
 
     #[test]

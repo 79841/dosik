@@ -1,11 +1,12 @@
 import { scratchDiagramStore, useDiagramStore } from "../../shared/lib/store";
 import { documentFile } from "../../shared/lib/store/document";
+import { cloneSnapshot, HISTORY_LIMIT } from "../../shared/lib/store/history";
 import { revealRequestFor, revealViewport } from "../../shared/lib/store/reveal";
 import { type DocSnapshot, documentPatch, takeDocument } from "../../shared/lib/store/tabs";
 import { toastError, useToastStore } from "../../shared/lib/toastStore";
 import type { DiagramDoc } from "../../shared/lib/types";
 import { currentViewport } from "../canvas/canvasViewport";
-import { readDiagramFile } from "../export/file";
+import { readDiagramFile, readDiagramText } from "../export/file";
 import { useAppStore } from "./appStore";
 import { DASHBOARD, type HomeView, sameHomeView } from "./homeView";
 import {
@@ -13,6 +14,7 @@ import {
   type FileStamp,
   loadProjectFile,
   newProjectId,
+  sameContents,
   saveProject,
   serializeProject,
 } from "./libraryApi";
@@ -36,7 +38,15 @@ import {
   markExternalSaved,
   setExternalBaseline,
 } from "./unsavedGuard";
-import { flushAutosave, noteProjectContents, projectWritesSent } from "./useAutosave";
+import {
+  baseStampOf,
+  flushAutosave,
+  forgetProject,
+  hasUnwrittenEdits,
+  noteProjectContents,
+  onSaveRefused,
+  projectWritesSent,
+} from "./useAutosave";
 
 /**
  * Every way a document is opened, switched to or closed (#218 D9). The
@@ -575,6 +585,190 @@ export const pruneUnlisted = (listed: ReadonlySet<string>): void => {
   for (const tab of gone) {
     if (!reading.has(tab.id)) dropFromList(tab.id);
   }
+};
+
+/*
+ * Changes made outside the app (#253 D12, D13). A tab whose file changed is
+ * read again — quietly when it had no edits of its own the file lacks, with
+ * a toast when it had (the file wins). Either way it is one undo step: ⌘Z
+ * brings back what the tab showed. The canvas stays where it was. A tab
+ * whose file went is closed, with a toast.
+ */
+
+/** a tab's document as the file and the bridge carry it */
+const fileBytes = (doc: Pick<DocSnapshot, "title" | "nodes" | "edges">): string =>
+  serializeProject(documentFile(doc));
+
+/** the read tab showing `source` — the active one or one kept as a snapshot */
+const readTab = (source: DocSource): DocTab | undefined => {
+  const { tabs, activeTab } = app();
+  return tabs.find((t) => {
+    if (t.id !== activeTab && !t.doc) return false;
+    const at = sourceOf(t, activeTab, live());
+    return "projectId" in source
+      ? at.projectId === source.projectId
+      : at.filePath === source.filePath;
+  });
+};
+
+/**
+ * Puts `fresh` — the file as it is now — into tab `id`: the store while it
+ * is on screen, its snapshot else. One undo step, the canvas where it was.
+ * Resolves whether the document changed.
+ */
+const takeFromDisk = (id: string, fresh: DocSnapshot): boolean => {
+  if (id === app().activeTab) {
+    const state = live();
+    if (fileBytes(state) === fileBytes(fresh)) return false;
+    state.commit();
+    useDiagramStore.setState({
+      title: fresh.title,
+      nodes: fresh.nodes,
+      edges: fresh.edges,
+      // id-keyed state of the document it replaced, as a load clears it
+      touched: {},
+      editRequestId: null,
+      enteredGroup: null,
+      groupResizing: null,
+      // open editors and menus close; the canvas stays (no reveal)
+      docVersion: state.docVersion + 1,
+    });
+    return true;
+  }
+  const tab = app().tabs.find((t) => t.id === id);
+  if (!tab?.doc || fileBytes(tab.doc) === fileBytes(fresh)) return false;
+  const past = [...tab.doc.past.slice(-HISTORY_LIMIT + 1), cloneSnapshot(tab.doc)];
+  patchTab(id, {
+    title: fresh.title,
+    doc: {
+      ...tab.doc,
+      title: fresh.title,
+      nodes: fresh.nodes,
+      edges: fresh.edges,
+      past,
+      future: [],
+      enteredGroup: null,
+    },
+  });
+  return true;
+};
+
+const toast = (text: string) => useToastStore.getState().pushToast(text);
+const changedToast = (title: string) => toast(`“${title}” changed outside Dosik — reloaded`);
+const removedToast = (title: string) => toast(`“${title}” was removed outside Dosik`);
+
+/** the title a tab shows — the store's while it is on screen */
+const titleOf = (tab: DocTab): string => (tab.id === app().activeTab ? live().title : tab.title);
+
+/**
+ * The library diagram `projectId` read again from disk, in its tab if one
+ * has it read. Nothing when its file is as the tab last saw it — unless a
+ * save of it was just refused (`refused`): its edits are not on disk, and
+ * the file wins. A file that cannot be read now is left to the listing.
+ */
+export const reloadDiagram = async (projectId: string, refused = false): Promise<void> => {
+  if (!readTab({ projectId })) return;
+  let loaded: Awaited<ReturnType<typeof loadProjectFile>>;
+  try {
+    loaded = await loadProjectFile(projectId);
+  } catch {
+    return;
+  }
+  const tab = readTab({ projectId });
+  if (!tab) return;
+  if (!refused && sameContents(loaded.stamp, baseStampOf(projectId))) return;
+  const fresh = prepare(loaded.doc, { projectId });
+  const current = tab.id === app().activeTab ? live() : tab.doc;
+  const unwritten =
+    refused || (current !== null && hasUnwrittenEdits(projectId, documentFile(current)));
+  noteProjectContents(projectId, documentFile(fresh), loaded.stamp);
+  if (takeFromDisk(tab.id, fresh) && unwritten) changedToast(fresh.title);
+};
+
+/**
+ * Closes the tabs of these library diagrams — gone from disk (#253 D13) —
+ * with a toast each. What was pending for them is dropped, never written:
+ * that would make the file again.
+ */
+export const closeRemovedDiagrams = (projectIds: ReadonlySet<string>): void => {
+  const { tabs, activeTab } = app();
+  const gone = tabs.filter((t) => {
+    const { projectId } = sourceOf(t, activeTab, live());
+    return projectId !== null && projectIds.has(projectId);
+  });
+  if (gone.length === 0) return;
+  const titles = gone.map(titleOf);
+  for (const id of projectIds) forgetProject(id);
+  closeDiagramTabs(projectIds);
+  for (const title of titles) removedToast(title);
+};
+
+// a save Rust refused: the file changed meanwhile — read it again — or is gone
+onSaveRefused((id, why) => {
+  if (why === "gone") closeRemovedDiagrams(new Set([id]));
+  else reloadDiagram(id, true).catch(toastError);
+});
+
+/** the library diagrams read into tabs — what a look at the disk checks */
+export const readLibraryIds = (): string[] => {
+  const { tabs, activeTab } = app();
+  return tabs.flatMap((t) => {
+    const { projectId } = sourceOf(t, activeTab, live());
+    return projectId !== null && (t.id === activeTab || t.doc) ? [projectId] : [];
+  });
+};
+
+/** the external files open in tabs, read or not — what the watch covers */
+export const externalPaths = (): string[] => {
+  const { tabs, activeTab } = app();
+  const paths = tabs
+    .map((t) => sourceOf(t, activeTab, live()).filePath)
+    .filter((p): p is string => p !== null);
+  return [...new Set(paths)];
+};
+
+/**
+ * The external file at `path` read again, in its tab (#253 D12) — the same
+ * rule as a library diagram's. Nothing when it holds what the tab last wrote
+ * or read; one that cannot be read now (half written, say) waits for the
+ * next change.
+ */
+export const reloadExternalFile = async (path: string): Promise<void> => {
+  if (!readTab({ filePath: path })) return;
+  let read: Awaited<ReturnType<typeof readDiagramText>>;
+  try {
+    read = await readDiagramText(path);
+  } catch {
+    return;
+  }
+  const tab = readTab({ filePath: path });
+  if (!tab) return;
+  const active = tab.id === app().activeTab;
+  const baseline = active ? externalBaseline() : tab.baseline;
+  if (read.text === baseline) return;
+  const fresh = prepare(read.doc, { filePath: path });
+  const unsaved = active
+    ? hasUnsavedExternalChanges()
+    : tab.doc !== null && isUnsavedSnapshot(tab.doc, tab.baseline);
+  const changed = takeFromDisk(tab.id, fresh);
+  // the file and the tab agree now
+  const bytes = fileBytes(fresh);
+  if (active) setExternalBaseline(bytes);
+  else patchTab(tab.id, { baseline: bytes });
+  if (changed && unsaved) changedToast(fresh.title);
+};
+
+/**
+ * The external file at `path` is gone (#253 D13): its tab closes, with a
+ * toast — unless it holds edits no file has, which only it keeps: then it
+ * stays, and Save writes them back.
+ */
+export const closeRemovedFile = (path: string): void => {
+  const tab = app().tabs.find((t) => sourceOf(t, app().activeTab, live()).filePath === path);
+  if (!tab) return;
+  const title = titleOf(tab);
+  if (unsavedPath(tab) === null) dropTab(tab.id);
+  removedToast(title);
 };
 
 /** test seam: no tabs, Home on screen, nothing being read */

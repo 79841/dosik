@@ -38,6 +38,17 @@ use state::BoardSpot;
 /// what the window listens for (`LIBRARY_CHANGED_EVENT` in `useLibraryWatch.ts`)
 pub const LIBRARY_CHANGED_EVENT: &str = "library-changed";
 
+/// what the window listens for (`FILES_CHANGED_EVENT` in `useLibraryWatch.ts`)
+pub const FILES_CHANGED_EVENT: &str = "files-changed";
+
+/// What changed of the files open in tabs outside the library, by the paths
+/// the window gave: written to, or gone.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct FilesChanged {
+    pub changed: Vec<String>,
+    pub removed: Vec<String>,
+}
+
 /// What changed outside the app: the diagrams whose files changed or went —
 /// maybe none, when something new turned up. Either way the library is
 /// worth listing again.
@@ -55,6 +66,9 @@ pub struct AppLibrary {
     /// the stamp the app last read or wrote of each diagram, by id — what
     /// tells its own writes from someone else's
     seen: Mutex<HashMap<String, String>>,
+    /// the files open in tabs outside the library, as the file system has
+    /// their paths — each with the path the window gave
+    files: Mutex<HashMap<PathBuf, String>>,
     watcher: OnceLock<watch::Watcher>,
 }
 
@@ -64,8 +78,48 @@ impl AppLibrary {
             library,
             moved: OnceLock::new(),
             seen: Mutex::new(HashMap::new()),
+            files: Mutex::new(HashMap::new()),
             watcher: OnceLock::new(),
         }
+    }
+
+    fn files(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, String>> {
+        self.files.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The files open in tabs outside the library are `paths` from now —
+    /// each absolute one, by the path the file system has.
+    fn set_files(&self, paths: Vec<String>) {
+        *self.files() = paths
+            .into_iter()
+            .filter(|p| Path::new(p).is_absolute())
+            .map(|p| (listing::normalized(Path::new(&p)), p))
+            .collect();
+    }
+
+    /// What a batch of the watch's paths tells of the files open in tabs
+    /// outside the library — `None`: nothing of theirs.
+    fn files_changed(&self, paths: &[PathBuf]) -> Option<FilesChanged> {
+        let files = self.files();
+        if files.is_empty() {
+            return None;
+        }
+        let mut changed = std::collections::BTreeSet::new();
+        let mut removed = std::collections::BTreeSet::new();
+        for path in paths {
+            let Some(given) = files.get(&listing::normalized(path)) else {
+                continue;
+            };
+            if disk::is_real_file(path) {
+                changed.insert(given.clone());
+            } else {
+                removed.insert(given.clone());
+            }
+        }
+        (!changed.is_empty() || !removed.is_empty()).then(|| FilesChanged {
+            changed: changed.into_iter().collect(),
+            removed: removed.into_iter().collect(),
+        })
     }
 
     fn seen(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
@@ -87,20 +141,23 @@ impl AppLibrary {
     }
 
     /// The watch on what the record has now — the inbox made first, so a
-    /// note the MCP server leaves is seen as it lands. Nothing before the
-    /// watch has started.
+    /// note the MCP server leaves is seen as it lands — and on the files open
+    /// in tabs outside the library. Nothing before the watch has started.
     fn rewatch(&self) {
-        let (Some(watcher), Ok(lib)) = (self.watcher.get(), self.ready()) else {
+        let Some(watcher) = self.watcher.get() else {
             return;
         };
-        let _ = std::fs::create_dir_all(lib.inbox_dir());
-        let roots = {
+        let mut roots = std::collections::BTreeSet::new();
+        if let Ok(lib) = self.ready() {
+            let _ = std::fs::create_dir_all(lib.inbox_dir());
             let held = lib.lock();
-            match lib.load_state(&held) {
-                Ok(st) => watch::roots(lib, &st),
-                Err(_) => return,
+            if let Ok(st) = lib.load_state(&held) {
+                roots = watch::roots(lib, &st);
             }
-        };
+        }
+        let files: Vec<PathBuf> = self.files().keys().cloned().collect();
+        let more = watch::file_roots(&files, &roots);
+        roots.extend(more);
         watcher.watch(&roots);
     }
 
@@ -147,15 +204,14 @@ pub fn setup(app: &AppHandle) {
     app.manage(Arc::clone(&shelf));
     let app = app.clone();
     std::thread::spawn(move || {
-        if let Err(error) = shelf.ready() {
-            eprintln!("dosik: {error}");
-            return;
-        }
         let weak: Weak<AppLibrary> = Arc::downgrade(&shelf);
         let started = watch::Watcher::start(move |paths| {
             let Some(shelf) = weak.upgrade() else {
                 return;
             };
+            if let Some(files) = shelf.files_changed(&paths) {
+                let _ = app.emit(FILES_CHANGED_EVENT, files);
+            }
             if let Some(changed) = shelf.sort_out(&paths) {
                 let _ = app.emit(LIBRARY_CHANGED_EVENT, changed);
             }
@@ -163,11 +219,14 @@ pub fn setup(app: &AppHandle) {
         match started {
             Ok(watcher) => {
                 let _ = shelf.watcher.set(watcher);
-                shelf.rewatch();
             }
             // the app works without it: changes outside show on the next listing
             Err(error) => eprintln!("dosik: {error}"),
         }
+        if let Err(error) = shelf.ready() {
+            eprintln!("dosik: {error}");
+        }
+        shelf.rewatch();
     });
 }
 
@@ -379,6 +438,14 @@ pub async fn locate_project(
     .await
 }
 
+/// The files open in tabs outside the library (Open file…), watched from
+/// now, so a change made to one elsewhere reaches its tab (`files-changed`).
+#[tauri::command]
+pub fn watch_files(shelf: Shelf<'_>, paths: Vec<String>) {
+    shelf.set_files(paths);
+    shelf.rewatch();
+}
+
 /// Remove from Library: the project's record goes, its folder stays.
 #[tauri::command]
 pub fn remove_project(shelf: Shelf<'_>, id: String) -> Result<(), String> {
@@ -534,6 +601,38 @@ mod tests {
             serde_json::to_value(LibraryChanged { changed: vec![id] }).unwrap(),
             serde_json::json!({ "changed": [listed[0].diagrams[0].id] })
         );
+    }
+
+    #[test]
+    fn a_file_open_outside_the_library_is_told_by_the_path_the_window_gave() {
+        let lib = test_library("mod-files");
+        let dir = lib.default_location.parent().unwrap().join("Mine");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.dosik.json");
+        std::fs::write(&file, "{}").unwrap();
+        let shelf = AppLibrary::new(Ok(lib));
+        assert_eq!(shelf.files_changed(std::slice::from_ref(&file)), None);
+        let given = file.to_string_lossy().into_owned();
+        shelf.set_files(vec![given.clone(), "relative.dosik".into()]);
+        assert_eq!(shelf.files().len(), 1);
+        let other = dir.join("b.dosik");
+        assert_eq!(
+            shelf.files_changed(&[file.clone(), other]),
+            Some(FilesChanged {
+                changed: vec![given.clone()],
+                removed: vec![],
+            })
+        );
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(
+            shelf.files_changed(std::slice::from_ref(&file)),
+            Some(FilesChanged {
+                changed: vec![],
+                removed: vec![given],
+            })
+        );
+        shelf.set_files(Vec::new());
+        assert_eq!(shelf.files_changed(&[file]), None);
     }
 
     #[test]

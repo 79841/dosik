@@ -227,6 +227,7 @@ pub fn run() {
             library::delete_project,
             library::locate_project,
             library::remove_project,
+            library::watch_files,
             library::library_path,
             library::show_in_finder,
             library::library_root,
