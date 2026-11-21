@@ -2967,7 +2967,7 @@ THE SOFTWARE IS PROVIDED 'AS IS', WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ================================================================================
 commander 7.2.0 (npm) — MIT  https://github.com/tj/commander.js#readme
-commander 8.3.0 (npm) — MIT  https://github.com/tj/commander.js#readme
+commander 15.1.0 (npm) — MIT  https://github.com/tj/commander.js#readme
 --------------------------------------------------------------------------------
 
 (The MIT License)
@@ -8736,7 +8736,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-katex 0.16.47 (npm) — MIT  https://katex.org
+katex 0.18.10 (npm) — MIT  https://katex.org
 --------------------------------------------------------------------------------
 
 The MIT License (MIT)

@@ -3,3 +3,15 @@
 # start, which is how this migration first failed (#59).
 allowBuilds:
   esbuild: true
+
+# mermaid 11 asks for katex ^0.16, whose releases before 0.18.2 let prototype
+# pollution bypass trust settings (GHSA-238p-pmpm-9mq7). Mermaid only calls
+# katex.renderToString: MathML output by default, HTML and MathML when a
+# diagram opts into legacyMathML. The app loads no KaTeX stylesheet, so 0.18's
+# renamed CSS classes change nothing it styles
+# (src/features/mermaid/__tests__/katexContract.test.ts). Mermaid 12
+# moves to katex ^0.18 itself, but it targets Safari 17.4+, above the app's
+# macOS 11 floor. Pinned to 0.18.10: 0.18.11 is deprecated (published with
+# breaking changes by mistake). Drop this once mermaid is on 12 or later.
+overrides:
+  "mermaid>katex": "0.18.10"
