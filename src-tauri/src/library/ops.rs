@@ -147,6 +147,28 @@ pub fn folder_at(st: &LibraryState, id: &str) -> Result<FolderAt, String> {
     })
 }
 
+/// What a path is asked of: a folder (a project or one inside one) or a diagram.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ItemKind {
+    Folder,
+    Diagram,
+}
+
+/// The folder or the file the library keeps `id` in, there on disk — found
+/// in the record, so the webview never rebuilds where things are.
+pub fn item_path(lib: &Library, kind: ItemKind, id: &str) -> Result<PathBuf, String> {
+    let held = lib.lock();
+    let st = lib.load_state(&held)?;
+    match kind {
+        ItemKind::Folder => Ok(folder_at(&st, id)?.path),
+        ItemKind::Diagram => match diagram_at(&st, id)? {
+            Some(at) if disk::is_real_file(&at.path) => Ok(at.path),
+            _ => Err(format!("no such diagram: {id:?}")),
+        },
+    }
+}
+
 /// the title a diagram's JSON gives, or none
 fn title_of(contents: &str) -> String {
     serde_json::from_str::<serde_json::Value>(contents)
@@ -390,6 +412,42 @@ pub(crate) mod tests {
 
     fn listed_p(lib: &Library) -> FolderMeta {
         project(&list(lib).unwrap(), "P").clone()
+    }
+
+    #[test]
+    fn an_items_path_is_where_the_record_says() {
+        let (lib, p) = with_project("ops-path");
+        std::fs::create_dir_all(p_dir(&lib).join("Sub")).unwrap();
+        put(&p_dir(&lib).join("Sub/Flow.dosik"), &titled("Flow"));
+        let listed = listed_p(&lib);
+        let sub = listed.folders[0].id.clone();
+        let flow = listed.folders[0].diagrams[0].id.clone();
+        assert_eq!(item_path(&lib, ItemKind::Folder, &p).unwrap(), p_dir(&lib));
+        assert_eq!(
+            item_path(&lib, ItemKind::Folder, &sub).unwrap(),
+            p_dir(&lib).join("Sub")
+        );
+        assert_eq!(
+            item_path(&lib, ItemKind::Diagram, &flow).unwrap(),
+            p_dir(&lib).join("Sub").join("Flow.dosik")
+        );
+        // none such, a bad id, one kind asked for as the other
+        assert!(item_path(&lib, ItemKind::Folder, "nope").is_err());
+        assert!(item_path(&lib, ItemKind::Diagram, "../x").is_err());
+        assert!(item_path(&lib, ItemKind::Diagram, &sub).is_err());
+        assert!(item_path(&lib, ItemKind::Diagram, &p).is_err());
+        // a file gone from disk, a folder gone from disk
+        std::fs::remove_file(p_dir(&lib).join("Sub/Flow.dosik")).unwrap();
+        assert!(item_path(&lib, ItemKind::Diagram, &flow).is_err());
+        std::fs::remove_dir(p_dir(&lib).join("Sub")).unwrap();
+        assert!(item_path(&lib, ItemKind::Folder, &sub).is_err());
+    }
+
+    #[test]
+    fn an_item_kind_is_folder_or_diagram_in_lower_case() {
+        let kind: ItemKind = serde_json::from_str(r#""diagram""#).unwrap();
+        assert_eq!(kind, ItemKind::Diagram);
+        assert!(serde_json::from_str::<ItemKind>(r#""Folder""#).is_err());
     }
 
     #[test]

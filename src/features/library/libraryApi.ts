@@ -67,6 +67,20 @@ export interface FolderMeta {
   stray?: boolean;
   /** a project's frame on the Home canvas, once the canvas placed it (#221 D7) — never a folder's or a stray's */
   board?: BoardSpot;
+  /**
+   * A project whose folder cannot be found (#253 D9): listed in its place,
+   * empty — its ids, order and frame wait for it to come back
+   */
+  missing?: boolean;
+  /**
+   * A project outside the default location — a folder added to the library
+   * (#253 D15): it is removed from the library, never deleted
+   */
+  added?: boolean;
+  /** a project's folder, whole — what "not found" names */
+  path?: string;
+  /** the same from `~` when it is under the home folder, for reading */
+  shown?: string;
 }
 
 /**
@@ -91,12 +105,19 @@ export const MAX_FOLDER_NAME = 80;
 /** folders nest at most this deep, a project being 1 — Rust's `MAX_DEPTH` (#229 D9) */
 export const MAX_FOLDER_DEPTH = 10;
 
-/** a listing as Rust sends it: `readable`, the board and the folders raw, and absent from an older build */
-type RawFolderMeta = Omit<FolderMeta, "diagrams" | "folders" | "board" | "order"> & {
+/** a listing as Rust sends it: `readable`, the board, the folders and a project's place raw, and absent from an older build */
+type RawFolderMeta = Omit<
+  FolderMeta,
+  "diagrams" | "folders" | "board" | "order" | "missing" | "added" | "path" | "shown"
+> & {
   diagrams: (Omit<ProjectMeta, "readable"> & { readable?: unknown; pageNames?: unknown })[];
   folders?: RawFolderMeta[];
   board?: unknown;
   order?: unknown;
+  missing?: unknown;
+  added?: unknown;
+  path?: unknown;
+  shown?: unknown;
 };
 
 /** an order as the app trusts it: a list of strings, or none (#230 D5) */
@@ -122,15 +143,22 @@ export const cleanBoardSpot = (raw: unknown): BoardSpot | undefined => {
   };
 };
 
-/** one listed folder as the app trusts it — its folders too; a board only on a project (`top`) */
-const cleanFolder = (
-  { board, folders, order, ...folder }: RawFolderMeta,
-  top: boolean,
-): FolderMeta => {
+/** a project's place on disk as the app trusts it: flags only when true, paths only when text (#253) */
+const cleanPlace = ({ missing, added, path, shown }: RawFolderMeta) => ({
+  ...(missing === true ? { missing } : {}),
+  ...(added === true ? { added } : {}),
+  ...(typeof path === "string" ? { path } : {}),
+  ...(typeof shown === "string" ? { shown } : {}),
+});
+
+/** one listed folder as the app trusts it — its folders too; a board and a place only on a project (`top`) */
+const cleanFolder = (raw: RawFolderMeta, top: boolean): FolderMeta => {
+  const { board, folders, order, missing: _m, added: _a, path: _p, shown: _s, ...folder } = raw;
   const spot = top ? cleanBoardSpot(board) : undefined;
   const items = cleanOrder(order);
   return {
     ...folder,
+    ...(top ? cleanPlace(raw) : {}),
     // an older build sends page names instead: whether it opens is the load's to say
     diagrams: folder.diagrams.map(({ readable, pageNames: _, ...diagram }) => ({
       ...diagram,
@@ -144,8 +172,8 @@ const cleanFolder = (
 
 /**
  * Every project with its diagrams and folders, in the user's order (#230) —
- * the stray listing last. Diagrams saved before projects existed move into
- * "My Diagrams" on the way.
+ * the record brought in line with the disk on the way (#253): a folder made
+ * in Finder shows, one removed there goes.
  */
 export const listLibrary = async (): Promise<FolderMeta[]> => {
   const folders = await invoke<RawFolderMeta[]>("list_library");
@@ -192,7 +220,7 @@ export const setFolderBoards = async (
 export const renameFolder = (id: string, name: string): Promise<void> =>
   invoke("rename_folder", { id, name });
 
-/** deletes the project and every diagram in it */
+/** moves the project or folder, with everything in it, to the Trash (#253 D14) — a folder added to the library is refused */
 export const deleteFolder = (id: string): Promise<void> => invoke("delete_folder", { id });
 
 /**
@@ -214,29 +242,124 @@ export const moveFolder = (id: string, parent: string, index?: number): Promise<
 export const reorderItem = (parent: string | null, item: ItemKey, index: number): Promise<void> =>
   invoke("reorder_item", parent === null ? { item, index } : { parent, item, index });
 
-/** a library diagram — a document with pages (#229 D2) or of another shape throws */
-export const loadProject = async (id: string): Promise<DiagramDoc> => {
-  const contents = await invoke<string>("load_project", { id });
-  const doc: unknown = JSON.parse(contents);
+/**
+ * What a diagram's file was like when it was read or written (#253 D11): its
+ * time, length and a hash of what it holds — Rust's `<mtime>-<length>-<hash>`.
+ * A save brings back the one its tab last saw, and Rust writes over nothing
+ * else.
+ */
+export type FileStamp = string;
+
+/**
+ * Whether two stamps are of the same contents — the length and the hash: a
+ * file written again with the same bytes is no change of anyone's.
+ */
+export const sameContents = (a: FileStamp | undefined, b: FileStamp | undefined): boolean => {
+  const tail = (s: FileStamp | undefined) => {
+    const at = s?.indexOf("-") ?? -1;
+    return at >= 0 ? s?.slice(at + 1) : undefined;
+  };
+  const x = tail(a);
+  return x !== undefined && x === tail(b);
+};
+
+/** a library diagram as it was read: the document — its title its file's name — and its file's stamp */
+export interface LoadedDiagram {
+  doc: DiagramDoc;
+  /** absent only from an answer that does not carry one (a test's) */
+  stamp?: FileStamp;
+}
+
+/** Rust's answer to `load_project` as the app trusts it */
+const readLoaded = (answer: unknown): LoadedDiagram => {
+  const loaded =
+    typeof answer === "string"
+      ? { contents: answer }
+      : (answer as { contents: string; name?: unknown; stamp?: unknown });
+  const doc: unknown = JSON.parse(loaded.contents);
   if (isMultiPage(doc)) throw new Error(MULTI_PAGE_ERROR);
   if (!isDiagramDocShape(doc)) throw new Error("Not a valid diagram file");
-  return doc;
+  return {
+    doc: typeof loaded.name === "string" ? { ...doc, title: loaded.name } : doc,
+    ...(typeof loaded.stamp === "string" ? { stamp: loaded.stamp } : {}),
+  };
 };
+
+/**
+ * A library diagram, its title the name of its file (#253 D8) — a document
+ * with pages (#229 D2) or of another shape throws. Rust answers
+ * `{contents, name, stamp}`; a bare string (a test's answer) is the contents
+ * alone.
+ */
+export const loadProjectFile = async (id: string): Promise<LoadedDiagram> =>
+  readLoaded(await invoke<unknown>("load_project", { id }));
+
+/** a library diagram's document alone — what a preview reads, leaving every tab's stamp as it was */
+export const loadProject = async (id: string): Promise<DiagramDoc> =>
+  readLoaded(await invoke<unknown>("load_project", { id })).doc;
 
 /** the exact bytes a project file holds for a document */
 export const serializeProject = (doc: DiagramDoc): string => JSON.stringify(doc, null, 2);
 
 /**
- * Writes a diagram where it is. A new one goes into `folder` — or, when that
- * is left out, Rust picks the most recently edited project.
+ * What a save came to (#253 D8, D11): written — under `name`, its file's,
+ * which may differ from the title (cleaned, or with " 2"), and `stamp` the
+ * file as it is now — or not written, because the file is not what its tab
+ * last saw (`changedOnDisk`), or is gone (`gone`).
  */
-export const saveProjectContents = (id: string, contents: string, folder?: string): Promise<void> =>
-  invoke("save_project", folder ? { id, contents, folder } : { id, contents });
+export type SaveOutcome =
+  | { kind: "saved"; name?: string; stamp?: FileStamp }
+  | { kind: "changedOnDisk" }
+  | { kind: "gone" };
 
-export const saveProject = (id: string, doc: DiagramDoc, folder?: string): Promise<void> =>
+/** Rust's answer as the app trusts it — one that says nothing more (a test's) was written, nothing more known */
+const cleanSaveOutcome = (raw: unknown): SaveOutcome => {
+  const answer = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+  if (answer.kind === "changedOnDisk") return { kind: "changedOnDisk" };
+  if (answer.kind === "gone") return { kind: "gone" };
+  return {
+    kind: "saved",
+    ...(typeof answer.name === "string" ? { name: answer.name } : {}),
+    ...(typeof answer.stamp === "string" ? { stamp: answer.stamp } : {}),
+  };
+};
+
+/**
+ * Writes a diagram where it is, renamed after its title (#253 D8) — unless
+ * `base`, the stamp its tab last saw, is not what is on disk now. A new one
+ * goes into `folder` — or, when that is left out, Rust picks the most
+ * recently edited project.
+ */
+export const saveProjectContents = async (
+  id: string,
+  contents: string,
+  folder?: string,
+  base?: FileStamp,
+): Promise<SaveOutcome> =>
+  cleanSaveOutcome(
+    await invoke("save_project", {
+      id,
+      contents,
+      ...(folder ? { folder } : {}),
+      ...(base ? { base } : {}),
+    }),
+  );
+
+export const saveProject = (id: string, doc: DiagramDoc, folder?: string): Promise<SaveOutcome> =>
   saveProjectContents(id, serializeProject(doc), folder);
 
+/** moves a diagram to the Trash (#253 D14) */
 export const deleteProject = (id: string): Promise<void> => invoke("delete_project", { id });
+
+/** what Locate… came to (#253 D9): the folder picked took the project's place, nothing was picked, or it overlaps the library */
+export type LocateAnswer = "located" | "cancelled" | "already";
+
+/** Locate…: Rust shows the system's folder picker, so no path comes from here (#253 R14) */
+export const locateProject = (id: string): Promise<LocateAnswer> =>
+  invoke<LocateAnswer>("locate_project", { id });
+
+/** Remove from Library: the project's record goes, its folder stays (#253 D9, D15) */
+export const removeProject = (id: string): Promise<void> => invoke("remove_project", { id });
 
 /** what a path is asked of (#238): a folder — a project or one inside one — or a diagram */
 export type ItemKind = "folder" | "diagram";

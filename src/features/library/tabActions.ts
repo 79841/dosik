@@ -8,7 +8,14 @@ import { currentViewport } from "../canvas/canvasViewport";
 import { readDiagramFile } from "../export/file";
 import { useAppStore } from "./appStore";
 import { DASHBOARD, type HomeView, sameHomeView } from "./homeView";
-import { blankDoc, loadProject, newProjectId, saveProject, serializeProject } from "./libraryApi";
+import {
+  blankDoc,
+  type FileStamp,
+  loadProjectFile,
+  newProjectId,
+  saveProject,
+  serializeProject,
+} from "./libraryApi";
 import { refreshLibraryQuietly } from "./libraryStore";
 import {
   cycleTarget,
@@ -229,8 +236,11 @@ const readThenActivate = (tab: DocTab, projectId: string): Promise<void> => {
   const job = (async () => {
     patchTab(tab.id, { loading: true });
     let doc: DocSnapshot;
+    let stamp: FileStamp | undefined;
     try {
-      doc = prepare(await loadProject(projectId), { projectId });
+      const loaded = await loadProjectFile(projectId);
+      doc = prepare(loaded.doc, { projectId });
+      stamp = loaded.stamp;
     } catch {
       if (!isOpen(tab.id)) return;
       dropFromList(tab.id);
@@ -238,7 +248,7 @@ const readThenActivate = (tab: DocTab, projectId: string): Promise<void> => {
       return;
     }
     if (!isOpen(tab.id)) return;
-    noteProjectContents(projectId, documentFile(doc));
+    noteProjectContents(projectId, documentFile(doc), stamp);
     patchTab(tab.id, { doc, loaded: true, loading: false, title: doc.title });
     // outside the read's try: a switch that fails now is not "couldn't reopen",
     // and the tab keeps what was read
@@ -286,11 +296,13 @@ const switchToOpen = (open: DocTab): Promise<void> => activateTab(open.id);
 /**
  * Opens a document already read: its tab if it is open (D9 — switch, no
  * re-read), else a new tab at the end, active. `opened` says which. A broken
- * document throws before anything changes.
+ * document throws before anything changes. `stamp`: a library diagram's
+ * file as it was read or written (#253 D11).
  */
 export const openDocument = (
   doc: DiagramDoc,
   source: DocSource,
+  stamp?: FileStamp,
 ): { tab: string; opened: boolean } => {
   const open = findOpen(source);
   if (open) {
@@ -303,7 +315,7 @@ export const openDocument = (
   const tab = newTab({ projectId, filePath, title });
   useDiagramStore.setState(documentPatch(snapshot, live(), revealRequestFor(snapshot.nodes)));
   // opening is not an edit: what the store holds now is what the file holds
-  if ("projectId" in source) noteProjectContents(source.projectId, documentFile(snapshot));
+  if ("projectId" in source) noteProjectContents(source.projectId, documentFile(snapshot), stamp);
   else markExternalSaved();
   commit([...tabs, tab], tab.id);
   return { tab: tab.id, opened: true };
@@ -319,8 +331,9 @@ const openWhenRead = (
   doc: DiagramDoc,
   source: DocSource,
   seq: number,
+  stamp?: FileStamp,
 ): { tab: string; opened: boolean } => {
-  if (activationSeq === seq) return openDocument(doc, source);
+  if (activationSeq === seq) return openDocument(doc, source, stamp);
   const open = findOpen(source);
   if (open) return { tab: open.id, opened: false };
   const snapshot = prepare(doc, source);
@@ -328,7 +341,7 @@ const openWhenRead = (
   const { projectId, filePath, title } = snapshot;
   const tab: DocTab = { ...newTab({ projectId, filePath, title }), doc: snapshot };
   // opening is not an edit, on screen or not
-  if ("projectId" in source) noteProjectContents(source.projectId, file);
+  if ("projectId" in source) noteProjectContents(source.projectId, file, stamp);
   else tab.baseline = serializeProject(file);
   editList((tabs) => [...tabs, tab]);
   return { tab: tab.id, opened: true };
@@ -352,8 +365,8 @@ export const openLibraryDiagram = async (id: string): Promise<void> => {
   const running = openingLibrary.get(id);
   if (running) return running;
   const job = (async () => {
-    const doc = await loadProject(id);
-    openWhenRead(doc, { projectId: id }, openWanted.get(id) ?? -1);
+    const { doc, stamp } = await loadProjectFile(id);
+    openWhenRead(doc, { projectId: id }, openWanted.get(id) ?? -1, stamp);
   })();
   openingLibrary.set(id, job);
   try {
@@ -383,10 +396,11 @@ export const openPathInTab = async (path: string): Promise<boolean> => {
 /**
  * New diagram (+, ⌘T, ⌘N, the toolbar, the tree — D11; Home's START and
  * From Mermaid… with a first document of their own — #220 D7): saved into the
- * library where `targetFolder` says, then opened in a new tab. It always
- * takes the screen, newer request or not: the bridge's Home path applies its
- * ops to the store right after. Resolves its id and the folder it went to
- * (`undefined`: Rust's choice, an empty library).
+ * library where `targetFolder` says, then opened in a new tab — titled what
+ * its file was called, " 2" and all (#253 D8). It always takes the screen,
+ * newer request or not: the bridge's Home path applies its ops to the store
+ * right after. Resolves its id and the folder it went to (`undefined`:
+ * Rust's choice, an empty library).
  */
 export const newDiagramTab = async (
   folder?: string,
@@ -394,8 +408,11 @@ export const newDiagramTab = async (
 ): Promise<{ id: string; folder: string | undefined }> => {
   const target = targetFolder(folder);
   const id = newProjectId();
-  await saveProject(id, doc, target);
-  openDocument(doc, { projectId: id });
+  const outcome = await saveProject(id, doc, target);
+  // a new id names no file yet: nothing on disk can refuse it
+  if (outcome.kind !== "saved") throw new Error("the diagram could not be made");
+  const named = outcome.name === undefined ? doc : { ...doc, title: outcome.name };
+  openDocument(named, { projectId: id }, outcome.stamp);
   refreshLibraryQuietly();
   // the folder it went to — the listing may not name the new diagram for a
   // while, so a caller making another one next can say where (#229)

@@ -175,6 +175,9 @@ pub fn run() {
         .manage(AgentState::default())
         .manage(open_requests::OpenRequests::default())
         .setup(|app| {
+            // the library before anything asks for it: its older form is
+            // moved into the default location off the main thread
+            library::setup(app.handle());
             bridge::start_agent_server(app.handle().clone());
             // the bundled MCP server into the app data, where the AI apps are
             // pointed (#252) — off the main thread, and never in the way of startup;
@@ -219,9 +222,11 @@ pub fn run() {
             library::move_folder,
             library::reorder_item,
             library::load_project,
-            // sync: `save` relies on it running on the main thread (#230)
+            // sync: a tab's saves land in the order they were sent
             library::save_project,
             library::delete_project,
+            library::locate_project,
+            library::remove_project,
             library::library_path,
             library::show_in_finder,
             library::library_root,

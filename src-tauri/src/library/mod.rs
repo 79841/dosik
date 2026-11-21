@@ -1,179 +1,327 @@
 //! The library's commands: what the webview asks of the projects and
 //! diagrams, by id — Rust owns where they are, so the webview never handles
-//! paths. The files themselves are kept by `legacy` (projects under the app
-//! data directory, folders and files named by id).
+//! paths.
+//!
+//! A project is a folder on disk — every folder directly in the default
+//! location (`Dosik` in the user's Documents), and any other folder added to
+//! the library — and a diagram is a `.dosik` file in it. The app's own record of ids,
+//! orders and places sits in the app data (`library/state.json`). The older
+//! library, folders and files named by id in `<app data>/projects`, is moved
+//! into the default location once, before anything else is asked of it.
 
-mod legacy;
-
-// The folder-backed library: a project is a folder on disk, a diagram a
-// `.dosik` file in it, and the app's own record of ids, orders and places
-// sits in the app data. The commands above still go to `legacy`; until they
-// move over, these modules are reached from their tests alone.
-#[allow(dead_code)]
 mod ctx;
-#[allow(dead_code)]
 mod disk;
-#[allow(dead_code)]
 mod folders;
-#[allow(dead_code)]
+mod legacy;
 mod listing;
-#[allow(dead_code)]
 mod migrate;
-#[allow(dead_code)]
 mod names;
-#[allow(dead_code)]
 mod ops;
-#[allow(dead_code)]
 mod removal;
-#[allow(dead_code)]
 mod state;
-#[allow(dead_code)]
 mod walk;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
-use tauri::{AppHandle, Manager};
+use serde::Serialize;
+use tauri::{AppHandle, Manager, State};
 
-use legacy::{
-    delete, item_path, list, load, make_folder_in, move_folder_to, move_to_at, place_boards,
-    remove_folder, reorder, retitle_folder, save, shown_path, BoardFailure, BoardSpot, FolderBoard,
-    FolderMeta, ItemKind, ItemPath,
-};
+use ctx::Library;
+use listing::{shown_path, FolderMeta};
+use ops::{ItemKind, Loaded, SaveOutcome};
+use removal::{BoardFailure, FolderBoard, LocateOutcome, SystemTrash};
+use state::BoardSpot;
 
-fn library_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let base = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(base.join("projects"))
+/// The library the app runs on — or why there is none — and the move of
+/// the older library, made once per run before anything else.
+pub struct AppLibrary {
+    library: Result<Library, String>,
+    moved: OnceLock<Result<(), String>>,
 }
 
-/// Off the main thread (#230 D3): the listing reads every diagram, and the
-/// first one after an older build writes an order down for each folder.
-#[tauri::command]
-pub async fn list_library(app: AppHandle) -> Result<Vec<FolderMeta>, String> {
-    let dir = library_dir(&app)?;
-    tauri::async_runtime::spawn_blocking(move || list(&dir))
+impl AppLibrary {
+    fn new(library: Result<Library, String>) -> AppLibrary {
+        AppLibrary {
+            library,
+            moved: OnceLock::new(),
+        }
+    }
+
+    /// The library, once the older one has been moved into it. A move that
+    /// failed took back what it made; every command says so until the next
+    /// run tries again — Home shows "Couldn't load your projects".
+    fn ready(&self) -> Result<&Library, String> {
+        let lib = self.library.as_ref().map_err(Clone::clone)?;
+        self.moved
+            .get_or_init(|| migrate::run(lib).map(|_| ()))
+            .clone()?;
+        Ok(lib)
+    }
+}
+
+type Shelf<'a> = State<'a, Arc<AppLibrary>>;
+
+/// Where the library is on this machine: the app data, the default
+/// location (`DOSIK_LIBRARY_DIR`, or Documents), the home folder.
+fn open(app: &AppHandle) -> Result<Library, String> {
+    let paths = app.path();
+    let data = paths.app_data_dir().map_err(|e| e.to_string())?;
+    let home = paths.home_dir().ok();
+    let documents = paths.document_dir().ok();
+    let default = ctx::default_location(
+        std::env::var_os("DOSIK_LIBRARY_DIR").as_deref(),
+        tauri::is_dev(),
+        documents.as_deref(),
+        home.as_deref(),
+    )?;
+    Ok(Library::new(
+        data.join("library"),
+        default,
+        data.join("projects"),
+        home,
+    ))
+}
+
+/// Puts the library in the app's hands, and moves the older one off the
+/// main thread — the window's first questions wait for it, not the window.
+pub fn setup(app: &AppHandle) {
+    let shelf = Arc::new(AppLibrary::new(open(app)));
+    app.manage(Arc::clone(&shelf));
+    std::thread::spawn(move || {
+        if let Err(error) = shelf.ready() {
+            eprintln!("dosik: {error}");
+        }
+    });
+}
+
+/// runs `job` on the library off the main thread
+async fn blocking<T: Send + 'static>(
+    shelf: &Shelf<'_>,
+    job: impl FnOnce(&Library) -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let shelf = Arc::clone(shelf);
+    tauri::async_runtime::spawn_blocking(move || job(shelf.ready()?))
         .await
-        .map_err(|error| format!("listing the library failed: {error}"))?
+        .map_err(|error| format!("the library could not be reached: {error}"))?
 }
 
-/// A new project — or, with `parent`, a folder inside that folder (#229 D9).
+/// Every project with its folders and diagrams, the record brought in line
+/// with the disk on the way — off the main thread: it reads every diagram.
+#[tauri::command]
+pub async fn list_library(shelf: Shelf<'_>) -> Result<Vec<FolderMeta>, String> {
+    blocking(&shelf, listing::list).await
+}
+
+/// A new project in the default location — or, with `parent`, a folder
+/// inside that project or folder.
 #[tauri::command]
 pub fn create_folder(
-    app: AppHandle,
+    shelf: Shelf<'_>,
     id: String,
     name: String,
     board: Option<BoardSpot>,
     parent: Option<String>,
 ) -> Result<(), String> {
-    make_folder_in(
-        &library_dir(&app)?,
+    folders::create_folder(
+        shelf.ready()?,
         &id,
         &name,
         board.as_ref(),
         parent.as_deref(),
     )
+    .map(drop)
 }
 
 /// Resolves the projects that could not take their place (none: all did);
 /// rejects only when the library itself cannot be reached. Off the main
-/// thread: the Home canvas's first look places every project at once, a
-/// synced write each, and the window must not wait on them (#221).
-/// The folder lock keeps it in order with a rename and a project's removal.
+/// thread: the Home canvas's first look places every project at once.
 #[tauri::command]
 pub async fn set_folder_boards(
-    app: AppHandle,
+    shelf: Shelf<'_>,
     boards: Vec<FolderBoard>,
 ) -> Result<Vec<BoardFailure>, String> {
-    place_boards(library_dir(&app)?, boards).await
+    blocking(&shelf, move |lib| Ok(removal::save_boards(lib, &boards))).await
 }
 
 #[tauri::command]
-pub fn rename_folder(app: AppHandle, id: String, name: String) -> Result<(), String> {
-    retitle_folder(&library_dir(&app)?, &id, &name)
+pub fn rename_folder(shelf: Shelf<'_>, id: String, name: String) -> Result<(), String> {
+    folders::rename_folder(shelf.ready()?, &id, &name).map(drop)
 }
 
+/// A project or folder to the Trash — a folder added to the library is
+/// refused: it is removed from the library instead (`remove_project`).
 #[tauri::command]
-pub fn delete_folder(app: AppHandle, id: String) -> Result<(), String> {
-    remove_folder(&library_dir(&app)?, &id)
+pub fn delete_folder(shelf: Shelf<'_>, id: String) -> Result<(), String> {
+    removal::delete_folder(shelf.ready()?, &id, &SystemTrash)
 }
 
-/// A diagram into `folder`, to `index` in its order — the top if left out (#230 D6).
+/// A diagram into `folder`, to `index` in its order — the top if left out.
 #[tauri::command]
 pub fn move_project(
-    app: AppHandle,
+    shelf: Shelf<'_>,
     id: String,
     folder: String,
     index: Option<usize>,
 ) -> Result<(), String> {
-    move_to_at(&library_dir(&app)?, &id, &folder, index)
+    folders::move_diagram(shelf.ready()?, &id, &folder, index)
 }
 
-/// A folder (never a project) into `parent`, to `index` — the top if left out (#230 D6).
+/// A folder (never a project) into `parent`, to `index` — the top if left out.
 #[tauri::command]
 pub fn move_folder(
-    app: AppHandle,
+    shelf: Shelf<'_>,
     id: String,
     parent: String,
     index: Option<usize>,
 ) -> Result<(), String> {
-    move_folder_to(&library_dir(&app)?, &id, &parent, index)
+    folders::move_folder(shelf.ready()?, &id, &parent, index)
 }
 
 /// `item` (`folder:<id>`, `diagram:<id>`) to `index` among the items of
-/// `parent` — the projects, for none (#230 D6).
+/// `parent` — the projects, for none.
 #[tauri::command]
 pub fn reorder_item(
-    app: AppHandle,
+    shelf: Shelf<'_>,
     parent: Option<String>,
     item: String,
     index: usize,
 ) -> Result<(), String> {
-    reorder(&library_dir(&app)?, parent.as_deref(), &item, index)
+    folders::reorder(shelf.ready()?, parent.as_deref(), &item, index)
 }
 
-#[tauri::command]
-pub fn load_project(app: AppHandle, id: String) -> Result<String, String> {
-    load(&library_dir(&app)?, &id)
+/// A diagram as it is on disk: what it holds, the name it shows (its
+/// file's), and its stamp — what a save of it brings back as `base`.
+#[tauri::command(async)]
+pub fn load_project(shelf: Shelf<'_>, id: String) -> Result<Loaded, String> {
+    ops::load(shelf.ready()?, &id)
 }
 
-/// Sync on purpose: Tauri runs it on the main thread, in turn with the moves
-/// and deletes — `save` writes a diagram in a folder without `META_LOCK` on
-/// that alone. Made async, look at `save`'s lock-free branch again (#230).
+/// Writes a diagram where it is — renamed after its title — or, new, into
+/// `folder`. With `base`, the stamp its tab last saw, a file changed on disk
+/// meanwhile is not written (`changedOnDisk`), nor one gone (`gone`).
+///
+/// Sync on purpose: Tauri runs it on the main thread, so a tab's saves land
+/// in the order they were sent.
 #[tauri::command]
 pub fn save_project(
-    app: AppHandle,
+    shelf: Shelf<'_>,
     id: String,
     contents: String,
     folder: Option<String>,
-) -> Result<(), String> {
-    save(&library_dir(&app)?, &id, &contents, folder.as_deref())
+    base: Option<String>,
+) -> Result<SaveOutcome, String> {
+    ops::save(
+        shelf.ready()?,
+        &id,
+        &contents,
+        folder.as_deref(),
+        base.as_deref(),
+    )
 }
 
+/// A diagram to the Trash.
 #[tauri::command]
-pub fn delete_project(app: AppHandle, id: String) -> Result<(), String> {
-    delete(&library_dir(&app)?, &id)
+pub fn delete_project(shelf: Shelf<'_>, id: String) -> Result<(), String> {
+    removal::delete_diagram(shelf.ready()?, &id, &SystemTrash)
 }
 
-/// Where an item is on disk (#238) — the path card and Copy Path. Off the
-/// main thread: it walks the folders, and the card asks as the pointer rests.
-#[tauri::command(async)]
-pub fn library_path(app: AppHandle, kind: ItemKind, id: String) -> Result<ItemPath, String> {
-    let path = item_path(&library_dir(&app)?, kind, &id)?;
-    let home = app.path().home_dir().ok();
-    Ok(ItemPath {
-        shown: shown_path(&path, home.as_deref()),
-        path: path.to_string_lossy().into_owned(),
+/// What Locate… came to.
+#[derive(Serialize, Debug, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum LocateAnswer {
+    /// the folder picked took the project's place
+    Located,
+    /// nothing was picked
+    Cancelled,
+    /// the folder picked is in the library already, or holds or is inside
+    /// a project of it — not taken
+    Already,
+}
+
+/// The nearest folder there on the way to where the project `id` was — where
+/// the picker opens.
+fn last_place(lib: &Library, id: &str) -> Result<Option<PathBuf>, String> {
+    state::validate_id(id)?;
+    let held = lib.lock();
+    let st = lib.load_state(&held)?;
+    let record = st
+        .project(id)
+        .ok_or_else(|| format!("no such project: {id:?}"))?;
+    Ok(record
+        .root()
+        .ancestors()
+        .find(|p| disk::is_real_dir(p))
+        .map(Path::to_path_buf))
+}
+
+/// Locate…: the system's folder picker — opened from here, so no path ever
+/// comes from the webview — and the folder picked takes the project's place.
+#[tauri::command]
+pub async fn locate_project(
+    app: AppHandle,
+    shelf: Shelf<'_>,
+    id: String,
+) -> Result<LocateAnswer, String> {
+    use tauri_plugin_dialog::DialogExt;
+    blocking(&shelf, move |lib| {
+        let mut picker = app.dialog().file();
+        if let Some(start) = last_place(lib, &id)? {
+            picker = picker.set_directory(start);
+        }
+        let Some(picked) = picker.blocking_pick_folder() else {
+            return Ok(LocateAnswer::Cancelled);
+        };
+        let path = picked.into_path().map_err(|e| e.to_string())?;
+        Ok(match removal::locate_project_at(lib, &id, &path)? {
+            LocateOutcome::Located => LocateAnswer::Located,
+            LocateOutcome::Already => LocateAnswer::Already,
+        })
     })
+    .await
 }
 
-/// Show in Finder (#238): a folder opens in the file manager, a diagram's
-/// file is shown selected in its folder. Opened from here, by id, so the
-/// webview needs no right to open paths (`opener:default` stays as it is).
-/// Off the main thread like `library_path` — it walks the folders too; the
-/// opener's own commands open and reveal from an async command the same way.
+/// Remove from Library: the project's record goes, its folder stays.
+#[tauri::command]
+pub fn remove_project(shelf: Shelf<'_>, id: String) -> Result<(), String> {
+    removal::remove_project(shelf.ready()?, &id)
+}
+
+/// Where an item is on disk: `path` whole, for copying and opening;
+/// `shown` the same from `~` when it is under the home folder, for reading.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ItemPath {
+    pub path: String,
+    pub shown: String,
+}
+
+fn item_path_of(lib: &Library, path: &Path) -> ItemPath {
+    ItemPath {
+        shown: shown_path(path, lib.home.as_deref()),
+        path: path.to_string_lossy().into_owned(),
+    }
+}
+
+/// Where an item is on disk — the path card and Copy Path. Off the main
+/// thread, as the card asks while the pointer rests.
 #[tauri::command(async)]
-pub fn show_in_finder(app: AppHandle, kind: ItemKind, id: String) -> Result<(), String> {
+pub fn library_path(shelf: Shelf<'_>, kind: ItemKind, id: String) -> Result<ItemPath, String> {
+    let lib = shelf.ready()?;
+    Ok(item_path_of(lib, &ops::item_path(lib, kind, &id)?))
+}
+
+/// Show in Finder: a folder opens in the file manager, a diagram's file is
+/// shown selected in its folder. Opened from here, by id, so the webview
+/// needs no right to open paths (`opener:default` stays as it is).
+#[tauri::command(async)]
+pub fn show_in_finder(
+    app: AppHandle,
+    shelf: Shelf<'_>,
+    kind: ItemKind,
+    id: String,
+) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let path = item_path(&library_dir(&app)?, kind, &id)?;
+    let path = ops::item_path(shelf.ready()?, kind, &id)?;
     match kind {
         ItemKind::Folder => app.opener().open_path(path.to_string_lossy(), None::<&str>),
         ItemKind::Diagram => app.opener().reveal_item_in_dir(&path),
@@ -181,25 +329,21 @@ pub fn show_in_finder(app: AppHandle, kind: ItemKind, id: String) -> Result<(), 
     .map_err(|e| e.to_string())
 }
 
-/// The library's own folder (`projects/`) for Settings ▸ General (#252),
-/// shown with `~` like the path card.
+/// The default location, for Settings ▸ General, shown with `~`.
 #[tauri::command]
-pub fn library_root(app: AppHandle) -> Result<ItemPath, String> {
-    let path = library_dir(&app)?;
-    let home = app.path().home_dir().ok();
-    Ok(ItemPath {
-        shown: shown_path(&path, home.as_deref()),
-        path: path.to_string_lossy().into_owned(),
-    })
+pub fn library_root(shelf: Shelf<'_>) -> Result<ItemPath, String> {
+    let lib = shelf.library.as_ref().map_err(Clone::clone)?;
+    Ok(item_path_of(lib, &lib.default_location))
 }
 
-/// Settings ▸ General ▸ Show in Finder: the library folder opens (#252, the
-/// same opening as a folder's Show in Finder, #238).
+/// Settings ▸ General ▸ Show in Finder: the default location opens — made
+/// first, when nothing has made it yet.
 #[tauri::command(async)]
-pub fn show_library_in_finder(app: AppHandle) -> Result<(), String> {
+pub fn show_library_in_finder(app: AppHandle, shelf: Shelf<'_>) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
-    let path = library_dir(&app)?;
-    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+    let lib = shelf.ready()?;
+    let path = &lib.default_location;
+    std::fs::create_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
     app.opener()
         .open_path(path.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())
@@ -207,12 +351,13 @@ pub fn show_library_in_finder(app: AppHandle) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use crate::library::ctx::tests::test_library;
+
     #[test]
     fn save_project_runs_on_the_main_thread() {
-        // `save` writes a diagram in a folder without the
-        // lock because `save_project` is a sync command — run on the main
-        // thread, in turn with the moves and deletes. Made async, that branch
-        // must be looked at again.
+        // a tab's saves land in the order they were sent: Tauri runs a sync
+        // command on the main thread, one at a time
         let source = include_str!("mod.rs");
         let at = source
             .find("pub fn save_project(")
@@ -220,5 +365,78 @@ mod tests {
         let attribute = &source[source[..at].rfind("#[tauri::command").unwrap()..at];
         assert!(!attribute.contains("async"), "{attribute}");
         assert!(!source.contains(concat!("async fn ", "save_project")));
+    }
+
+    #[test]
+    fn the_older_library_is_moved_once_before_anything_is_asked() {
+        let lib = test_library("mod-ready");
+        std::fs::create_dir_all(lib.legacy_dir.join("pay")).unwrap();
+        std::fs::write(
+            lib.legacy_dir.join("pay/folder.json"),
+            r#"{"name":"Payments","createdAt":1}"#,
+        )
+        .unwrap();
+        let default = lib.default_location.clone();
+        let legacy = lib.legacy_dir.clone();
+        let shelf = AppLibrary::new(Ok(lib));
+        let lib = shelf.ready().unwrap();
+        assert!(default.join("Payments").is_dir());
+        assert!(legacy.join(migrate::MARKER).exists());
+        // asked again, it is not moved again
+        std::fs::remove_dir_all(default.join("Payments")).unwrap();
+        shelf.ready().unwrap();
+        assert!(!default.join("Payments").exists());
+        assert!(std::ptr::eq(lib, shelf.ready().unwrap()));
+    }
+
+    #[test]
+    fn a_failed_move_is_told_by_every_command_of_the_run() {
+        let lib = test_library("mod-failed");
+        std::fs::create_dir_all(lib.legacy_dir.join("pay")).unwrap();
+        // a file where the default location's parent would be: nothing can be made
+        let parent = lib.default_location.parent().unwrap().to_path_buf();
+        std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
+        std::fs::write(&parent, "in the way").unwrap();
+        let shelf = AppLibrary::new(Ok(lib));
+        let first = shelf.ready().err().expect("the move fails");
+        assert!(first.contains("moving the older library failed"), "{first}");
+        assert_eq!(shelf.ready().err(), Some(first));
+    }
+
+    #[test]
+    fn no_library_is_told_too() {
+        let shelf = AppLibrary::new(Err("no app data folder".into()));
+        assert_eq!(shelf.ready().err().as_deref(), Some("no app data folder"));
+    }
+
+    #[test]
+    fn locate_answers_in_lower_case() {
+        assert_eq!(
+            serde_json::to_value(LocateAnswer::Cancelled).unwrap(),
+            serde_json::json!("cancelled")
+        );
+        assert_eq!(
+            serde_json::to_value(LocateAnswer::Already).unwrap(),
+            serde_json::json!("already")
+        );
+    }
+
+    #[test]
+    fn the_picker_opens_where_the_project_was_or_nearest_to_it() {
+        let lib = test_library("mod-last-place");
+        std::fs::create_dir_all(lib.default_location.join("P")).unwrap();
+        let listed = listing::list(&lib).unwrap();
+        let id = listed[0].id.clone();
+        assert_eq!(
+            last_place(&lib, &id).unwrap(),
+            Some(lib.default_location.join("P"))
+        );
+        std::fs::remove_dir(lib.default_location.join("P")).unwrap();
+        assert_eq!(
+            last_place(&lib, &id).unwrap(),
+            Some(lib.default_location.clone())
+        );
+        assert!(last_place(&lib, "nope").is_err());
+        assert!(last_place(&lib, "../x").is_err());
     }
 }

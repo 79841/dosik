@@ -10,10 +10,15 @@ import {
   deleteProject,
   listLibrary,
   loadProject,
+  loadProjectFile,
+  locateProject,
   moveProject,
   newProjectId,
+  removeProject,
   renameFolder,
+  sameContents,
   saveProject,
+  saveProjectContents,
   setFolderBoards,
 } from "../libraryApi";
 
@@ -241,6 +246,128 @@ describe("libraryApi", () => {
         name: "New folder",
         parent: "chk",
       });
+    });
+  });
+
+  describe("projects in real folders (#253)", () => {
+    it("a project says whether it is missing or added and where it is — only when Rust says so, only on a project", async () => {
+      mockedInvoke.mockResolvedValueOnce([
+        {
+          id: "gone",
+          name: "Client",
+          updatedAt: 0,
+          diagrams: [],
+          folders: [],
+          order: [],
+          missing: true,
+          added: true,
+          path: "/Volumes/Work/Client",
+          shown: "/Volumes/Work/Client",
+        },
+        {
+          id: "here",
+          name: "Payments",
+          updatedAt: 1,
+          diagrams: [],
+          // a folder inside a project carries none of it
+          folders: [
+            {
+              id: "sub",
+              name: "Sub",
+              updatedAt: 1,
+              diagrams: [],
+              missing: true,
+              path: "/x",
+            },
+          ],
+          path: "/Users/a/Dosik/Payments",
+          shown: "~/Dosik/Payments",
+        },
+        // of the wrong type: left out
+        { id: "odd", name: "Odd", updatedAt: 1, diagrams: [], missing: "yes", added: 1, path: 5 },
+      ]);
+      const [gone, here, odd] = await listLibrary();
+      expect(gone).toMatchObject({
+        missing: true,
+        added: true,
+        path: "/Volumes/Work/Client",
+        shown: "/Volumes/Work/Client",
+      });
+      expect(here).not.toHaveProperty("missing");
+      expect(here).not.toHaveProperty("added");
+      expect(here?.shown).toBe("~/Dosik/Payments");
+      expect(here?.folders[0]).toEqual({
+        id: "sub",
+        name: "Sub",
+        updatedAt: 1,
+        diagrams: [],
+        folders: [],
+      });
+      for (const key of ["missing", "added", "path", "shown"]) expect(odd).not.toHaveProperty(key);
+    });
+
+    it("loadProjectFile titles the diagram after its file and keeps its stamp; loadProject gives the document alone", async () => {
+      const answer = {
+        contents: JSON.stringify({ ...blankDoc(), title: "What the JSON says" }),
+        name: "Login flow",
+        stamp: "1700000000000000000-120-00ff00ff00ff00ff",
+      };
+      mockedInvoke.mockResolvedValueOnce(answer);
+      expect(await loadProjectFile("p1")).toEqual({
+        doc: { ...blankDoc(), title: "Login flow" },
+        stamp: answer.stamp,
+      });
+      expect(mockedInvoke).toHaveBeenLastCalledWith("load_project", { id: "p1" });
+      mockedInvoke.mockResolvedValueOnce(answer);
+      expect(await loadProject("p1")).toEqual({ ...blankDoc(), title: "Login flow" });
+      // the contents alone (a test's answer): the JSON's title, no stamp
+      mockedInvoke.mockResolvedValueOnce(JSON.stringify(blankDoc()));
+      expect(await loadProjectFile("p1")).toEqual({ doc: blankDoc() });
+      // still a diagram, or it throws
+      mockedInvoke.mockResolvedValueOnce({ ...answer, contents: '{"nodes":"nope"}' });
+      await expect(loadProjectFile("p1")).rejects.toThrow("Not a valid diagram file");
+    });
+
+    it("a save brings the stamp its tab last saw and says what it came to", async () => {
+      mockedInvoke.mockResolvedValueOnce({ kind: "saved", name: "Flow 2", stamp: "9-2-ab" });
+      expect(await saveProjectContents("p1", "{}", undefined, "1-2-ab")).toEqual({
+        kind: "saved",
+        name: "Flow 2",
+        stamp: "9-2-ab",
+      });
+      expect(mockedInvoke).toHaveBeenLastCalledWith("save_project", {
+        id: "p1",
+        contents: "{}",
+        base: "1-2-ab",
+      });
+      mockedInvoke.mockResolvedValueOnce({ kind: "changedOnDisk" });
+      expect(await saveProjectContents("p1", "{}", undefined, "1-2-ab")).toEqual({
+        kind: "changedOnDisk",
+      });
+      mockedInvoke.mockResolvedValueOnce({ kind: "gone" });
+      expect(await saveProjectContents("p1", "{}")).toEqual({ kind: "gone" });
+      // an answer that says nothing more was written, nothing more known
+      mockedInvoke.mockResolvedValueOnce(undefined);
+      expect(await saveProject("p1", blankDoc(), "f1")).toEqual({ kind: "saved" });
+      mockedInvoke.mockResolvedValueOnce({ kind: "saved", name: 3, stamp: null });
+      expect(await saveProjectContents("p1", "{}")).toEqual({ kind: "saved" });
+    });
+
+    it("two stamps are of the same contents when their length and hash agree, whenever written", () => {
+      expect(sameContents("1-120-abcd", "2-120-abcd")).toBe(true);
+      expect(sameContents("1-120-abcd", "1-121-abcd")).toBe(false);
+      expect(sameContents("1-120-abcd", "1-120-abce")).toBe(false);
+      expect(sameContents(undefined, "1-120-abcd")).toBe(false);
+      expect(sameContents(undefined, undefined)).toBe(false);
+      expect(sameContents("nodash", "nodash")).toBe(false);
+    });
+
+    it("Locate… and Remove from Library go to Rust by id — no path from here (R14)", async () => {
+      mockedInvoke.mockResolvedValueOnce("already");
+      expect(await locateProject("gone")).toBe("already");
+      expect(mockedInvoke).toHaveBeenLastCalledWith("locate_project", { id: "gone" });
+      await removeProject("gone");
+      expect(mockedInvoke).toHaveBeenLastCalledWith("remove_project", { id: "gone" });
     });
   });
 });

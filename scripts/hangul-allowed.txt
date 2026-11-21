@@ -14,6 +14,5 @@ src/features/export/__tests__/vectorSvg.test.ts
 src/shared/lib/__tests__/classShape.test.ts
 src/shared/lib/__tests__/projectBadge.test.ts
 src/shared/lib/__tests__/textLayout.test.ts
-# UTF-8 boundaries in CLI output, folder name length in characters
+# UTF-8 boundaries in CLI output
 src-tauri/src/chat.rs
-src-tauri/src/library/legacy.rs

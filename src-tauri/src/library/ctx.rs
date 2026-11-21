@@ -115,6 +115,32 @@ impl Library {
     }
 }
 
+/// The default location: the folder `DOSIK_LIBRARY_DIR` names, when it
+/// names one whole; else `Dosik` in the user's Documents — `Dosik Dev` for a
+/// development run, so a test instance never moves the older library into,
+/// or joins, the real one.
+pub fn default_location(
+    env: Option<&std::ffi::OsStr>,
+    dev: bool,
+    documents: Option<&Path>,
+    home: Option<&Path>,
+) -> Result<PathBuf, String> {
+    if let Some(dir) = env.filter(|d| !d.is_empty()).map(PathBuf::from) {
+        if dir.is_absolute() {
+            return Ok(dir);
+        }
+        eprintln!(
+            "library: DOSIK_LIBRARY_DIR is not an absolute path ({}); left aside",
+            dir.display()
+        );
+    }
+    let documents = documents
+        .map(Path::to_path_buf)
+        .or_else(|| home.map(|h| h.join("Documents")))
+        .ok_or("no Documents folder to keep the library in")?;
+    Ok(documents.join(if dev { "Dosik Dev" } else { "Dosik" }))
+}
+
 /// Whether a walk between the counts `before` and `after` saw the library
 /// whole: no change was under way as it began, none began meanwhile.
 pub fn settled(before: u64, after: u64) -> bool {
@@ -152,6 +178,40 @@ pub(crate) mod tests {
         assert!(!settled(before, lib.structure()), "a change came and went");
         let after = lib.structure();
         assert!(settled(after, lib.structure()));
+    }
+
+    #[test]
+    fn the_default_location_is_documents_dosik_unless_told_otherwise() {
+        use std::ffi::OsStr;
+        let base = scratch("ctx-where");
+        let docs = base.join("Docs");
+        let home = base.join("home");
+        let told = base.join("Elsewhere");
+        let at = |env: Option<&OsStr>, dev, docs: Option<&Path>| {
+            default_location(env, dev, docs, Some(&home))
+        };
+        assert_eq!(at(None, false, Some(&docs)).unwrap(), docs.join("Dosik"));
+        // a development run keeps a library of its own
+        assert_eq!(at(None, true, Some(&docs)).unwrap(), docs.join("Dosik Dev"));
+        // the environment wins, a development run or not
+        for dev in [false, true] {
+            assert_eq!(at(Some(told.as_os_str()), dev, Some(&docs)).unwrap(), told);
+        }
+        // an empty or relative one is left aside
+        assert_eq!(
+            at(Some(OsStr::new("")), false, Some(&docs)).unwrap(),
+            docs.join("Dosik")
+        );
+        assert_eq!(
+            at(Some(OsStr::new("rel/dir")), false, Some(&docs)).unwrap(),
+            docs.join("Dosik")
+        );
+        // no Documents folder known: the one in the home folder
+        assert_eq!(
+            at(None, false, None).unwrap(),
+            home.join("Documents").join("Dosik")
+        );
+        assert!(default_location(None, false, None, None).is_err());
     }
 
     #[test]

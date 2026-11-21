@@ -27,6 +27,7 @@ import {
   resetTabsForTests,
   showHomeTab,
 } from "../tabActions";
+import { newTab } from "../tabModel";
 import { namedTarget } from "../targets";
 import {
   externalBaseline,
@@ -35,6 +36,7 @@ import {
 } from "../unsavedGuard";
 import {
   AUTOSAVE_DEBOUNCE_MS,
+  baseStampOf,
   flushAutosave,
   resetAutosaveForTests,
   useAutosave,
@@ -681,6 +683,49 @@ describe("tab actions (#218)", () => {
     it("a blank document is not written as the first no-op change", async () => {
       const { id } = await newDiagramTab();
       expect(store()).toMatchObject({ projectId: id, title: blankDoc().title });
+      expect(calls("save_project")).toHaveLength(1);
+    });
+  });
+
+  describe("a library in real folders (#253 D8, D11)", () => {
+    it("an opened diagram is titled after its file, and its stamp is the base of its next save", async () => {
+      mockedInvoke.mockImplementation(async (cmd) =>
+        cmd === "load_project"
+          ? { contents: JSON.stringify(book("Old title")), name: "Checkout", stamp: "1-10-aa" }
+          : undefined,
+      );
+      await openLibraryDiagram("p1");
+      expect(store().title).toBe("Checkout");
+      expect(tabOf({ projectId: "p1" }).title).toBe("Checkout");
+      expect(baseStampOf("p1")).toBe("1-10-aa");
+    });
+
+    it("a restored tab's read keeps its stamp too", async () => {
+      mockedInvoke.mockImplementation(async (cmd) =>
+        cmd === "load_project"
+          ? { contents: JSON.stringify(book("Ledger")), name: "Ledger", stamp: "2-20-bb" }
+          : undefined,
+      );
+      const restored = { ...newTab({ projectId: "p2", filePath: null, title: "Ledger" }, false) };
+      app().commitTabs({ tabs: [restored], activeTab: null });
+      await activateTab(restored.id);
+      expect(store().projectId).toBe("p2");
+      expect(baseStampOf("p2")).toBe("2-20-bb");
+    });
+
+    it("a new diagram opens under the name its file got, with its stamp", async () => {
+      mockedInvoke.mockImplementation(async (cmd) =>
+        cmd === "save_project"
+          ? { kind: "saved", name: "Untitled Diagram 2", stamp: "3-30-cc" }
+          : undefined,
+      );
+      const { id } = await newDiagramTab("work");
+      expect(store()).toMatchObject({ projectId: id, title: "Untitled Diagram 2" });
+      expect(tabOf({ projectId: id }).title).toBe("Untitled Diagram 2");
+      expect(baseStampOf(id)).toBe("3-30-cc");
+      // what it opened with is not an edit: nothing more is written
+      renderHook(() => useAutosave());
+      await flushAutosave();
       expect(calls("save_project")).toHaveLength(1);
     });
   });

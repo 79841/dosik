@@ -131,16 +131,14 @@ fn same_folder(old: &legacy::FolderMeta, new: &listing::FolderMeta) {
     for (o, n) in old.folders.iter().zip(&new.folders) {
         same_folder(o, n);
     }
-    let readable = |d: &[legacy::ProjectMeta]| {
-        d.iter()
-            .map(|d| (d.id.clone(), d.readable))
-            .collect::<Vec<_>>()
-    };
     assert_eq!(
-        readable(&old.diagrams),
+        old.diagrams
+            .iter()
+            .map(|d| d.id.clone())
+            .collect::<Vec<_>>(),
         new.diagrams
             .iter()
-            .map(|d| (d.id.clone(), d.readable))
+            .map(|d| d.id.clone())
             .collect::<Vec<_>>()
     );
 }
@@ -250,6 +248,11 @@ fn the_older_library_moves_into_real_folders_as_it_was() {
     assert_eq!(names["flow2"], "Flow 2");
     assert_eq!(names["bad"], "bad");
     assert_eq!(names["stray1"], "Stray");
+    // what could not be opened before still cannot, and the rest can
+    let pay = listed.iter().find(|p| p.id == "pay").unwrap();
+    for d in &pay.diagrams {
+        assert_eq!(d.readable, d.id != "bad", "{}", d.id);
+    }
     assert!(listed.iter().all(|p| !p.added && !p.missing));
     // the older library: as it was, one marker more
     let mut after = snapshot(&lib.legacy_dir);

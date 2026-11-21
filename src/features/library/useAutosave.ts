@@ -3,7 +3,8 @@ import { useEffect } from "react";
 import { useDiagramStore } from "../../shared/lib/store";
 import { documentMayHaveChanged } from "../../shared/lib/store/document";
 import { toastError } from "../../shared/lib/toastStore";
-import { saveProjectContents, serializeProject } from "./libraryApi";
+import { useAppStore } from "./appStore";
+import { type FileStamp, saveProjectContents, serializeProject } from "./libraryApi";
 
 /** how long after the last edit the project is written */
 export const AUTOSAVE_DEBOUNCE_MS = 500;
@@ -21,8 +22,65 @@ let inFlight: Promise<void> = Promise.resolve();
  * which is what Home sorts by).
  */
 const lastWritten = new Map<string, string>();
+/**
+ * What each open diagram's file was like when its tab last read or wrote it
+ * (#253 D11) — the `base` every save brings, so Rust writes over nothing
+ * someone else put there meanwhile. A preview's read leaves it alone.
+ */
+const baseStamps = new Map<string, FileStamp>();
 /** project writes sent to disk this session — what a listing read after them is up to date with */
 let writesSent = 0;
+
+/** why a save was not written — the file changed on disk, or is gone (#253 D12, D13) */
+export type SaveRefusal = "changedOnDisk" | "gone";
+
+/**
+ * What a refused save does — the tabs set it (`tabActions`): read the
+ * diagram again, or close its tab. Left unset, the refusal is an error toast.
+ */
+let refused = (_id: string, why: SaveRefusal): void => {
+  toastError(
+    why === "gone" ? "The diagram is gone from disk" : "The diagram changed outside Dosik",
+  );
+};
+
+export const onSaveRefused = (handler: (id: string, why: SaveRefusal) => void): void => {
+  refused = handler;
+};
+
+/** the title a serialized document carries */
+const titleIn = (contents: string): string | undefined => {
+  try {
+    const title: unknown = (JSON.parse(contents) as { title?: unknown }).title;
+    return typeof title === "string" ? title : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * A save landed under `name`, its file's (#253 D8): the diagram takes it as
+ * its title — no undo step, as a rename of the file it is — unless its title
+ * has moved on since `sent` went out; the next save sees to that one. The
+ * store while the diagram is on screen, else its tab's snapshot.
+ */
+const takeSavedName = (id: string, sent: string | undefined, name: string): void => {
+  if (sent === undefined || name === sent) return;
+  const live = useDiagramStore.getState();
+  if (live.projectId === id) {
+    if (live.title === sent) live.setTitle(name);
+    return;
+  }
+  const { tabs, activeTab, commitTabs } = useAppStore.getState();
+  const tab = tabs.find((t) => t.id !== activeTab && t.projectId === id && t.doc);
+  if (!tab?.doc || tab.doc.title !== sent) return;
+  commitTabs({
+    tabs: tabs.map((t) =>
+      t === tab && t.doc ? { ...t, title: name, doc: { ...t.doc, title: name } } : t,
+    ),
+    activeTab,
+  });
+};
 
 /**
  * How many project writes have been sent so far — a caller that read the
@@ -49,19 +107,43 @@ export const writeProjectThroughChain = (id: string, force = false): Promise<boo
   // skipped while the stale bytes are still on their way to the file
   lastWritten.set(id, contents);
   writesSent++;
-  const attempt = inFlight.then(() => saveProjectContents(id, contents));
+  const rollBack = () => {
+    if (lastWritten.get(id) === contents) {
+      if (previous === undefined) lastWritten.delete(id);
+      else lastWritten.set(id, previous);
+    }
+  };
+  // the base is read as the write starts, not as it is scheduled: the one
+  // before it on the chain may have moved it on
+  const attempt = inFlight
+    .then(() => saveProjectContents(id, contents, undefined, baseStamps.get(id)))
+    .then(
+      (outcome) => {
+        // on the chain itself, so the next write starts from this stamp
+        if (outcome.kind === "saved") {
+          if (outcome.stamp !== undefined) baseStamps.set(id, outcome.stamp);
+        } else rollBack();
+        return outcome;
+      },
+      (error: unknown) => {
+        rollBack();
+        throw error;
+      },
+    );
   // the chain itself never rejects — a failure must not take later writes down
   inFlight = attempt.then(
     () => undefined,
-    () => {
-      if (lastWritten.get(id) === contents) {
-        if (previous === undefined) lastWritten.delete(id);
-        else lastWritten.set(id, previous);
-      }
-    },
+    () => undefined,
   );
   return attempt.then(
-    () => true,
+    (outcome) => {
+      if (outcome.kind === "saved") {
+        if (outcome.name !== undefined) takeSavedName(id, titleIn(contents), outcome.name);
+        return true;
+      }
+      refused(id, outcome.kind);
+      return false;
+    },
     (error) => {
       // no retry: the next edit schedules the next attempt. The caller gets
       // `false` so an explicit Save can refrain from claiming success
@@ -71,13 +153,23 @@ export const writeProjectThroughChain = (id: string, force = false): Promise<boo
   );
 };
 
-/** what a freshly opened or created project's file holds, so the first no-op change is not written */
+/**
+ * What a freshly opened, created or read-again project's file holds — so the
+ * first no-op change is not written — and its stamp, the base of its next
+ * save (none known: the next save writes without one).
+ */
 export const noteProjectContents = (
   id: string,
   doc: Parameters<typeof serializeProject>[0],
+  stamp?: FileStamp,
 ): void => {
   lastWritten.set(id, serializeProject(doc));
+  if (stamp === undefined) baseStamps.delete(id);
+  else baseStamps.set(id, stamp);
 };
+
+/** the stamp the next save of `id` brings as its base — what its tab last saw */
+export const baseStampOf = (id: string): FileStamp | undefined => baseStamps.get(id);
 
 const writeNow = (id: string): Promise<void> => writeProjectThroughChain(id).then(() => undefined);
 
@@ -139,5 +231,6 @@ export const resetAutosaveForTests = (): void => {
   discardPendingAutosave();
   inFlight = Promise.resolve();
   lastWritten.clear();
+  baseStamps.clear();
   writesSent = 0;
 };
