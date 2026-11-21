@@ -18,6 +18,28 @@ pub const UNTITLED_DIAGRAM: &str = "Untitled Diagram";
 pub const UNTITLED_FOLDER: &str = "Untitled Folder";
 pub const UNTITLED_PROJECT: &str = "Untitled Project";
 
+/// a diagram's file: `<name>.dosik`
+pub const DIAGRAM_EXT: &str = ".dosik";
+/// what diagrams were saved as before — still listed, opened and saved
+pub const OLD_DIAGRAM_EXT: &str = ".dosik.json";
+
+/// The diagram name a file name carries: the name without `.dosik` or the
+/// older `.dosik.json`, either in any case — `None` for any other file.
+pub fn diagram_stem(file: &str) -> Option<&str> {
+    // ASCII lower case keeps every byte where it was
+    let lower = file.to_ascii_lowercase();
+    [OLD_DIAGRAM_EXT, DIAGRAM_EXT]
+        .into_iter()
+        .find(|ext| lower.ends_with(ext) && file.len() > ext.len())
+        .map(|ext| &file[..file.len() - ext.len()])
+}
+
+/// what an item of a folder is called on screen: a diagram without its
+/// extension, a folder as it is
+pub fn display_name(entry: &str) -> &str {
+    diagram_stem(entry).unwrap_or(entry)
+}
+
 /// characters no file name may hold on one platform or another
 const FORBIDDEN: &[char] = &['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 
@@ -281,7 +303,7 @@ pub(crate) mod tests {
 
     #[test]
     fn decomposed_hangul_composes_and_other_text_stays() {
-        // 한글, as Finder may store it
+        // the Korean word for Hangul, decomposed as Finder may store it
         let nfd = "\u{1112}\u{1161}\u{11AB}\u{1100}\u{1173}\u{11AF}";
         assert_eq!(compose_hangul(nfd), "\u{D55C}\u{AE00}");
         // a lone leading consonant and Latin with a combining accent are left alone

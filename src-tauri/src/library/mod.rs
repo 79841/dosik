@@ -10,7 +10,11 @@ mod legacy;
 // sits in the app data. The commands above still go to `legacy`; until they
 // move over, these modules are reached from their tests alone.
 #[allow(dead_code)]
+mod disk;
+#[allow(dead_code)]
 mod names;
+#[allow(dead_code)]
+mod state;
 
 use std::path::PathBuf;
 
