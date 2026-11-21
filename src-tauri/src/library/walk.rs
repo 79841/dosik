@@ -202,6 +202,42 @@ fn prune(dirs: Vec<WalkedDir>, known: &dyn Fn(&str) -> bool) -> Vec<WalkedDir> {
         .collect()
 }
 
+/// The names of the items directly in folder `dir` (at `rel`, `depth`)
+/// that show — every diagram, and each folder that `shown` would keep —
+/// what an index among its items counts. Read from names alone: no
+/// diagram is opened.
+pub fn visible_items(
+    dir: &Path,
+    rel: &str,
+    depth: usize,
+    known: &dyn Fn(&str) -> bool,
+) -> Vec<String> {
+    entries(dir)
+        .into_iter()
+        .filter(|(name, is_dir)| {
+            !is_dir
+                || (depth < MAX_DEPTH
+                    && shows(&dir.join(name), &child_rel(rel, name), depth + 1, known))
+        })
+        .map(|(name, _)| name)
+        .collect()
+}
+
+/// whether the folder at `path` (at `rel`, `depth`) shows: known, or a
+/// diagram in it, or a folder under it that shows
+fn shows(path: &Path, rel: &str, depth: usize, known: &dyn Fn(&str) -> bool) -> bool {
+    if known(rel) {
+        return true;
+    }
+    entries(path).into_iter().any(|(name, is_dir)| {
+        if is_dir {
+            depth < MAX_DEPTH && shows(&path.join(&name), &child_rel(rel, &name), depth + 1, known)
+        } else {
+            true
+        }
+    })
+}
+
 /// How many levels the folder at `path` takes, itself included — every real
 /// folder under it counted, shown or not, no deeper than `limit`.
 pub fn height(path: &Path, limit: usize) -> usize {
@@ -511,6 +547,26 @@ mod tests {
         let bare = scratch("walk-bare");
         std::fs::create_dir_all(bare.join("nothing")).unwrap();
         assert_eq!(dir_rels(&shown(walk(&bare).unwrap(), &|_| false)), vec![""]);
+    }
+
+    #[test]
+    fn the_items_that_show_are_counted_from_names_alone() {
+        let root = scratch("walk-visible");
+        put(&root.join("b.dosik"), "not even JSON");
+        put(&root.join("Docs/deep/x.dosik"), doc());
+        put(&root.join("Code/main.rs"), "");
+        std::fs::create_dir_all(root.join("Known/empty")).unwrap();
+        std::fs::create_dir_all(root.join("Outer/Inner")).unwrap();
+        let known = |rel: &str| rel == "Known" || rel == "Outer/Inner";
+        assert_eq!(
+            visible_items(&root, "", 1, &known),
+            vec!["Docs", "Known", "Outer", "b.dosik"]
+        );
+        // the same as the walk shows
+        let walked = shown(walk(&root).unwrap(), &known);
+        let mut names = walked.item_names();
+        names.sort();
+        assert_eq!(names, vec!["Docs", "Known", "Outer", "b.dosik"]);
     }
 
     #[test]

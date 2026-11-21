@@ -59,10 +59,7 @@ pub fn create_folder(
         ops::create_folder_dir(&target.path, &names::clean(name, names::UNTITLED_FOLDER))?
     };
     st.insert_id(target.project, &child_rel(&target.rel, &made), id)?;
-    let present: Vec<String> = walk::entries(&target.path)
-        .into_iter()
-        .map(|(n, _)| n)
-        .collect();
+    let present = st.visible_items(target.project, &target.rel, target.depth);
     st.place_item(target.project, &target.rel, &made, 0, &present);
     lib.save_state(&held, &st)?;
     Ok(made)
@@ -113,6 +110,190 @@ pub fn rename_folder(lib: &Library, id: &str, name: &str) -> Result<String, Stri
     }
     lib.save_state(&held, &st)?;
     Ok(new_name)
+}
+
+/// Moves the diagram `id` into the project or folder `folder`, to `index`
+/// among its items — the top when left out. In the folder it is in, an
+/// index changes its place and none changes nothing. Its id stays; a name
+/// taken there gets " 2".
+pub fn move_diagram(
+    lib: &Library,
+    id: &str,
+    folder: &str,
+    index: Option<usize>,
+) -> Result<(), String> {
+    move_diagram_with(lib, id, folder, index, disk::rename)
+}
+
+/// `move_diagram` with the rename it makes given — a test's stand-in for a
+/// move across volumes
+pub fn move_diagram_with(
+    lib: &Library,
+    id: &str,
+    folder: &str,
+    index: Option<usize>,
+    rename: disk::RenameFn,
+) -> Result<(), String> {
+    let held = lib.lock();
+    let mut st = lib.load_state(&held)?;
+    let from = ops::diagram_at(&st, id)?.ok_or_else(|| format!("no such diagram: {id:?}"))?;
+    if !disk::is_real_file(&from.path) {
+        return Err(format!("no such diagram: {id:?}"));
+    }
+    let target = folder_at(&st, folder)?;
+    let (old_parent, file) = split_rel(&from.rel);
+    let (old_parent, file) = (old_parent.to_string(), file.to_string());
+    if from.path.parent() == Some(target.path.as_path()) {
+        return match index {
+            Some(index) => {
+                let present = st.visible_items(target.project, &target.rel, target.depth);
+                st.place_item(target.project, &target.rel, &file, index, &present);
+                lib.save_state(&held, &st)
+            }
+            None => Ok(()),
+        };
+    }
+    let stem = names::diagram_stem(&file).unwrap_or(&file);
+    let ext = &file[stem.len()..];
+    let new_file = format!(
+        "{}{ext}",
+        Siblings::read(&target.path)?.diagram_name(stem, ext)
+    );
+    {
+        let _change = lib.restructure(&held);
+        disk::transfer(&from.path, &target.path.join(&new_file), rename)?;
+    }
+    let new_rel = child_rel(&target.rel, &new_file);
+    st.move_subtree(from.project, &from.rel, target.project, &new_rel);
+    st.take_from_order(from.project, &old_parent, &file);
+    let present = st.visible_items(target.project, &target.rel, target.depth);
+    st.place_item(
+        target.project,
+        &target.rel,
+        &new_file,
+        index.unwrap_or(0),
+        &present,
+    );
+    lib.save_state(&held, &st)
+}
+
+/// Moves the folder `id` — never a project — with everything in it into
+/// the project or folder `parent`, to `index` among its items: the top when
+/// left out. Never into itself or anything under it, never so deep that
+/// something in it passes `MAX_DEPTH`. Its id stays; a name taken there
+/// gets " 2".
+pub fn move_folder(
+    lib: &Library,
+    id: &str,
+    parent: &str,
+    index: Option<usize>,
+) -> Result<(), String> {
+    move_folder_with(lib, id, parent, index, disk::rename)
+}
+
+/// `move_folder` with the rename it makes given
+pub fn move_folder_with(
+    lib: &Library,
+    id: &str,
+    parent: &str,
+    index: Option<usize>,
+    rename: disk::RenameFn,
+) -> Result<(), String> {
+    state::validate_id(id)?;
+    let held = lib.lock();
+    let mut st = lib.load_state(&held)?;
+    match st.find(id) {
+        None => return Err(format!("no such folder: {id:?}")),
+        Some(Found { rel: None, .. }) => {
+            return Err("a project cannot be moved into a folder".into())
+        }
+        Some(_) => {}
+    }
+    let from = folder_at(&st, id)?;
+    let target = folder_at(&st, parent)?;
+    if target.project == from.project && disk::rel_within(&target.rel, &from.rel) {
+        return Err("a folder cannot go inside itself".into());
+    }
+    let (old_parent, name) = split_rel(&from.rel);
+    let (old_parent, name) = (old_parent.to_string(), name.to_string());
+    if from.path.parent() == Some(target.path.as_path()) {
+        return match index {
+            Some(index) => {
+                let present = st.visible_items(target.project, &target.rel, target.depth);
+                st.place_item(target.project, &target.rel, &name, index, &present);
+                lib.save_state(&held, &st)
+            }
+            None => Ok(()),
+        };
+    }
+    if target.depth + walk::height(&from.path, MAX_DEPTH) > MAX_DEPTH {
+        return Err(format!("folders nest at most {MAX_DEPTH} levels deep"));
+    }
+    let new_name = Siblings::read(&target.path)?.folder_name(&name);
+    {
+        let _change = lib.restructure(&held);
+        disk::transfer(&from.path, &target.path.join(&new_name), rename)?;
+    }
+    let new_rel = child_rel(&target.rel, &new_name);
+    st.move_subtree(from.project, &from.rel, target.project, &new_rel);
+    st.take_from_order(from.project, &old_parent, &name);
+    let present = st.visible_items(target.project, &target.rel, target.depth);
+    st.place_item(
+        target.project,
+        &target.rel,
+        &new_name,
+        index.unwrap_or(0),
+        &present,
+    );
+    lib.save_state(&held, &st)
+}
+
+/// Puts `item` (`folder:<id>`, `diagram:<id>`) at `index` among the items
+/// of the project or folder `parent` it is in — or among the projects, for
+/// none.
+pub fn reorder(
+    lib: &Library,
+    parent: Option<&str>,
+    item: &str,
+    index: usize,
+) -> Result<(), String> {
+    let bad = || format!("invalid item: {item:?}");
+    let (kind, id) = item.split_once(':').ok_or_else(bad)?;
+    state::validate_id(id).map_err(|_| bad())?;
+    if kind != "folder" && kind != "diagram" {
+        return Err(bad());
+    }
+    let held = lib.lock();
+    let mut st = lib.load_state(&held)?;
+    let not_there = || format!("{item:?} is not in {:?}", parent.unwrap_or("the library"));
+    let Some(parent) = parent else {
+        if kind != "folder" || st.project(id).is_none() {
+            return Err(not_there());
+        }
+        st.move_project(id, index)?;
+        return lib.save_state(&held, &st);
+    };
+    let target = folder_at(&st, parent)?;
+    let rel = match st.find(id) {
+        Some(Found {
+            project,
+            rel: Some(rel),
+        }) if project == target.project => rel,
+        _ => return Err(not_there()),
+    };
+    let (in_dir, name) = split_rel(&rel);
+    let is_diagram =
+        names::diagram_stem(name).is_some() && disk::is_real_file(&target.path.join(name));
+    let present = st.visible_items(target.project, &target.rel, target.depth);
+    if in_dir != target.rel
+        || (kind == "diagram") != is_diagram
+        || !present.iter().any(|n| n == name)
+    {
+        return Err(not_there());
+    }
+    let name = name.to_string();
+    st.place_item(target.project, &target.rel, &name, index, &present);
+    lib.save_state(&held, &st)
 }
 
 /// Renames `from` to `to` in one folder, counted as a change — never over
@@ -275,6 +456,260 @@ mod tests {
                 "Top.dosik"
             ]
         );
+    }
+
+    /// what a rename across volumes does
+    fn across_volumes(_: &Path, _: &Path) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::CrossesDevices.into())
+    }
+
+    fn ids_of(lib: &Library) -> Vec<(String, String)> {
+        let held = lib.lock();
+        let st = lib.load_state(&held).unwrap();
+        st.projects
+            .iter()
+            .flat_map(|p| p.ids.iter().map(|(k, v)| (v.clone(), k.clone())))
+            .collect()
+    }
+
+    /// a project `P` with folders `A` and `B`, `Flow` in `A`, `Top` in `P`
+    fn two_folders(tag: &str) -> (Library, String) {
+        let (lib, p) = with_project(tag);
+        create_folder(&lib, "fb", "B", None, Some(&p)).unwrap();
+        create_folder(&lib, "fa", "A", None, Some(&p)).unwrap();
+        saved(save(&lib, "flow", &titled("Flow"), Some("fa"), None).unwrap());
+        saved(save(&lib, "top", &titled("Top"), Some(&p), None).unwrap());
+        (lib, p)
+    }
+
+    #[test]
+    fn a_diagram_moves_between_folders_and_keeps_its_id() {
+        let (lib, p) = two_folders("folders-move");
+        saved(save(&lib, "other", &titled("Other"), Some("fb"), None).unwrap());
+        move_diagram(&lib, "flow", "fb", None).unwrap();
+        assert!(p_dir(&lib).join("B/Flow.dosik").is_file());
+        assert!(!p_dir(&lib).join("A/Flow.dosik").exists());
+        let listed = list(&lib).unwrap();
+        let b = listed[0].folders.iter().find(|f| f.id == "fb").unwrap();
+        assert_eq!(b.order, vec!["diagram:flow", "diagram:other"]);
+        let a = listed[0].folders.iter().find(|f| f.id == "fa").unwrap();
+        assert!(a.diagrams.is_empty());
+        assert_eq!(load(&lib, "flow").unwrap().name, "Flow");
+        // to an index; then to the project's top with " 2" when its name is taken
+        move_diagram(&lib, "flow", "fb", Some(1)).unwrap();
+        let listed = list(&lib).unwrap();
+        let b = listed[0].folders.iter().find(|f| f.id == "fb").unwrap();
+        assert_eq!(b.order, vec!["diagram:other", "diagram:flow"]);
+        saved(save(&lib, "flow", &titled("Top"), None, None).unwrap());
+        move_diagram(&lib, "flow", &p, None).unwrap();
+        assert_eq!(load(&lib, "flow").unwrap().name, "Top 2");
+        assert_eq!(list(&lib).unwrap()[0].order[0], "diagram:flow");
+    }
+
+    #[test]
+    fn a_diagram_moves_to_another_project_with_its_id() {
+        let (lib, _) = two_folders("folders-move-project");
+        create_folder(&lib, "q", "Q", None, None).unwrap();
+        move_diagram(&lib, "flow", "q", None).unwrap();
+        assert!(lib.default_location.join("Q/Flow.dosik").is_file());
+        let ids = ids_of(&lib);
+        assert!(ids.contains(&("flow".to_string(), "Flow.dosik".to_string())));
+        let listed = list(&lib).unwrap();
+        assert_eq!(project(&listed, "Q").diagrams[0].id, "flow");
+    }
+
+    #[test]
+    fn an_older_file_moves_with_its_own_extension() {
+        let (lib, p) = with_project("folders-move-old");
+        create_folder(&lib, "fa", "A", None, Some(&p)).unwrap();
+        put(&p_dir(&lib).join("Legacy.dosik.json"), &titled("Legacy"));
+        list(&lib).unwrap();
+        let id = ids_of(&lib)
+            .into_iter()
+            .find(|(_, k)| k == "Legacy.dosik.json")
+            .unwrap()
+            .0;
+        move_diagram(&lib, &id, "fa", None).unwrap();
+        assert!(p_dir(&lib).join("A/Legacy.dosik.json").is_file());
+    }
+
+    #[test]
+    fn a_move_within_its_folder_only_changes_its_place() {
+        let (lib, p) = two_folders("folders-move-same");
+        let before = list(&lib).unwrap()[0].order.clone();
+        move_diagram(&lib, "top", &p, None).unwrap();
+        assert_eq!(list(&lib).unwrap()[0].order, before);
+        move_diagram(&lib, "top", &p, Some(2)).unwrap();
+        let after = list(&lib).unwrap()[0].order.clone();
+        assert_eq!(after[2], "diagram:top");
+        assert!(p_dir(&lib).join("Top.dosik").is_file());
+    }
+
+    #[test]
+    fn a_folder_moves_with_everything_in_it() {
+        let (lib, p) = two_folders("folders-move-folder");
+        create_folder(&lib, "fin", "Inner", None, Some("fa")).unwrap();
+        put(&p_dir(&lib).join("A/notes.txt"), "mine");
+        move_folder(&lib, "fa", "fb", None).unwrap();
+        assert!(p_dir(&lib).join("B/A/Flow.dosik").is_file());
+        assert!(p_dir(&lib).join("B/A/Inner").is_dir());
+        assert!(p_dir(&lib).join("B/A/notes.txt").is_file());
+        let ids = ids_of(&lib);
+        assert!(ids.contains(&("fa".into(), "B/A".into())));
+        assert!(ids.contains(&("fin".into(), "B/A/Inner".into())));
+        assert!(ids.contains(&("flow".into(), "B/A/Flow.dosik".into())));
+        let listed = list(&lib).unwrap();
+        assert_eq!(folder_names(&listed[0]), vec!["B"]);
+        // back to the project, its name taken: " 2"
+        create_folder(&lib, "fa2", "A", None, Some(&p)).unwrap();
+        move_folder(&lib, "fa", &p, Some(1)).unwrap();
+        assert!(p_dir(&lib).join("A 2/Flow.dosik").is_file());
+        assert_eq!(list(&lib).unwrap()[0].order[1], "folder:fa");
+    }
+
+    #[test]
+    fn a_folder_never_goes_inside_itself_and_a_project_stays_a_project() {
+        let (lib, p) = two_folders("folders-move-self");
+        create_folder(&lib, "fin", "Inner", None, Some("fa")).unwrap();
+        assert!(move_folder(&lib, "fa", "fa", None)
+            .unwrap_err()
+            .contains("itself"));
+        assert!(move_folder(&lib, "fa", "fin", None)
+            .unwrap_err()
+            .contains("itself"));
+        assert!(move_folder(&lib, &p, "fb", None)
+            .unwrap_err()
+            .contains("project"));
+        assert!(move_folder(&lib, "flow", "fb", None).is_err());
+        assert!(move_diagram(&lib, "fa", "fb", None).is_err());
+        assert!(p_dir(&lib).join("A/Inner").is_dir());
+    }
+
+    #[test]
+    fn a_moved_folder_stays_within_max_depth() {
+        let (lib, p) = with_project("folders-move-depth");
+        let mut parent = p.clone();
+        for level in 2..=MAX_DEPTH {
+            let id = format!("f{level}");
+            create_folder(&lib, &id, &format!("L{level}"), None, Some(&parent)).unwrap();
+            parent = id;
+        }
+        create_folder(&lib, "tall", "Tall", None, Some(&p)).unwrap();
+        create_folder(&lib, "tall2", "Tall 2", None, Some("tall")).unwrap();
+        let deepest_but_one = format!("f{}", MAX_DEPTH - 1);
+        assert!(move_folder(&lib, "tall", &deepest_but_one, None).is_err());
+        assert!(move_folder(&lib, "tall2", &deepest_but_one, None).is_ok());
+    }
+
+    #[test]
+    fn a_diagram_moved_across_volumes_is_copied_whole_then_removed() {
+        let (lib, _) = two_folders("folders-exdev-file");
+        let from = p_dir(&lib).join("A/Flow.dosik");
+        let at = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&from)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+        move_diagram_with(&lib, "flow", "fb", None, across_volumes).unwrap();
+        let to = p_dir(&lib).join("B/Flow.dosik");
+        assert_eq!(std::fs::read_to_string(&to).unwrap(), titled("Flow"));
+        assert_eq!(std::fs::metadata(&to).unwrap().modified().unwrap(), at);
+        assert!(!from.exists());
+        assert_eq!(names_in(&p_dir(&lib).join("B")), vec!["Flow.dosik"]);
+        assert_eq!(load(&lib, "flow").unwrap().name, "Flow");
+    }
+
+    #[test]
+    fn a_folder_moved_across_volumes_is_copied_whole_then_removed() {
+        let (lib, _) = two_folders("folders-exdev-folder");
+        put(&p_dir(&lib).join("A/.hidden"), "kept");
+        put(&p_dir(&lib).join("A/Deep/x.dosik"), &titled("x"));
+        move_folder_with(&lib, "fa", "fb", None, across_volumes).unwrap();
+        let to = p_dir(&lib).join("B/A");
+        assert_eq!(names_in(&to), vec![".hidden", "Deep", "Flow.dosik"]);
+        assert!(to.join("Deep/x.dosik").is_file());
+        assert!(!p_dir(&lib).join("A").exists());
+        assert_eq!(names_in(&p_dir(&lib).join("B")), vec!["A"], "no temp left");
+        assert_eq!(load(&lib, "flow").unwrap().name, "Flow");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_with_a_link_in_it_is_not_moved_across_volumes() {
+        let (lib, _) = two_folders("folders-exdev-link");
+        std::os::unix::fs::symlink(p_dir(&lib).join("B"), p_dir(&lib).join("A/link")).unwrap();
+        assert!(move_folder_with(&lib, "fa", "fb", None, across_volumes).is_err());
+        assert!(p_dir(&lib).join("A/Flow.dosik").is_file());
+        assert!(names_in(&p_dir(&lib).join("B")).is_empty());
+        assert!(ids_of(&lib).contains(&("fa".into(), "A".into())));
+    }
+
+    #[test]
+    fn a_failed_rename_changes_nothing() {
+        fn refused(_: &Path, _: &Path) -> std::io::Result<()> {
+            Err(std::io::ErrorKind::PermissionDenied.into())
+        }
+        let (lib, _) = two_folders("folders-move-refused");
+        let before = ids_of(&lib);
+        assert!(move_diagram_with(&lib, "flow", "fb", None, refused).is_err());
+        assert!(move_folder_with(&lib, "fa", "fb", None, refused).is_err());
+        assert_eq!(ids_of(&lib), before);
+        assert!(p_dir(&lib).join("A/Flow.dosik").is_file());
+    }
+
+    #[test]
+    fn an_item_takes_its_new_place_among_its_siblings() {
+        let (lib, p) = two_folders("folders-reorder");
+        let order = list(&lib).unwrap()[0].order.clone();
+        assert_eq!(order, vec!["diagram:top", "folder:fa", "folder:fb"]);
+        reorder(&lib, Some(&p), "diagram:top", 2).unwrap();
+        assert_eq!(
+            list(&lib).unwrap()[0].order,
+            vec!["folder:fa", "folder:fb", "diagram:top"]
+        );
+        reorder(&lib, Some(&p), "folder:fb", 0).unwrap();
+        assert_eq!(
+            list(&lib).unwrap()[0].order,
+            vec!["folder:fb", "folder:fa", "diagram:top"]
+        );
+        // the projects themselves
+        create_folder(&lib, "q", "Q", None, None).unwrap();
+        reorder(&lib, None, &format!("folder:{p}"), 0).unwrap();
+        assert_eq!(names_of(&list(&lib).unwrap()), vec!["P", "Q"]);
+    }
+
+    #[test]
+    fn an_index_counts_only_the_items_that_show() {
+        let (lib, p) = two_folders("folders-reorder-shown");
+        // a folder made outside with nothing in it does not show
+        std::fs::create_dir_all(p_dir(&lib).join("AA empty")).unwrap();
+        reorder(&lib, Some(&p), "diagram:top", 1).unwrap();
+        assert_eq!(
+            list(&lib).unwrap()[0].order,
+            vec!["folder:fa", "diagram:top", "folder:fb"]
+        );
+    }
+
+    #[test]
+    fn reordering_refuses_what_is_not_there() {
+        let (lib, p) = two_folders("folders-reorder-refuse");
+        assert!(
+            reorder(&lib, Some(&p), "diagram:flow", 0).is_err(),
+            "in A, not in P"
+        );
+        assert!(
+            reorder(&lib, Some(&p), "folder:top", 0).is_err(),
+            "a diagram, not a folder"
+        );
+        assert!(reorder(&lib, Some(&p), "diagram:nope", 0).is_err());
+        assert!(
+            reorder(&lib, None, "folder:fa", 0).is_err(),
+            "a folder, not a project"
+        );
+        assert!(reorder(&lib, None, "page:x", 0).is_err());
+        assert!(reorder(&lib, Some(&p), "diagram:../x", 0).is_err());
     }
 
     #[test]

@@ -70,6 +70,109 @@ pub fn place_new(tmp: &Path, dest: &Path) -> std::io::Result<()> {
     }
 }
 
+/// How an entry is renamed — `std::fs::rename`, or a stand-in that fails
+/// the way a move across volumes does.
+pub type RenameFn = fn(&Path, &Path) -> std::io::Result<()>;
+
+/// the rename every move makes outside a test
+pub fn rename(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::rename(from, to)
+}
+
+/// whether a rename failed because `from` and `to` are on different volumes
+pub fn crosses_devices(e: &std::io::Error) -> bool {
+    e.kind() == std::io::ErrorKind::CrossesDevices
+        || (cfg!(unix) && e.raw_os_error() == Some(18))
+        || (cfg!(windows) && e.raw_os_error() == Some(17))
+}
+
+/// Moves the file or folder `from` to `to`, which must be free: a rename —
+/// or, across volumes, a copy put in place whole and the original removed
+/// after. Times of files are kept; a link inside a folder stops the move.
+pub fn transfer(from: &Path, to: &Path, rename: RenameFn) -> Result<(), String> {
+    if exists(to) {
+        return Err(format!("{}: in the way", to.display()));
+    }
+    match rename(from, to) {
+        Ok(()) => Ok(()),
+        Err(e) if crosses_devices(&e) => copy_across(from, to),
+        Err(e) => Err(format!("{}: {e}", from.display())),
+    }
+}
+
+fn copy_across(from: &Path, to: &Path) -> Result<(), String> {
+    let parent = to.parent().ok_or("no parent folder")?;
+    if is_real_file(from) {
+        let bytes = std::fs::read(from).map_err(|e| format!("{}: {e}", from.display()))?;
+        let tmp = write_tmp(parent, &bytes)?;
+        keep_mtime(from, &tmp);
+        if let Err(e) = place_new(&tmp, to) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("{}: {e}", to.display()));
+        }
+        // the original stays where it cannot go: one copy, never two
+        if let Err(e) = std::fs::remove_file(from) {
+            let _ = std::fs::remove_file(to);
+            return Err(format!("{}: {e}", from.display()));
+        }
+        return Ok(());
+    }
+    if !is_real_dir(from) {
+        return Err(format!("{}: not a file or a folder", from.display()));
+    }
+    let tmp = parent.join(tmp_name());
+    let placed = copy_tree(from, &tmp).and_then(|()| {
+        if exists(to) {
+            return Err(format!("{}: in the way", to.display()));
+        }
+        std::fs::rename(&tmp, to).map_err(|e| format!("{}: {e}", to.display()))
+    });
+    if let Err(e) = placed {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(e);
+    }
+    // the copy is whole: what of the original will not go is left behind
+    if let Err(e) = std::fs::remove_dir_all(from) {
+        eprintln!("library: moved, but {} stays behind: {e}", from.display());
+    }
+    Ok(())
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+    std::fs::create_dir(to).map_err(|e| format!("{}: {e}", to.display()))?;
+    let read = std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))?;
+    for entry in read {
+        let entry = entry.map_err(|e| format!("{}: {e}", from.display()))?;
+        let kind = entry
+            .file_type()
+            .map_err(|e| format!("{}: {e}", entry.path().display()))?;
+        let dest = to.join(entry.file_name());
+        if kind.is_dir() {
+            copy_tree(&entry.path(), &dest)?;
+        } else if kind.is_file() {
+            std::fs::copy(entry.path(), &dest)
+                .map_err(|e| format!("{}: {e}", entry.path().display()))?;
+            keep_mtime(&entry.path(), &dest);
+        } else {
+            return Err(format!(
+                "{}: a link cannot be moved to another volume",
+                entry.path().display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// gives `to` the modification time of `from`, if it can
+pub fn keep_mtime(from: &Path, to: &Path) {
+    if let Ok(at) = std::fs::metadata(from).and_then(|m| m.modified()) {
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .open(to)
+            .and_then(|f| f.set_modified(at));
+    }
+}
+
 /// a real directory — a symbolic link to one is not
 pub fn is_real_dir(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())

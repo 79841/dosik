@@ -490,6 +490,23 @@ impl LibraryState {
         self.projects[project].order.insert(dir.to_string(), order);
     }
 
+    /// `name` out of folder `dir`'s order — it moved elsewhere.
+    pub fn take_from_order(&mut self, project: usize, dir: &str, name: &str) {
+        if let Some(order) = self.projects[project].order.get_mut(dir) {
+            order.retain(|n| n != name);
+        }
+    }
+
+    /// The names of the items folder `dir` (at `depth`) of project
+    /// `project` shows, from disk: what an index among them counts.
+    pub fn visible_items(&self, project: usize, dir: &str, depth: usize) -> Vec<String> {
+        let record = &self.projects[project];
+        let Some(path) = disk::join_rel(&record.root(), dir) else {
+            return Vec::new();
+        };
+        super::walk::visible_items(&path, dir, depth, &|rel| record.ids.contains_key(rel))
+    }
+
     /// `old` is called `new` now in folder `dir`'s order, in the same place.
     pub fn rename_in_order(&mut self, project: usize, dir: &str, old: &str, new: &str) {
         if let Some(order) = self.projects[project].order.get_mut(dir) {

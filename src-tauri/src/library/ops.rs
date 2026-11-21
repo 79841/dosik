@@ -254,10 +254,7 @@ pub fn save(
     };
     let rel = child_rel(&target.rel, &file);
     st.insert_id(target.project, &rel, id)?;
-    let present: Vec<String> = walk::entries(&target.path)
-        .into_iter()
-        .map(|(n, _)| n)
-        .collect();
+    let present = st.visible_items(target.project, &target.rel, target.depth);
     st.place_item(target.project, &target.rel, &file, 0, &present);
     lib.save_state(&held, &st)?;
     let (_, stamp) = read_stamped(&target.path.join(&file))?;

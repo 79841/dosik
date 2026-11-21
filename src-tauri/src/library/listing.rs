@@ -22,7 +22,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::Serialize;
 
 use super::ctx::{settled, Library, LIST_ATTEMPTS};
-use super::disk::{self, join_rel, split_rel};
+use super::disk::{self, split_rel};
 use super::names;
 use super::state::{self, merge_order, BoardSpot, LibraryState, ProjectRecord, Slot};
 use super::walk::{self, Entry, WalkedDir, MAX_DEPTH};
@@ -247,10 +247,12 @@ fn take_one(lib: &Library, st: &mut LibraryState, target: &Path) -> Result<bool,
         }
         st.ensure_id(project, &rel);
         let (parent, name) = split_rel(&rel);
-        let root = st.projects[project].root();
-        let present: Vec<String> = join_rel(&root, parent)
-            .map(|dir| walk::entries(&dir).into_iter().map(|(n, _)| n).collect())
-            .unwrap_or_default();
+        let parent_depth = if parent.is_empty() {
+            1
+        } else {
+            parent.split('/').count() + 1
+        };
+        let present = st.visible_items(project, parent, parent_depth);
         st.place_item(project, parent, name, 0, &present);
         return Ok(true);
     }
