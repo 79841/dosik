@@ -81,8 +81,6 @@ export const LabeledEdge = ({
     [id, source, target, sourceHandleId, targetHandleId, nodes, edges],
   );
   const { parallelOffset, selfLoopIndex } = siblings;
-  const soleSource = siblings.soleEnds.source;
-  const soleTarget = siblings.soleEnds.target;
   const selfLoopWidth = data?.selfLoopWidth;
   const labelT = data?.labelT;
   // an end of this line dragged onto a shape: draw the line it lands as, not one
@@ -108,11 +106,7 @@ export const LabeledEdge = ({
         : routed,
       nodes,
       {
-        siblings: {
-          parallelOffset,
-          selfLoopIndex,
-          soleEnds: { source: soleSource, target: soleTarget },
-        },
+        siblings: { parallelOffset, selfLoopIndex },
         fallback: {
           source: { x: sourceX, y: sourceY, position: sourcePosition },
           target: { x: targetX, y: targetY, position: targetPosition },
@@ -132,8 +126,6 @@ export const LabeledEdge = ({
     nodes,
     parallelOffset,
     selfLoopIndex,
-    soleSource,
-    soleTarget,
     landingAnchor,
     snapNode,
     snapHandle,
