@@ -1,8 +1,10 @@
 import {
   Copy,
   FolderInput,
+  FolderMinus,
   FolderPlus,
   FolderSearch,
+  Locate,
   Pencil,
   SquareArrowOutUpRight,
   SquarePlus,
@@ -16,8 +18,11 @@ import {
   copyItemPath,
   deleteDiagramAsking,
   deleteFolderAsking,
+  locateProjectAsking,
+  removeFromLibrary,
   showItemInFinder,
 } from "./libraryActions";
+import { isMissing } from "./libraryTree";
 import { newDiagram, openFromLibrary, renameDiagram } from "./navigation";
 import { type ScreenStamp, screenStamp } from "./screenStamp";
 
@@ -55,6 +60,24 @@ const moveItem = (picker: NonNullable<MenuItem["picker"]>): MenuItem => ({
 });
 
 /**
+ * Remove from Library (#253 D9, D15, `Sidebar-Library` ②③): the project
+ * leaves the list and its folder stays where it is — no danger tint, it
+ * deletes nothing. `onRemoved` follows a removal that went through, with the
+ * screen it was asked from.
+ */
+const removeItem = (folder: FolderMeta, onRemoved?: (asked: ScreenStamp) => void): MenuItem => ({
+  label: "Remove from Library",
+  icon: FolderMinus,
+  separatorBefore: true,
+  onSelect: () => {
+    const asked = screenStamp();
+    void removeFromLibrary(folder).then((removed) => {
+      if (removed) onRemoved?.(asked);
+    });
+  },
+});
+
+/**
  * New diagram · New folder · — · Show in Finder · Copy Path · — · Rename ·
  * Move to… · — · Delete (#229 D11, #230 D11, #238 R2), for a project or a folder at any depth — none for a stray
  * listing, which has no folder to act on. New folder is there when
@@ -63,7 +86,11 @@ const moveItem = (picker: NonNullable<MenuItem["picker"]>): MenuItem => ({
  * folder at the deepest level. Move to… is there when `move` opens its
  * picker — a folder that has somewhere to go (#230 D12; never a project).
  * `afterRename` goes after Rename (the canvas's Expand / Collapse, #221
- * D15); `onDeleted` follows a delete that went through.
+ * D15); `onDeleted` follows a delete — or a removal — that went through.
+ *
+ * A project added from elsewhere ends in Remove from Library in place of
+ * Delete; one not found has Locate… · — · Remove from Library alone (#253
+ * R7, R8).
  */
 export const folderMenuItems = (
   folder: FolderMeta,
@@ -82,35 +109,46 @@ export const folderMenuItems = (
 ): MenuItem[] =>
   folder.stray
     ? []
-    : [
-        { label: "New diagram", icon: SquarePlus, onSelect: () => void newDiagram(folder.id) },
-        ...(newFolder
-          ? [{ label: "New folder", icon: FolderPlus, takesFocus: true, onSelect: newFolder }]
-          : []),
-        ...finderItems("folder", folder.id),
-        {
-          label: "Rename",
-          icon: Pencil,
-          takesFocus: true,
-          separatorBefore: true,
-          onSelect: rename,
-        },
-        ...(move ? [moveItem(move)] : []),
-        ...afterRename,
-        {
-          label: "Delete",
-          icon: Trash2,
-          danger: true,
-          separatorBefore: true,
-          onSelect: () => {
-            // the screen it was asked from: what follows the delete checks it (#218 D15)
-            const asked = screenStamp();
-            void deleteFolderAsking(folder).then((deleted) => {
-              if (deleted) onDeleted?.(asked);
-            });
+    : isMissing(folder)
+      ? [
+          {
+            label: "Locate…",
+            icon: Locate,
+            onSelect: () => void locateProjectAsking(folder),
           },
-        },
-      ];
+          removeItem(folder, onDeleted),
+        ]
+      : [
+          { label: "New diagram", icon: SquarePlus, onSelect: () => void newDiagram(folder.id) },
+          ...(newFolder
+            ? [{ label: "New folder", icon: FolderPlus, takesFocus: true, onSelect: newFolder }]
+            : []),
+          ...finderItems("folder", folder.id),
+          {
+            label: "Rename",
+            icon: Pencil,
+            takesFocus: true,
+            separatorBefore: true,
+            onSelect: rename,
+          },
+          ...(move ? [moveItem(move)] : []),
+          ...afterRename,
+          folder.added
+            ? removeItem(folder, onDeleted)
+            : {
+                label: "Delete",
+                icon: Trash2,
+                danger: true,
+                separatorBefore: true,
+                onSelect: () => {
+                  // the screen it was asked from: what follows the delete checks it (#218 D15)
+                  const asked = screenStamp();
+                  void deleteFolderAsking(folder).then((deleted) => {
+                    if (deleted) onDeleted?.(asked);
+                  });
+                },
+              },
+        ];
 
 /**
  * Open · — · Show in Finder · Copy Path · — · Rename · Move to… · — · Delete

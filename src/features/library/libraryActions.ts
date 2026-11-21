@@ -14,10 +14,12 @@ import {
   type ItemKind,
   itemKey,
   libraryPath,
+  locateProject,
   moveFolder,
   moveProject,
   type ProjectMeta,
   parseItemKey,
+  removeProject,
   renameFolder,
   reorderItem,
   showInFinder,
@@ -147,18 +149,57 @@ export const deleteFolderAsking = (folder: FolderMeta): Promise<boolean> =>
     closeDiagramTabs(new Set(diagrams.map((d) => d.id)));
     await flushAutosave();
     await deleteFolder(folder.id);
-    // Home's view of anything that is gone — the folder, or one inside it —
-    // would be empty and lost: Home goes to the folder it was in, or the
-    // dashboard for a project, whether it is on show or only where the Home
-    // tab goes back to (#220 D1, #229 D5)
-    const app = useAppStore.getState();
-    const { homeView } = app;
-    if (homeView.kind === "folder" && isInside(listed, homeView.folder, folder.id)) {
-      app.setHomeView(parent ? { kind: "folder", folder: parent.id } : DASHBOARD);
-    }
+    leaveGone(listed, folder.id, parent);
     await refresh();
     return true;
   }).then((deleted) => deleted === true);
+
+/**
+ * Home's view of anything gone from the library — folder `id`, or one inside
+ * it — would be empty and lost: Home goes to `parent`, the folder it was in,
+ * or the dashboard for a project, whether it is on show or only where the
+ * Home tab goes back to (#220 D1, #229 D5)
+ */
+const leaveGone = (listed: FolderMeta[], id: string, parent: FolderMeta | null): void => {
+  const app = useAppStore.getState();
+  const { homeView } = app;
+  if (homeView.kind === "folder" && isInside(listed, homeView.folder, id)) {
+    app.setHomeView(parent ? { kind: "folder", folder: parent.id } : DASHBOARD);
+  }
+};
+
+/**
+ * Locate… (#253 D9): Rust shows the system's folder picker, and the folder
+ * picked takes the project's place — its ids, order and frame come back —
+ * so the library is listed again. A folder already in the library, or inside
+ * one, is not taken: the toast says so. Nothing picked is nothing. Resolves
+ * whether it was located.
+ */
+export const locateProjectAsking = (folder: FolderMeta): Promise<boolean> =>
+  guarded(async () => {
+    const answer = await locateProject(folder.id);
+    if (answer === "already") pushToast("Already in the library");
+    if (answer !== "located") return false;
+    await refresh();
+    return true;
+  }).then((located) => located === true);
+
+/**
+ * Remove from Library (#253 D9, D15): the project's record goes and its
+ * folder stays where it is, so nothing is asked — no file is lost. As for a
+ * delete, its diagrams' tabs close and every write lands first, and Home's
+ * view of it goes. Resolves whether it was removed.
+ */
+export const removeFromLibrary = (folder: FolderMeta): Promise<boolean> =>
+  guarded(async () => {
+    const listed = useLibraryStore.getState().folders ?? [folder];
+    closeDiagramTabs(new Set(diagramsUnder(folder).map((d) => d.id)));
+    await flushAutosave();
+    await removeProject(folder.id);
+    leaveGone(listed, folder.id, null);
+    await refresh();
+    return true;
+  }).then((removed) => removed === true);
 
 /** the writes that place items, one after another (#230 D13) */
 let placing: Promise<unknown> = Promise.resolve();

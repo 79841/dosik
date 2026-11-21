@@ -23,6 +23,7 @@
   --color-selected: var(--selected);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
+  --color-fill-subtle: var(--fill-subtle);
   --color-edge: var(--edge);
   --color-frame-dash: var(--frame-dash);
   --color-ink: var(--ink);

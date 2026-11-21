@@ -11,8 +11,10 @@ import { blankDoc, type FolderMeta } from "../libraryApi";
 import {
   deleteDiagramAsking,
   deleteFolderAsking,
+  locateProjectAsking,
   moveDiagram,
   newFolder,
+  removeFromLibrary,
   renameFolderTo,
 } from "../libraryActions";
 import { useLibraryStore } from "../libraryStore";
@@ -194,6 +196,90 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
       await deleteFolderAsking(work());
       expect(calls("delete_folder")).toHaveLength(0);
       expect(toasts()).toEqual(["“Work” was not deleted — a diagram was opened meanwhile."]);
+    });
+  });
+
+  describe("a project not found, a folder added from elsewhere (#253 R7·R8)", () => {
+    const lost = (): FolderMeta => ({
+      folders: [],
+      id: "arc",
+      name: "architecture",
+      updatedAt: 0,
+      diagrams: [],
+      missing: true,
+    });
+    const answer = (locate: unknown) =>
+      mockedInvoke.mockImplementation(async (cmd) => {
+        seen[cmd] = {
+          view: useAppStore.getState().view,
+          homeView: useAppStore.getState().homeView,
+          projectId: useDiagramStore.getState().projectId,
+        };
+        if (cmd === "list_library") return library();
+        if (cmd === "locate_project") {
+          if (locate instanceof Error) throw locate;
+          return locate;
+        }
+        return undefined;
+      });
+
+    it("Locate… located — the library is listed again, nothing said", async () => {
+      answer("located");
+      expect(await locateProjectAsking(lost())).toBe(true);
+      expect(calls("locate_project")[0]![1]).toEqual({ id: "arc" });
+      expect(calls("list_library")).toHaveLength(1);
+      expect(toasts()).toEqual([]);
+    });
+
+    it("Locate… on a folder already in the library — the toast says so, nothing else", async () => {
+      answer("already");
+      expect(await locateProjectAsking(lost())).toBe(false);
+      expect(toasts()).toEqual(["Already in the library"]);
+      expect(calls("list_library")).toHaveLength(0);
+    });
+
+    it("Locate… cancelled says nothing; one that fails says why", async () => {
+      answer("cancelled");
+      expect(await locateProjectAsking(lost())).toBe(false);
+      expect(toasts()).toEqual([]);
+      answer(new Error("no such project"));
+      expect(await locateProjectAsking(lost())).toBe(false);
+      expect(toasts()).toEqual(["Error: no such project"]);
+    });
+
+    it("Remove from Library — no question: closes its diagrams' tabs, lets every write land, removes the record, lists again", async () => {
+      renderHook(() => useAutosave());
+      openDocument(blankDoc(), { filePath: "/tmp/keep.dosik" });
+      openLoginFlow();
+      useDiagramStore.getState().addNode("rect", { x: 0, y: 0 });
+      expect(await removeFromLibrary(work())).toBe(true);
+      expect(mockedAsk).not.toHaveBeenCalled();
+      expect(calls("remove_project")[0]![1]).toEqual({ id: "work" });
+      expect(calls("delete_folder")).toHaveLength(0);
+      const order = mockedInvoke.mock.calls.map(([c]) => c);
+      expect(order.indexOf("save_project")).toBeGreaterThanOrEqual(0);
+      expect(order.indexOf("save_project")).toBeLessThan(order.indexOf("remove_project"));
+      expect(openTabs()).toEqual(["/tmp/keep.dosik"]);
+      expect(order.at(-1)).toBe("list_library");
+    });
+
+    it("Remove from Library sends Home showing it, or a folder in it, to the dashboard", async () => {
+      useLibraryStore.setState({ folders: [...library(), lost()] });
+      useAppStore.getState().setHomeView({ kind: "folder", folder: "arc" });
+      await removeFromLibrary(lost());
+      expect(useAppStore.getState().homeView).toEqual(DASHBOARD);
+      useAppStore.getState().setHomeView({ kind: "folder", folder: "home" });
+      await removeFromLibrary(work());
+      expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "home" });
+    });
+
+    it("Remove from Library that fails — a toast, nothing gone", async () => {
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "remove_project") throw new Error("no such project");
+        return cmd === "list_library" ? library() : undefined;
+      });
+      expect(await removeFromLibrary(work())).toBe(false);
+      expect(toasts()).toEqual(["Error: no such project"]);
     });
   });
 

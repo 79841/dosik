@@ -2074,4 +2074,150 @@ describe("sidebar tree (#217 R3)", () => {
       }
     });
   });
+
+  describe("a project not found, a folder added from elsewhere (#253 R7·R8, Sidebar-Library ②③)", () => {
+    /** Work · architecture (not found) · client-diagrams (added from ~/Work) */
+    const places = (): FolderMeta[] => [
+      library()[0]!,
+      {
+        id: "arc",
+        name: "architecture",
+        updatedAt: 0,
+        diagrams: [],
+        folders: [],
+        missing: true,
+        path: "/Users/someone/Projects/architecture",
+        shown: "~/Projects/architecture",
+      },
+      {
+        id: "cli",
+        name: "client-diagrams",
+        updatedAt: now - 60_000,
+        diagrams: [{ id: "c1", title: "Overview", updatedAt: now - 60_000, readable: true }],
+        folders: [],
+        added: true,
+        path: "/Users/someone/Work/client-diagrams",
+        shown: "~/Work/client-diagrams",
+      },
+    ];
+    const menuItems = (name: string) =>
+      within(screen.getByRole("menu", { name }))
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent);
+
+    beforeEach(() => {
+      useLibraryStore.setState({ folders: places(), readFailed: false });
+      serve(places);
+    });
+
+    it("keeps its place, no chevron — a grey badge, its name muted, “Not found” where the count goes", () => {
+      renderTree();
+      const items = within(tree()).getAllByRole("treeitem");
+      expect(items.map((i) => i.getAttribute("aria-label"))).toEqual([
+        "Work, project, 2 items",
+        "architecture, project, not found",
+        "client-diagrams, project, 1 item",
+      ]);
+      expect(item(/^architecture/)).not.toHaveAttribute("aria-expanded");
+      expect(chevron(/^architecture/)).toBeNull();
+      const badge = row(/^architecture/).querySelector("[aria-hidden='true'].bg-fill-subtle");
+      expect(badge).toHaveClass("text-muted", "h-4", "w-4");
+      expect(badge).toHaveTextContent("A");
+      expect(badge?.previousElementSibling).toHaveClass("w-3.5");
+      expect(within(row(/^architecture/)).getByText("architecture")).toHaveClass(
+        "text-muted-strong",
+      );
+      const status = row(/^architecture/).querySelector("[data-count]");
+      expect(status).toHaveTextContent("Not found");
+      expect(status).toHaveClass("text-[11px]", "font-medium", "text-muted");
+      expect(status).toHaveAttribute("aria-hidden", "true");
+      // a project that is there looks like any other — added from elsewhere or not
+      expect(badgeIn(row(/^client-diagrams/))).toHaveClass(`bg-badge-${badgeColour("cli")}-soft`);
+      expect(within(row(/^client-diagrams/)).getByText("client-diagrams")).not.toHaveClass(
+        "text-muted-strong",
+      );
+    });
+
+    it("its menu is Locate… · Remove from Library — from the … and from a right-click", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.click(moreButton(/^architecture/)!);
+      expect(menuItems("architecture")).toEqual(["Locate…", "Remove from Library"]);
+      await user.keyboard("{Escape}");
+      fireEvent.contextMenu(row(/^architecture/), { clientX: 120, clientY: 160 });
+      expect(menuItems("architecture")).toEqual(["Locate…", "Remove from Library"]);
+    });
+
+    it("a folder added from elsewhere ends its menu with Remove from Library; one in the default location keeps Delete", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.click(moreButton(/^client-diagrams/)!);
+      expect(menuItems("client-diagrams")).toEqual([
+        "New diagram",
+        "New folder",
+        SHOW_IN,
+        "Copy Path",
+        "Rename",
+        "Remove from Library",
+      ]);
+      await user.keyboard("{Escape}");
+      await user.click(moreButton(/^Work/)!);
+      expect(menuItems("Work").at(-1)).toBe("Delete");
+    });
+
+    it("Locate… asks Rust, which shows the folder picker — located lists again; already says so", async () => {
+      const user = userEvent.setup();
+      serve(places, {}, { locate_project: "located" });
+      renderTree();
+      await user.click(moreButton(/^architecture/)!);
+      const before = calls("list_library").length;
+      await user.click(screen.getByRole("menuitem", { name: "Locate…" }));
+      await waitFor(() => expect(calls("list_library").length).toBe(before + 1));
+      expect(calls("locate_project")[0]![1]).toEqual({ id: "arc" });
+      serve(places, {}, { locate_project: "already" });
+      await user.click(moreButton(/^architecture/)!);
+      await user.click(screen.getByRole("menuitem", { name: "Locate…" }));
+      await waitFor(() => expect(toasts()).toEqual(["Already in the library"]));
+    });
+
+    it("Remove from Library goes at once — no question — and lists again", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.click(moreButton(/^client-diagrams/)!);
+      await user.click(screen.getByRole("menuitem", { name: "Remove from Library" }));
+      await waitFor(() => expect(calls("remove_project")[0]![1]).toEqual({ id: "cli" }));
+      expect(mockedAsk).not.toHaveBeenCalled();
+      expect(calls("delete_folder")).toHaveLength(0);
+    });
+
+    it("does not drag, rename or step — no ⌥↑/⌥↓ announced", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      const line = row(/^architecture/);
+      line.getBoundingClientRect = () =>
+        ({ top: 133, bottom: 163, left: 8, right: 240 }) as DOMRect;
+      fireEvent.pointerDown(line, { button: 0, clientX: 60, clientY: 140 });
+      const move = new Event("pointermove") as PointerEvent;
+      Object.assign(move, { clientX: 60, clientY: 190 });
+      act(() => {
+        window.dispatchEvent(move);
+      });
+      expect(document.body.querySelector("[data-drag-row]")).toBeNull();
+      expect(item(/^architecture/)).not.toHaveClass("opacity-40");
+      act(() => item(/^architecture/).focus());
+      await user.keyboard("{F2}");
+      expect(within(tree()).queryByRole("textbox")).toBeNull();
+      await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+      expect(calls("reorder_item")).toHaveLength(0);
+      expect(screen.getByRole("status").textContent).toBe("");
+      expect(item(/^architecture/)).not.toHaveAttribute("aria-keyshortcuts");
+    });
+
+    it("a double click opens it in Home, which says it cannot be found", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.dblClick(row(/^architecture/));
+      expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "arc" });
+    });
+  });
 });
