@@ -328,6 +328,12 @@ const TreeBody = ({
   const startDrag = usePointerDrag();
   /** drops the drag under way without a word — the item went from the listing */
   const dropDrag = useRef<() => void>(() => undefined);
+  /**
+   * A drop is landing (#260 R4): the rows take their new places without the
+   * glide — in the drop's commit their offsets go as the order changes, so
+   * the screen stays as it was — and get it back a frame later.
+   */
+  const [settling, setSettling] = useState(false);
   /** the click after a drag is no pick (#230 D9) */
   const swallowClick = useRef(false);
   /** what the drag reads between renders: the pointer, the rows, the listing */
@@ -594,6 +600,8 @@ const TreeBody = ({
       onEnd: (at) => {
         const target = targetAt(node, at);
         live.current.at = null;
+        // no target (off the tree, in place): called off — the rows glide back
+        if (target) setSettling(true);
         setDrag(null);
         forgetSwallow();
         if (target) drop(node, target);
@@ -639,6 +647,15 @@ const TreeBody = ({
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [dragging]);
+
+  useLayoutEffect(() => {
+    if (!settling) return;
+    // laid out once without the glide before it is back, or the rows would
+    // glide in from where the drag had them
+    void treeBox.current?.offsetHeight;
+    const frame = requestAnimationFrame(() => setSettling(false));
+    return () => cancelAnimationFrame(frame);
+  }, [settling]);
 
   /** the rows as the drag shows them: its preview and the rows moved out of its way (#260 R2) */
   const dragTarget = drag?.target ?? null;
@@ -784,9 +801,9 @@ const TreeBody = ({
           // its offset: out of a drag's preview's way (#260 R2) — a transform,
           // so nothing in a row may be position: fixed (#206)
           style={offset ? { transform: `translateY(${offset}px)` } : undefined}
-          className={`group/row relative flex h-[30px] cursor-default select-none items-center gap-1 rounded-[5px] text-[13px] text-ink ${ROW_GLIDE} ${
-            count !== null ? "pr-0" : "pr-2"
-          } ${indentClass(level)} ${
+          className={`group/row relative flex h-[30px] cursor-default select-none items-center gap-1 rounded-[5px] text-[13px] text-ink ${
+            settling ? "" : ROW_GLIDE
+          } ${count !== null ? "pr-0" : "pr-2"} ${indentClass(level)} ${
             dropInto
               ? `${DROP_TARGET} ${isSelected ? "font-semibold" : "font-medium"}`
               : isSelected

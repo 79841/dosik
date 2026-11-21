@@ -913,6 +913,72 @@ describe("sidebar tree (#217 R3)", () => {
       expect(item(/^Login flow/)).toBeInTheDocument();
     });
 
+    /** the rows that glide when they move — all but while a drop lands */
+    const gliding = () =>
+      [...tree().querySelectorAll<HTMLElement>("[data-row]")].filter((line) =>
+        line.classList.contains("motion-safe:transition-transform"),
+      ).length;
+    const labels = () =>
+      within(tree())
+        .getAllByRole("treeitem")
+        .map((i) => i.getAttribute("aria-label")!.split(",")[0]);
+
+    it("a drop lands where its preview stood, at once — no row glides from where the drag had it, then the glide is back (#260 R4)", async () => {
+      vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
+      try {
+        renderTree();
+        const y = rowTop(/^Login flow/) + 3;
+        dragTo(/^Sequence, diagram/, 70, y);
+        expect(moved()).toEqual({ "Login flow": "translateY(31px)" });
+        firePointer("pointerup", 70, y);
+        // the same commit: the rows in their new order, none moved, none gliding
+        expect(preview()).toBeNull();
+        expect(moved()).toEqual({});
+        expect(gliding()).toBe(0);
+        expect(labels()).toEqual(["Work", "Archive", "Sequence", "Login flow", "Personal"]);
+        expect(item(/^Sequence, diagram/)).not.toHaveClass("opacity-0");
+        act(() => {
+          vi.advanceTimersToNextFrame();
+        });
+        expect(gliding()).toBe(labels().length);
+      } finally {
+        vi.useRealTimers();
+      }
+      await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
+    });
+
+    it("Escape, a release off the tree or the window losing focus calls it off: the preview goes, the rows glide back, the row is where it was (#260 R4)", () => {
+      renderTree();
+      const y = rowTop(/^Login flow/) + 3;
+      const calledOff = (end: () => void) => {
+        act(() => item(/^Sequence, diagram/).focus());
+        dragTo(/^Sequence, diagram/, 70, y);
+        expect(moved()).toEqual({ "Login flow": "translateY(31px)" });
+        end();
+        expect(preview()).toBeNull();
+        expect(lifted()).toBeNull();
+        expect(moved()).toEqual({});
+        // back to its place with the glide
+        expect(gliding()).toBe(labels().length);
+        expect(item(/^Sequence, diagram/)).not.toHaveClass("opacity-0");
+        expect(item(/^Sequence, diagram/)).toHaveFocus();
+        expect(labels()).toEqual(["Work", "Archive", "Login flow", "Sequence", "Personal"]);
+      };
+      calledOff(() =>
+        act(() => {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+        }),
+      );
+      calledOff(() => firePointer("pointerup", 400, y));
+      calledOff(() =>
+        act(() => {
+          window.dispatchEvent(new Event("blur"));
+        }),
+      );
+      expect(calls("reorder_item")).toHaveLength(0);
+      expect(calls("move_project")).toHaveLength(0);
+    });
+
     it("dragging a folder shows a blue folder icon on the lifted row, a project only its name (#236 T8)", () => {
       renderTree();
       dragTo(/^Archive, folder/, 70, rowTop(/^Sequence/) + 20);
