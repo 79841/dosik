@@ -1,4 +1,5 @@
-import { nodeBounds } from "./edgeUtils";
+import { alignFacingEnds, type EdgeEndpoint, type Rect, type SideSpan } from "./edgeGeometry";
+import { handlePointOnNode, nodeBounds } from "./edgeUtils";
 import { isBackdrop } from "./palette";
 import {
   ATTACH_MIN_GAP,
@@ -10,7 +11,7 @@ import {
   sideHandle,
   sideLength,
 } from "./sideAttach";
-import type { DiagramEdge, DiagramNode, ShapeKind } from "./types";
+import type { DiagramEdge, DiagramEdgeData, DiagramNode, ShapeKind } from "./types";
 
 /** one end of one edge */
 export interface EdgeEndRef {
@@ -202,3 +203,88 @@ export const bothEnds = (edgeIds: Iterable<string>): EdgeEndRef[] =>
     { edgeId, end: "source" as const },
     { edgeId, end: "target" as const },
   ]);
+
+type EdgeEnds = Pick<DiagramEdge, "id" | "source" | "target" | "sourceHandle" | "targetHandle">;
+
+/**
+ * Whether each end of `edge` is the only line end on its side of its shape.
+ * An end that shares its side is spread along it with the others (D6–D8), so
+ * `drawnEnds` never slides it.
+ */
+export const soleOnSide = (
+  edge: EdgeEnds,
+  edges: DiagramEdge[],
+): { source: boolean; target: boolean } => {
+  const alone = (nodeId: string, handle: string | null | undefined): boolean => {
+    const side = parseSide(handle);
+    if (!side) return false;
+    return !edges.some(
+      (e) =>
+        e.id !== edge.id &&
+        ((e.source === nodeId && parseSide(e.sourceHandle) === side) ||
+          (e.target === nodeId && parseSide(e.targetHandle) === side)),
+    );
+  };
+  return {
+    source: alone(edge.source, edge.sourceHandle),
+    target: alone(edge.target, edge.targetHandle),
+  };
+};
+
+/**
+ * The stretch an end may slide along to straighten its line (#257), or
+ * undefined where it stays put. Only an auto end slides: the bare side, alone
+ * on it. A `-<pct>` end was put where it is — by hand (D3) or spread among
+ * others (D6) — and keeps its spot.
+ */
+const slideSpan = (
+  node: DiagramNode,
+  handle: string | null | undefined,
+  sole: boolean,
+): SideSpan | undefined => {
+  const side = parseSide(handle);
+  if (!sole || !side || handle !== side) return undefined;
+  const b = nodeBounds(node);
+  const { min, max } = attachRange(node.data.shape, b, side);
+  const origin = side === "left" || side === "right" ? b.y : b.x;
+  return { min: origin + min, max: origin + max };
+};
+
+/**
+ * Where a line's two ends are drawn: where their handles put them, except on
+ * an orthogonal line with no bends of its own between two shapes whose ends
+ * sit on sides. There an auto end slides along its side so two facing sides
+ * that overlap are joined by one straight line instead of a short step
+ * (#257). Decided at drawing time from the stored handles, which do not
+ * change — saved diagrams straighten as well. `obstacles` are the router's.
+ */
+export const drawnEnds = (
+  edge: EdgeEnds & { data?: Partial<DiagramEdgeData> },
+  source: DiagramNode,
+  target: DiagramNode,
+  sole: { source: boolean; target: boolean },
+  obstacles: Rect[],
+): { source: EdgeEndpoint; target: EdgeEndpoint } => {
+  const ends = {
+    source: handlePointOnNode(source, edge.sourceHandle),
+    target: handlePointOnNode(target, edge.targetHandle),
+  };
+  if (
+    source.id === target.id ||
+    (edge.data?.pathStyle ?? "orthogonal") !== "orthogonal" ||
+    (edge.data?.waypoints?.length ?? 0) > 0 ||
+    !spreadsOnSides(source.data.shape) ||
+    !spreadsOnSides(target.data.shape)
+  ) {
+    return ends;
+  }
+  return alignFacingEnds(
+    ends.source,
+    ends.target,
+    {
+      source: slideSpan(source, edge.sourceHandle, sole.source),
+      target: slideSpan(target, edge.targetHandle, sole.target),
+    },
+    obstacles,
+  );
+};

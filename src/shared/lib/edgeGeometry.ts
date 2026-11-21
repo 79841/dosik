@@ -369,6 +369,69 @@ export const stubPoints = (
   };
 };
 
+/**
+ * The stretch of a side an end may slide along, in canvas units: y for a left
+ * or right side, x for a top or bottom one.
+ */
+export interface SideSpan {
+  min: number;
+  max: number;
+}
+
+/**
+ * Two ends on facing sides whose stretches overlap are joined by one straight
+ * line instead of a short step (#257). An end with a span may slide within
+ * it; an end without one stays put. The line keeps an end's own spot when the
+ * other end can reach it — the end with the shorter stretch first, so the end
+ * on the larger shape is the one that moves — and otherwise runs through the
+ * middle of the overlap.
+ *
+ * Everything else comes back unchanged and the router bends as before: ends
+ * that do not face each other across a gap (touching and crossed pairs are
+ * the stub rules' business, #86 #96), stretches that do not overlap, and a
+ * straight line that would run through a shape in `obstacles` other than the
+ * two ends' own — the route would bend around it anyway.
+ */
+export const alignFacingEnds = (
+  source: EdgeEndpoint,
+  target: EdgeEndpoint,
+  spans: { source?: SideSpan; target?: SideSpan },
+  obstacles: Rect[] = [],
+): { source: EdgeEndpoint; target: EdgeEndpoint } => {
+  const unchanged = { source, target };
+  const sd = dir(source.position);
+  const td = dir(target.position);
+  const facingX = sd.x !== 0 && sd.x === -td.x;
+  const facingY = sd.y !== 0 && sd.y === -td.y;
+  if (!facingX && !facingY) return unchanged;
+  const gap = facingX ? (target.x - source.x) * sd.x : (target.y - source.y) * sd.y;
+  if (gap <= 0) return unchanged;
+  const ps = facingX ? source.y : source.x;
+  const pt = facingX ? target.y : target.x;
+  if (ps === pt) return unchanged;
+  const s = spans.source ?? { min: ps, max: ps };
+  const t = spans.target ?? { min: pt, max: pt };
+  const lo = Math.max(s.min, t.min);
+  const hi = Math.min(s.max, t.max);
+  if (lo > hi) return unchanged;
+  const reachable = (v: number) => v >= lo && v <= hi;
+  const kept = s.max - s.min <= t.max - t.min ? [ps, pt] : [pt, ps];
+  const at = kept.find(reachable) ?? (lo + hi) / 2;
+  const aligned = {
+    source: facingX ? { ...source, y: at } : { ...source, x: at },
+    target: facingX ? { ...target, y: at } : { ...target, x: at },
+  };
+  const contains = (r: Rect, p: Point) =>
+    p.x >= r.x && p.x <= r.x + r.width && p.y >= r.y && p.y <= r.y + r.height;
+  const blocked = obstacles.some(
+    (r) =>
+      !contains(r, aligned.source) &&
+      !contains(r, aligned.target) &&
+      segmentIntersectsRect(aligned.source, aligned.target, r),
+  );
+  return blocked ? unchanged : aligned;
+};
+
 /** Inserts a corner between consecutive points so all segments are axis-aligned. */
 const orthogonalizeChain = (points: Point[]): Point[] => {
   const out: Point[] = [points[0]!];

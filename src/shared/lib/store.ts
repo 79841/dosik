@@ -27,6 +27,7 @@ import {
   nodeBounds,
   pickEdgeStyle,
   pruneSpentWaypoints,
+  routingObstacles,
   sideHandleAt,
   findSnapTarget,
   type SnapTarget,
@@ -45,7 +46,14 @@ import {
   landFragment,
   PASTE_OFFSET,
 } from "./store/clipboard";
-import { bothEnds, type EdgeEndRef, placeEnds, spreadsOnSides } from "./placeEnds";
+import {
+  bothEnds,
+  drawnEnds,
+  type EdgeEndRef,
+  placeEnds,
+  soleOnSide,
+  spreadsOnSides,
+} from "./placeEnds";
 import { parseSide } from "./sideAttach";
 import { makeEdge } from "./store/edgeFactory";
 import { cloneSnapshot, HISTORY_LIMIT, restoreSnapshot } from "./store/history";
@@ -940,14 +948,15 @@ const diagramState: StateCreator<DiagramState> = (set, get) => ({
       const source = state.nodes.find((n) => n.id === edge.source);
       const target = state.nodes.find((n) => n.id === edge.target);
       if (!source || !target) return {};
-      const moved = slideSegment(
-        [
-          handlePointOnNode(source, edge.sourceHandle),
-          handlePointOnNode(target, edge.targetHandle),
-        ],
-        0,
-        to,
+      // from where the line is drawn: an auto end may sit off its handle (#257)
+      const ends = drawnEnds(
+        edge,
+        source,
+        target,
+        soleOnSide(edge, state.edges),
+        routingObstacles(state.nodes),
       );
+      const moved = slideSegment([ends.source, ends.target], 0, to);
       const sourceHandle = slidHandle(source, edge.sourceHandle, moved[0]!);
       const targetHandle = slidHandle(target, edge.targetHandle, moved[1]!);
       // an anchor endpoint has no side to slide along — leave the edge alone
