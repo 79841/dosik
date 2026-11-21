@@ -32,12 +32,9 @@ const answer = (command: string, value: unknown) => {
   answers[command] = value;
 };
 
-/** the suite reads as on a Mac; the Windows blocks say Windows */
-const asMac = pretendMac;
-const asWindows = pretendWindows;
-
+// the suite reads as on a Mac; the Windows blocks say Windows
 beforeEach(() => {
-  asMac();
+  pretendMac();
   localStorage.clear();
   // a stored key is checked as its group shows: no test may reach a vendor — the ones that look at a check stub their own
   vi.stubGlobal(
@@ -786,7 +783,7 @@ describe("Integrations", () => {
 });
 
 describe("Settings off macOS: the caption buttons ride above the scrim (the canvas's Win-Settings)", () => {
-  beforeEach(asWindows);
+  beforeEach(pretendWindows);
 
   it("they are inside the dialog, and pressing one neither closes Settings nor moves its first focus", async () => {
     const { getCurrentWindow } = await import("@tauri-apps/api/window");
@@ -805,7 +802,7 @@ describe("Settings off macOS: the caption buttons ride above the scrim (the canv
   });
 
   it("not on macOS", () => {
-    asMac();
+    pretendMac();
     render(<SettingsDialog />);
     act(() => openSettings("General"));
     expect(within(dialog()).queryByRole("group", { name: "Window" })).toBeNull();
@@ -814,7 +811,7 @@ describe("Settings off macOS: the caption buttons ride above the scrim (the canv
 
 describe("Settings on Windows: Windows' words and paths (the canvas's Win-Settings, Win-Settings-States, Win-Settings-Panes)", () => {
   beforeEach(() => {
-    asWindows();
+    pretendWindows();
     answer("library_root", {
       path: "C:\\Users\\someone\\AppData\\Roaming\\app.dosik.desktop\\projects",
       shown: "C:\\Users\\someone\\AppData\\Roaming\\app.dosik.desktop\\projects",

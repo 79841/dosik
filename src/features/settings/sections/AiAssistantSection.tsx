@@ -42,7 +42,6 @@ interface VendorCopy {
   maker: string;
   cli: string;
   plan: string;
-  install: string;
   login: string;
   keyLabel: string;
   placeholder: string;
@@ -54,7 +53,6 @@ const COPY: Record<AiVendor, VendorCopy> = {
     maker: "Anthropic",
     cli: "Claude Code",
     plan: "Claude",
-    install: platformCopy(true).claudeInstall,
     login: "claude",
     keyLabel: "Anthropic API key",
     placeholder: "sk-ant-…",
@@ -64,16 +62,18 @@ const COPY: Record<AiVendor, VendorCopy> = {
     maker: "OpenAI",
     cli: "Codex CLI",
     plan: "ChatGPT",
-    install: "npm i -g @openai/codex",
     login: "codex login",
     keyLabel: "OpenAI API key",
     placeholder: "sk-…",
   },
 };
 
-/** the install step for the CLI on this machine — Claude Code's installer differs off macOS */
+/**
+ * The install step for the CLI on this machine — Claude Code's installer
+ * differs off macOS; the Codex CLI is shown only on macOS
+ */
 const installCommand = (vendor: AiVendor): string =>
-  vendor === "claude" ? platformCopy().claudeInstall : COPY[vendor].install;
+  vendor === "claude" ? platformCopy().claudeInstall : "npm i -g @openai/codex";
 
 const connectionLine = (vendor: AiVendor, auth: AiAuth): string => {
   const line =
