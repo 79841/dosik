@@ -749,7 +749,20 @@ describe("sidebar tree (#217 R3)", () => {
       firePointer("pointermove", x, y);
     };
     const lifted = () => document.body.querySelector("[data-drag-row]") as HTMLElement | null;
-    const dropLine = () => tree().querySelector("[data-drop-line]") as HTMLElement | null;
+    /** the drop's preview row (#260 R2) — on the list, over the rows */
+    const preview = () => tree().querySelector("[data-drop-preview]") as HTMLElement | null;
+    /** its row line — at 40%, at the spot's depth */
+    const previewRow = () => preview()?.firstElementChild as HTMLElement | null;
+    /** each row's line moved out of the preview's way, by name */
+    const moved = () =>
+      Object.fromEntries(
+        [...tree().querySelectorAll<HTMLElement>("[data-row]")]
+          .filter((line) => line.style.transform)
+          .map((line) => [
+            line.closest("[role=treeitem]")!.getAttribute("aria-label")!.split(",")[0],
+            line.style.transform,
+          ]),
+      );
     const ring = (name: RegExp) => row(name).querySelector(":scope > [data-drop-ring]");
 
     const ordered = (): FolderMeta[] => [
@@ -766,21 +779,138 @@ describe("sidebar tree (#217 R3)", () => {
       useTreeStore.getState().expand([folderKey("work")]);
     });
 
-    it("drags past 4px — a ghost in place, a lifted row following the pointer, a 2px line at the spot", () => {
+    it("drags past 4px — the row turns into its preview where it stands, nothing moves, the lifted row follows the pointer (#260 R2)", () => {
       renderTree();
-      // Work: Archive (unlisted, on top), Login flow, Sequence
-      dragTo(/^Sequence, diagram/, 70, rowTop(/^Login flow/) + 3);
-      expect(item(/^Sequence, diagram/)).toHaveClass("opacity-40");
+      act(() => item(/^Sequence, diagram/).focus());
+      // Work, Archive, Login flow, Sequence (row 3): still over itself
+      dragTo(/^Sequence, diagram/, 70, rowTop(/^Sequence/) + 20);
+      expect(item(/^Sequence, diagram/)).toHaveClass("opacity-0");
+      expect(item(/^Sequence, diagram/)).toHaveFocus();
+      expect(preview()).toHaveStyle({ top: `${2 + 3 * 31}px` });
+      expect(previewRow()).toHaveClass("pl-5");
+      expect(moved()).toEqual({});
       expect(lifted()).toHaveTextContent("Sequence");
-      expect(lifted()).toHaveStyle({ left: "78px", top: `${rowTop(/^Login flow/) + 13}px` });
+      expect(lifted()).toHaveStyle({ left: "78px", top: `${rowTop(/^Sequence/) + 30}px` });
       expect(lifted()).toHaveAttribute("aria-hidden", "true");
       // the lifted row stays 26 in 12px; its glyph is the row's, coloured (#236 R1, T8)
       expect(lifted()).toHaveClass("h-[26px]", "text-[12px]");
       const glyph = lifted()!.querySelector("svg.lucide-workflow");
       expect(glyph).toHaveClass("text-glyph-diagram");
       expect(glyph).toHaveAttribute("width", "16");
-      expect(dropLine()?.closest("[data-row]")).toBe(row(/^Login flow/));
-      expect(dropLine()).toHaveClass("left-5", "-top-[1.5px]");
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("between siblings: the preview stands at the slot at its depth, the rows between make room by 31px — no line (#260 R2)", () => {
+      renderTree();
+      dragTo(/^Sequence, diagram/, 70, rowTop(/^Login flow/) + 3);
+      // Work, Archive, [Sequence], Login flow, Personal
+      expect(preview()).toHaveStyle({ top: `${2 + 2 * 31}px` });
+      expect(moved()).toEqual({ "Login flow": "translateY(31px)" });
+      expect(tree().querySelector("[data-drop-line]")).toBeNull();
+      // the row itself at 40%: its glyph and name, no fill, no `…`
+      expect(previewRow()).toHaveClass("opacity-40", "pl-5", "h-[30px]", "font-medium");
+      expect(previewRow()).not.toHaveClass("bg-selected");
+      expect(previewRow()).toHaveTextContent(/^Sequence$/);
+      expect(previewRow()!.querySelector("svg.lucide-workflow")).toHaveClass("text-glyph-diagram");
+      expect(within(preview()!).queryByRole("button")).toBeNull();
+      // not a tree item: screen readers hear the move from the tree
+      expect(preview()).toHaveAttribute("aria-hidden", "true");
+      expect(preview()).not.toHaveAttribute("role");
+      expect(preview()).toHaveClass("pointer-events-none", "absolute");
+      expect(tree()).toHaveClass("relative");
+      expect(within(tree()).getAllByRole("treeitem")).toHaveLength(5);
+      // the rows glide 150ms ease-out, only when motion is allowed; the preview jumps
+      expect(
+        row(/^Login flow/)
+          .getAttribute("class")!
+          .split(/\s+/)
+          .filter((c) => /transition|duration|ease/.test(c)),
+      ).toEqual([
+        "motion-safe:transition-transform",
+        "motion-safe:duration-150",
+        "motion-safe:ease-[cubic-bezier(0.2,0,0,1)]",
+      ]);
+      expect(preview()!.className).not.toMatch(/transition/);
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("dragging down: the rows between move up", () => {
+      renderTree();
+      dragTo(/^Login flow/, 70, rowTop(/^Sequence/) + 20);
+      // Work, Archive, Sequence, [Login flow], Personal
+      expect(preview()).toHaveStyle({ top: `${2 + 3 * 31}px` });
+      expect(moved()).toEqual({ Sequence: "translateY(-31px)" });
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("the same pointer y gives the same preview — the preview and the gliding rows do not move what is under it (#260)", () => {
+      renderTree();
+      const y = rowTop(/^Login flow/) + 3;
+      dragTo(/^Sequence, diagram/, 70, y);
+      const top = preview()!.style.top;
+      // the rows on screen where the glide took them
+      for (const line of tree().querySelectorAll<HTMLElement>("[data-row]")) {
+        const shift = Number.parseFloat(line.style.transform.slice(11)) || 0;
+        const { top: t, bottom: b } = line.getBoundingClientRect();
+        line.getBoundingClientRect = () =>
+          ({ top: t + shift, bottom: b + shift, left: 8, right: 240 }) as DOMRect;
+      }
+      firePointer("pointermove", 70, y);
+      expect(preview()!.style.top).toBe(top);
+      firePointer("pointermove", 71, y);
+      expect(preview()!.style.top).toBe(top);
+      expect(moved()).toEqual({ "Login flow": "translateY(31px)" });
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("into an unfolded folder: the preview is its first item, one level deeper — no fill, no ring on the folder (#260 R2)", () => {
+      renderTree();
+      // the middle of Work's row (a project row is all "into")
+      dragTo(/^Login flow/, 70, rowTop(/^Work/) + 15);
+      expect(preview()).toHaveStyle({ top: `${2 + 31}px` });
+      expect(previewRow()).toHaveClass("pl-5");
+      expect(moved()).toEqual({ Archive: "translateY(31px)" });
+      expect(row(/^Work/)).not.toHaveClass("bg-selected");
+      expect(ring(/^Work/)).toBeNull();
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("into a collapsed folder: no preview, the folder row filled and ringed, no row moves — the dragged row's place stays empty (#260 R2)", () => {
+      renderTree();
+      dragTo(/^Login flow/, 70, rowTop(/^Archive/) + 13);
+      expect(preview()).toBeNull();
+      expect(row(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
+      expect(ring(/^Archive/)).not.toBeNull();
+      expect(moved()).toEqual({});
+      expect(item(/^Login flow/)).toHaveClass("opacity-0");
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("a project goes by blocks: its preview is its row folded at level 1 — chevron, badge, name, count — and the projects make room (#260 R2)", () => {
+      renderTree();
+      expect(item(/^Work/)).toHaveAttribute("aria-expanded", "true");
+      // Work is unfolded: dragging it folds it — Work 102, Personal 133
+      dragTo(/^Work/, 70, 133 + 20);
+      expect(item(/^Work/)).toHaveAttribute("aria-expanded", "false");
+      expect(item(/^Work/).querySelector(":scope > [data-fold]")).toHaveClass("grid-rows-[0fr]");
+      expect(within(tree()).queryByRole("treeitem", { name: /^Login flow/ })).toBeNull();
+      // Personal, [Work]
+      expect(preview()).toHaveStyle({ top: `${2 + 31}px` });
+      expect(moved()).toEqual({ Personal: "translateY(-31px)" });
+      const line = previewRow()!;
+      expect(line).toHaveClass("pl-1");
+      const chevronSvg = line.querySelector("svg.lucide-chevron-right");
+      expect(chevronSvg).not.toBeNull();
+      expect(chevronSvg).not.toHaveClass("rotate-90");
+      expect(badgeIn(line)).not.toBeNull();
+      expect(line).toHaveTextContent("Work");
+      expect(line).toHaveTextContent("3");
+      // the drag ends: unfolded again — the fold was the drag's, not the tree's
+      firePointer("pointercancel", 70, 0);
+      expect(useTreeStore.getState().expanded.has(folderKey("work"))).toBe(true);
+      expect(item(/^Work/)).toHaveAttribute("aria-expanded", "true");
+      expect(item(/^Work/).querySelector(":scope > [data-fold]")).toHaveClass("grid-rows-[1fr]");
+      expect(item(/^Login flow/)).toBeInTheDocument();
     });
 
     it("dragging a folder shows a blue folder icon on the lifted row, a project only its name (#236 T8)", () => {
@@ -814,21 +944,21 @@ describe("sidebar tree (#217 R3)", () => {
         index: 1,
       });
       expect(lifted()).toBeNull();
-      expect(dropLine()).toBeNull();
-      expect(item(/^Sequence, diagram/)).not.toHaveClass("opacity-40");
+      expect(preview()).toBeNull();
+      expect(item(/^Sequence, diagram/)).not.toHaveClass("opacity-0");
       expect(screen.getByRole("status")).toHaveTextContent(
         "Moved “Sequence” to position 2 of 3 in Work",
       );
       expect(item(/^Sequence, diagram/)).toHaveFocus();
     });
 
-    it("middle of a folder row — that row gets the selection background, no line, dropping puts it at the top of that folder (collapsed), focus on the folder row", async () => {
+    it("middle of a folder row — that row gets the selection background, no preview, dropping puts it at the top of that folder (collapsed), focus on the folder row", async () => {
       renderTree();
       const archive = rowTop(/^Archive/);
       dragTo(/^Login flow/, 70, archive + 13);
       expect(row(/^Archive/)).toHaveClass("bg-selected", ...DROP_TARGET.split(" "));
       expect(item(/^Archive/)).toHaveAttribute("aria-selected", "false");
-      expect(dropLine()).toBeNull();
+      expect(preview()).toBeNull();
       firePointer("pointerup", 70, archive + 13);
       await waitFor(() => expect(calls("move_project")).toHaveLength(1));
       expect(calls("move_project")[0]![1]).toEqual({ id: "p1", folder: "arc", index: 0 });
@@ -874,7 +1004,7 @@ describe("sidebar tree (#217 R3)", () => {
       expect(ring(/^Archive/)).toHaveAttribute("aria-hidden", "true");
     });
 
-    it("the line before the top row is not clipped at the list's top edge — the list's inner padding (#230)", () => {
+    it("the gap above the first row is the list's padding, inside its scroll box — the 2px a drag works out (#230, #260)", () => {
       renderTree();
       expect(tree()).toHaveClass("pt-0.5");
       expect(tree()).not.toHaveClass("mt-0.5");
@@ -896,7 +1026,9 @@ describe("sidebar tree (#217 R3)", () => {
     it("dropping outside the tree (sideways) does nothing", () => {
       renderTree();
       dragTo(/^Sequence, diagram/, 400, rowTop(/^Login flow/) + 3);
-      expect(dropLine()).toBeNull();
+      // no target: the preview stays in the row's own place
+      expect(preview()).toHaveStyle({ top: `${2 + 3 * 31}px` });
+      expect(moved()).toEqual({});
       firePointer("pointerup", 400, rowTop(/^Login flow/) + 3);
       expect(calls("reorder_item")).toHaveLength(0);
       expect(calls("move_project")).toHaveLength(0);
@@ -1022,9 +1154,10 @@ describe("sidebar tree (#217 R3)", () => {
       renderTree();
       const start = rowTop(/^Sequence, diagram/) + 13;
       dragTo(/^Sequence, diagram/, 70, start + 30);
-      // above the list (the PROJECTS heading): the first row, Work, at the visible top edge
+      // above the list (the PROJECTS heading): the first row, Work, at the visible top edge —
+      // into it, unfolded: the preview is its first item
       firePointer("pointermove", 70, 80);
-      expect(row(/^Work/)).toHaveClass(...DROP_TARGET.split(" "));
+      expect(preview()).toHaveStyle({ top: `${2 + 31}px` });
       firePointer("pointerup", 70, 80);
       await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
       expect(calls("reorder_item")[0]![1]).toEqual({
