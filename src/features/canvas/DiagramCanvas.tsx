@@ -20,8 +20,8 @@ import {
   messageHandles,
   nodeBounds,
   SELF_MESSAGE_GAP,
+  spreadsOnSides,
 } from "../../shared/lib/edgeUtils";
-import { spreadsOnSides } from "../../shared/lib/placeEnds";
 import { parseSide } from "../../shared/lib/sideAttach";
 import { DEFAULT_NODE_SIZE, isBackdrop, THEME_CANVAS_DOT } from "../../shared/lib/palette";
 import { useDiagramStore } from "../../shared/lib/store";

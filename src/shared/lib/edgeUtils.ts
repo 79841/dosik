@@ -1,8 +1,15 @@
 import { Position } from "@xyflow/react";
 
-import { waypointsWorsenPath, type Rect } from "./edgeGeometry";
+import {
+  alignFacingEnds,
+  type EdgeEndpoint,
+  type Rect,
+  type SideSpan,
+  waypointsWorsenPath,
+} from "./edgeGeometry";
 import { DEFAULT_NODE_SIZE, isBackdrop, LIFELINE_ACTIVATION_W, LIFELINE_HEADER_H } from "./palette";
 import {
+  attachRange,
   handleRatio,
   nearestSide,
   outlineInset,
@@ -10,6 +17,7 @@ import {
   projectToSide,
   type Side,
   sideHandle,
+  sideLength,
 } from "./sideAttach";
 import { visibleActivation, visibleDestroyY } from "./store/opValidation";
 import type {
@@ -18,6 +26,7 @@ import type {
   DiagramNode,
   EdgeStylePatch,
   MarkerShape,
+  ShapeKind,
 } from "./types";
 
 export const DEFAULT_EDGE_WIDTH = 1.25;
@@ -328,6 +337,162 @@ export const outlinePointOnNode = (
 };
 
 /**
+ * `outlinePointOnNode` for an end drawn at `at` on `side` rather than where a
+ * handle puts it — an auto end slid along its side (#257). Read at the exact
+ * spot, not a handle's rounded one. Box shapes only: a lifeline's ends never
+ * slide.
+ */
+export const outlinePointAt = (
+  node: DiagramNode,
+  side: Side,
+  at: { x: number; y: number },
+): { x: number; y: number } => {
+  const b = nodeBounds(node);
+  const len = sideLength(b, side);
+  const along = side === "left" || side === "right" ? at.y - b.y : at.x - b.x;
+  const inset = outlineInset(node.data.shape, b, side, len > 0 ? along / len : 0.5);
+  const n = INWARD[side];
+  return { x: at.x + n.x * inset, y: at.y + n.y * inset };
+};
+
+/** Shapes whose ends sit on a side and can be spread along it. */
+export const spreadsOnSides = (shape: ShapeKind): boolean =>
+  shape !== "anchor" && shape !== "lifeline" && !isBackdrop(shape);
+
+type EdgeEnds = Pick<DiagramEdge, "id" | "source" | "target" | "sourceHandle" | "targetHandle">;
+
+/**
+ * The edges with an end on each side of each shape, once per edge array —
+ * every line on the canvas asks, and the store replaces the array when an
+ * edge changes (as `obstaclesFor` does for nodes).
+ */
+const sideIndex = new WeakMap<DiagramEdge[], Map<string, string[]>>();
+const endsOnSides = (edges: DiagramEdge[]): Map<string, string[]> => {
+  let index = sideIndex.get(edges);
+  if (!index) {
+    index = new Map();
+    for (const e of edges) {
+      for (const [nodeId, handle] of [
+        [e.source, e.sourceHandle],
+        [e.target, e.targetHandle],
+      ] as const) {
+        const side = parseSide(handle);
+        if (!side) continue;
+        const key = `${nodeId}\u0000${side}`;
+        const ids = index.get(key);
+        if (ids) ids.push(e.id);
+        else index.set(key, [e.id]);
+      }
+    }
+    sideIndex.set(edges, index);
+  }
+  return index;
+};
+
+/**
+ * Whether each end of `edge` is the only line end on its side of its shape.
+ * An end that shares its side is spread along it with the others (#204
+ * D6–D8), so `drawnEnds` never slides it. `edge` need not be in `edges` — a
+ * line still being drawn counts every end already there.
+ */
+export const soleOnSide = (
+  edge: EdgeEnds,
+  edges: DiagramEdge[],
+): { source: boolean; target: boolean } => {
+  const index = endsOnSides(edges);
+  const alone = (nodeId: string, handle: string | null | undefined): boolean => {
+    const side = parseSide(handle);
+    if (!side) return false;
+    return (index.get(`${nodeId}\u0000${side}`) ?? []).every((id) => id === edge.id);
+  };
+  return {
+    source: alone(edge.source, edge.sourceHandle),
+    target: alone(edge.target, edge.targetHandle),
+  };
+};
+
+/**
+ * The stretch an end may slide along to straighten its line (#257), or
+ * undefined where it stays put. Only an auto end slides: the bare side, alone
+ * on it. That covers an end put down on a side's middle by hand too — it
+ * snaps to the bare side and is stored like one placed automatically. A
+ * `-<pct>` end was put where it is, by hand (#204 D3) or spread among others
+ * (D6), and keeps its spot.
+ */
+const slideSpan = (
+  node: DiagramNode,
+  handle: string | null | undefined,
+  sole: boolean,
+): SideSpan | undefined => {
+  const side = parseSide(handle);
+  if (!sole || !side || handle !== side) return undefined;
+  const b = nodeBounds(node);
+  const { min, max } = attachRange(node.data.shape, b, side);
+  const origin = side === "left" || side === "right" ? b.y : b.x;
+  return { min: origin + min, max: origin + max };
+};
+
+const OPPOSITE: Record<Position, Position> = {
+  [Position.Top]: Position.Bottom,
+  [Position.Bottom]: Position.Top,
+  [Position.Left]: Position.Right,
+  [Position.Right]: Position.Left,
+};
+
+/**
+ * Where a line's two ends are drawn: where their handles put them, except on
+ * an orthogonal line with no bends of its own from a shape whose ends sit on
+ * sides to another such shape or a free end. There an auto end slides along
+ * its side so the line runs straight instead of in a short step (#257): to
+ * meet a facing side that overlaps it, or level with a free end in front of
+ * it — which keeps a line steady while one of its ends is dragged loose.
+ * Decided at drawing time from the stored handles, which do not change, so
+ * saved diagrams straighten too. `obstacles` are the router's.
+ */
+export const drawnEnds = (
+  edge: EdgeEnds & { data?: Partial<DiagramEdgeData> },
+  source: DiagramNode,
+  target: DiagramNode,
+  sole: { source: boolean; target: boolean },
+  obstacles: Rect[],
+): { source: EdgeEndpoint; target: EdgeEndpoint } => {
+  const ends = {
+    source: handlePointOnNode(source, edge.sourceHandle),
+    target: handlePointOnNode(target, edge.targetHandle),
+  };
+  const sFree = source.data.shape === "anchor";
+  const tFree = target.data.shape === "anchor";
+  if (
+    source.id === target.id ||
+    (edge.data?.pathStyle ?? "orthogonal") !== "orthogonal" ||
+    (edge.data?.waypoints?.length ?? 0) > 0 ||
+    (sFree && tFree) ||
+    !(sFree || spreadsOnSides(source.data.shape)) ||
+    !(tFree || spreadsOnSides(target.data.shape))
+  ) {
+    return ends;
+  }
+  // a free end has no side: it stands as a fixed point facing the other end
+  const standIn = (free: DiagramNode, other: EdgeEndpoint): EdgeEndpoint => {
+    const b = nodeBounds(free);
+    return { x: b.x + b.width / 2, y: b.y + b.height / 2, position: OPPOSITE[other.position] };
+  };
+  const aligned = alignFacingEnds(
+    sFree ? standIn(source, ends.target) : ends.source,
+    tFree ? standIn(target, ends.source) : ends.target,
+    {
+      source: sFree ? undefined : slideSpan(source, edge.sourceHandle, sole.source),
+      target: tFree ? undefined : slideSpan(target, edge.targetHandle, sole.target),
+    },
+    obstacles,
+  );
+  return {
+    source: sFree ? ends.source : aligned.source,
+    target: tFree ? ends.target : aligned.target,
+  };
+};
+
+/**
  * Node bounds the orthogonal router avoids, inflated by 4px — less than the
  * 16px stub, so a stub never starts inside its own node's rect. Source/target
  * nodes are included too: an edge reaching a far-side handle must route
@@ -377,7 +542,16 @@ export const pruneSpentWaypoints = (
     // same bounds the renderer passes, so the stub math (and with it the
     // verdict) can't drift from what is on screen (#96)
     const bounds = { source: nodeBounds(source), target: nodeBounds(target) };
-    if (!waypointsWorsenPath(sp, tp, e.data.waypoints, obstacles, bounds)) return e;
+    // and the line as it would be drawn without the bends: an auto end may
+    // slide to straighten it (#257)
+    const fresh = drawnEnds(
+      { ...e, data: { ...e.data, waypoints: undefined } },
+      source,
+      target,
+      soleOnSide(e, edges),
+      obstacles,
+    );
+    if (!waypointsWorsenPath(sp, tp, e.data.waypoints, obstacles, bounds, fresh)) return e;
     changed = true;
     return { ...e, data: { ...e.data, waypoints: undefined } };
   });
