@@ -186,25 +186,23 @@ impl AppLibrary {
 
 type Shelf<'a> = State<'a, Arc<AppLibrary>>;
 
-/// Where the library is on this machine: the app data, the default
-/// location (`DOSIK_LIBRARY_DIR`, or Documents), the home folder.
+/// Where the library is on this machine: its places in the app data — a
+/// development run's apart from the real ones — the default location
+/// (`DOSIK_LIBRARY_DIR`, or Documents), the home folder.
 fn open(app: &AppHandle) -> Result<Library, String> {
     let paths = app.path();
     let data = paths.app_data_dir().map_err(|e| e.to_string())?;
     let home = paths.home_dir().ok();
     let documents = paths.document_dir().ok();
+    let dev = tauri::is_dev();
     let default = ctx::default_location(
         std::env::var_os("DOSIK_LIBRARY_DIR").as_deref(),
-        tauri::is_dev(),
+        dev,
         documents.as_deref(),
         home.as_deref(),
     )?;
-    Ok(Library::new(
-        data.join("library"),
-        default,
-        data.join("projects"),
-        home,
-    ))
+    let (record, older) = ctx::data_places(&data, dev);
+    Ok(Library::new(record, default, older, home))
 }
 
 /// Puts the library in the app's hands; off the main thread — the window's

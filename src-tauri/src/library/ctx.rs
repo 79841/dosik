@@ -141,6 +141,19 @@ pub fn default_location(
     Ok(documents.join(if dev { "Dosik Dev" } else { "Dosik" }))
 }
 
+/// Where in the app data the library keeps its record (inbox, journal) and
+/// finds the older library: `library` and `projects` — or, for a
+/// development run, `library-dev` and `projects-dev`. A test instance that
+/// shares the app's identifier, and so its app data, then never moves the
+/// real older library, marks it moved, or writes the real record.
+pub fn data_places(app_data: &Path, dev: bool) -> (PathBuf, PathBuf) {
+    let suffix = if dev { "-dev" } else { "" };
+    (
+        app_data.join(format!("library{suffix}")),
+        app_data.join(format!("projects{suffix}")),
+    )
+}
+
 /// Whether a walk between the counts `before` and `after` saw the library
 /// whole: no change was under way as it began, none began meanwhile.
 pub fn settled(before: u64, after: u64) -> bool {
@@ -212,6 +225,55 @@ pub(crate) mod tests {
             home.join("Documents").join("Dosik")
         );
         assert!(default_location(None, false, None, None).is_err());
+    }
+
+    #[test]
+    fn a_development_run_keeps_its_record_and_older_library_apart() {
+        let data = Path::new("/data/app.dosik.desktop");
+        assert_eq!(
+            data_places(data, false),
+            (data.join("library"), data.join("projects"))
+        );
+        let (record, older) = data_places(data, true);
+        assert_eq!(record, data.join("library-dev"));
+        assert_eq!(older, data.join("projects-dev"));
+        // nothing a development run reads or writes is the real one's, nor inside it
+        let (real_record, real_older) = data_places(data, false);
+        for dev in [&record, &older] {
+            for real in [&real_record, &real_older] {
+                assert!(!dev.starts_with(real) && !real.starts_with(dev));
+            }
+        }
+    }
+
+    #[test]
+    fn a_development_run_leaves_the_real_older_library_and_record_alone() {
+        // the real app data: an older library not yet moved, and no record
+        let base = scratch("ctx-dev-apart");
+        let data = base.join("appdata");
+        std::fs::create_dir_all(data.join("projects").join("pay")).unwrap();
+        std::fs::write(
+            data.join("projects").join("pay").join("folder.json"),
+            r#"{"name":"Payments","createdAt":1}"#,
+        )
+        .unwrap();
+        let (record, older) = data_places(&data, true);
+        let lib = Library::new(
+            record,
+            base.join("home").join("Docs").join("Dosik Dev"),
+            older,
+            Some(base.join("home")),
+        );
+        // what a run does first: the move, then a listing, which writes the record
+        assert!(!crate::library::migrate::run(&lib).unwrap());
+        std::fs::create_dir_all(lib.default_location.join("Sketches")).unwrap();
+        crate::library::listing::list(&lib).unwrap();
+        // the real older library is not marked moved, the real record not made
+        assert!(!data.join("projects").join(".migrated-to").exists());
+        assert!(!data.join("library").exists());
+        assert!(data.join("library-dev").join("state.json").is_file());
+        // nor was the older library moved into the development location
+        assert!(!lib.default_location.join("Payments").exists());
     }
 
     #[test]
