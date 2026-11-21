@@ -46,6 +46,9 @@
   --window-close: #ff5f57;
   --window-minimize: #febc2e;
   --window-zoom: #28c840;
+  --caption-close: #c42b1c;
+  --caption-close-pressed: rgba(196, 43, 28, 0.9);
+  --on-caption-close: #ffffff;
   --tile-mono: #eae8e4;
   --tile-mono-cap: #dedbd6;
   --tile-violet: #eee9f8;
@@ -149,6 +152,7 @@
   --chrome-height: 40px;
   --traffic-light-inset: 20px;
   --traffic-light-center: 24px;
+  --caption-button: 46px;
   --sidebar-width: 248px;
   --sidebar-min: 200px;
   --sidebar-max: 400px;
@@ -172,7 +176,7 @@
   --grid-gutter: 16px;
   --baseline: 4px;
   --font-sans: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Malgun Gothic", "Segoe UI Emoji", monospace;
 }
 .type-title-xl { font-family: var(--font-sans); font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.015em; }
 .type-title-lg { font-family: var(--font-sans); font-size: 16px; line-height: 24px; font-weight: 600; }

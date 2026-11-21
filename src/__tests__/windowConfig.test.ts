@@ -8,6 +8,7 @@ import {
   BAND_BUTTON,
   BAND_BUTTON_TOP,
   bandLeading,
+  CAPTION_BUTTON,
   CHROME_CENTER_Y,
   CHROME_HEIGHT,
   LIGHT_GAP,
@@ -91,6 +92,12 @@ describe("Window config (#125, #127, #217)", () => {
     expect(TAB_WIDTH).toBe(layoutToken("tab-width"));
     expect(TAB_PINNED_WIDTH).toBe(layoutToken("tab-pinned-width"));
     expect(BAND_BUTTON).toBe(layoutToken("control-height-sm"));
+  });
+
+  it("A Windows caption button is the design token's width and as tall as the band — 46×40", () => {
+    expect(CAPTION_BUTTON).toBe(layoutToken("caption-button"));
+    expect(CAPTION_BUTTON).toBe(46);
+    expect(CHROME_HEIGHT).toBe(40);
   });
 
   it("Strip buttons share the center line — a 24px button starts at top 12", () => {

@@ -56,6 +56,13 @@ const SHOW_TO_TABS = 12;
  */
 export const BAND_EDGE_INSET = 12;
 
+/**
+ * Off macOS, a caption button (Minimize, Maximize or Restore, Close) is this
+ * wide and as tall as the band (`caption-button` × `chrome-height`); the three
+ * sit flush with the window's top-right corner, no gap between them
+ */
+export const CAPTION_BUTTON = 46;
+
 /** a tab is this tall, flush with the band's bottom (`tab-height`) */
 export const TAB_HEIGHT = 32;
 /** a document tab (`tab-width`) */

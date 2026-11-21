@@ -50,4 +50,14 @@ describe("faces: Manrope for the interface, IBM Plex Mono for the diagram (#216 
     // single quotes: it goes into an SVG attribute
     expect(FONT_MONO.replace(/'/g, '"')).toBe(DESIGN_TOKENS.type.families.mono);
   });
+
+  it("the mono stack names Windows' faces after the macOS ones, before the generic family", () => {
+    // Plex Mono has no Hangul and no emoji: on Windows they would fall to
+    // whatever the webview picks, and the canvas and the SVG export could pick
+    // differently. The macOS faces come first, so a Mac never reaches these
+    const mono = DESIGN_TOKENS.type.families.mono;
+    expect(mono).toBe(
+      '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Malgun Gothic", "Segoe UI Emoji", monospace',
+    );
+  });
 });

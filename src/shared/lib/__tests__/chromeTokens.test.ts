@@ -117,6 +117,11 @@ const COLOR_UTILITIES = [
     `badge-${c}`,
     `badge-${c}-soft`,
   ]),
+  // the Windows Close caption button: the system's red under the pointer, a
+  // deeper red while pressed, the white glyph on it (the canvas's Win-Caption)
+  "caption-close",
+  "caption-close-pressed",
+  "on-caption-close",
 ];
 const SHADOW_UTILITIES = ["raised", "lifted", "popover", "overlay", "segment"];
 
