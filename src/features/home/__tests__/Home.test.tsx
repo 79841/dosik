@@ -240,6 +240,44 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
     });
   });
 
+  it("Cards, a project not found — the board's box centred under the header, no cards (#253 R7, Library-Missing)", async () => {
+    const lost: FolderMeta = {
+      folders: [],
+      id: "arc",
+      name: "architecture",
+      updatedAt: 0,
+      diagrams: [],
+      missing: true,
+      shown: "~/Projects/architecture",
+    };
+    useLibraryStore.setState({ folders: [...library(), lost] });
+    serve(() => [...library(), lost]);
+    show({ kind: "folder", folder: "arc" });
+    // Home lists the library as it comes on show
+    await waitFor(() => expect(calls("list_library")).toHaveLength(1));
+    expect(h1()).toHaveTextContent("architecture");
+    const title = screen.getByText("Can't find this folder");
+    expect(title.parentElement).toHaveClass("w-[212px]", "h-[92px]");
+    expect(title.parentElement!.parentElement).toHaveClass(
+      "flex",
+      "h-full",
+      "items-center",
+      "justify-center",
+    );
+    expect(screen.queryByRole("list", { name: /^Items in/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^New in / })).toBeNull();
+    expect(screen.queryByRole("button", { name: "More for architecture" })).toBeNull();
+    // located: the heading takes the focus, while Home still shows it
+    mockedInvoke.mockImplementation(async (cmd) => {
+      if (cmd === "locate_project") return "located";
+      if (cmd === "list_library") return [...library(), { ...lost, missing: undefined }];
+      return undefined;
+    });
+    await userEvent.setup().click(screen.getByRole("button", { name: "Locate…" }));
+    await waitFor(() => expect(h1()).toHaveFocus());
+    expect(screen.queryByText("Can't find this folder")).toBeNull();
+  });
+
   it("Home showing a vanished project draws the dashboard (D1)", () => {
     show({ kind: "folder", folder: "gone" });
     expect(h1()).toHaveTextContent("Home");

@@ -174,6 +174,25 @@ describe("homeHeaderModel — the nine rows of the slot table (#231 D2·D3, T9)"
     });
   });
 
+  it("a project not found · Cards — its name alone: no caption, no ⋯·New ▾ (#253 R7)", () => {
+    const lost: FolderMeta = {
+      id: "arc",
+      name: "architecture",
+      updatedAt: 0,
+      diagrams: [],
+      folders: [],
+      missing: true,
+    };
+    const model = homeHeaderModel({ kind: "folder", folder: "arc" }, "cards", [lost]);
+    expect(model).toMatchObject({
+      path: [],
+      current: "architecture",
+      caption: null,
+      actions: null,
+      switch: true,
+    });
+  });
+
   it("⑥ dashboard · Canvas — 'Library', 'p projects · d diagrams' (stray included, all depths)", () => {
     expect(homeHeaderModel(DASHBOARD, "canvas", f)).toEqual({
       path: [],

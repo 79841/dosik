@@ -4,8 +4,9 @@ import { useSidebarStore } from "../../shared/lib/sidebarLayout";
 import { toastError } from "../../shared/lib/toastStore";
 import { useAppStore } from "../library/appStore";
 import { resolveHomeView } from "../library/homeView";
-import { findFolder } from "../library/libraryTree";
+import { findFolder, isMissing } from "../library/libraryTree";
 import { useLibraryStore } from "../library/libraryStore";
+import { focusHomeTitleIfStill } from "../library/navigation";
 import { flushAutosave } from "../library/useAutosave";
 import { LibraryBoard } from "./board/LibraryBoard";
 import { Dashboard } from "./Dashboard";
@@ -15,6 +16,7 @@ import { HomeHeader } from "./HomeHeader";
 import { useCardSize, useHomeMode } from "./homeMode";
 import { useSlow } from "./homeParts";
 import { useHomeSelection } from "./homeSelection";
+import { NotFoundBox } from "./NotFoundBox";
 import { RecentView } from "./RecentView";
 
 /** not the body's empty space: a card, a control, or a menu or picker open over it */
@@ -55,7 +57,8 @@ const ViewSkeleton = () => (
  * press on the body's empty space lets the selected card go (#231 D7). In
  * Canvas (#221 D1, D2) the same view is the library board's focus, and the
  * board fills the body — every view but Recent, which the board has no match
- * for.
+ * for. A project not found shows, in Cards, its frame's box centred in the
+ * body (#253 R7, `Library-Missing`).
  *
  * On show it waits for the writes on their way, then lists the library, so
  * the fresh list's `updatedAt` holds the last edit (D14 ⑨). Until it comes
@@ -117,18 +120,32 @@ export const Home = () => {
           }}
           className="min-h-0 flex-1 overflow-y-auto px-8 pt-4 pb-6"
         >
-          <div className={contentColumn(hidden)}>
-            {view.kind === "dashboard" ? (
-              <Dashboard />
-            ) : view.kind === "recent" ? (
-              <RecentView />
-            ) : shown && folders ? (
-              // one view per folder: an edit under way stays with its folder
-              <FolderView key={shown.id} folder={shown} folders={folders} />
-            ) : slow ? (
-              <ViewSkeleton />
-            ) : null}
-          </div>
+          {shown && isMissing(shown) ? (
+            // found: its heading takes the focus — the box and its button are
+            // gone — while Home still shows it (#218 D15)
+            <div className="flex h-full items-center justify-center">
+              <NotFoundBox
+                folder={shown}
+                size="cards"
+                onLocated={(asked) =>
+                  focusHomeTitleIfStill(asked, { kind: "folder", folder: shown.id })
+                }
+              />
+            </div>
+          ) : (
+            <div className={contentColumn(hidden)}>
+              {view.kind === "dashboard" ? (
+                <Dashboard />
+              ) : view.kind === "recent" ? (
+                <RecentView />
+              ) : shown && folders ? (
+                // one view per folder: an edit under way stays with its folder
+                <FolderView key={shown.id} folder={shown} folders={folders} />
+              ) : slow ? (
+                <ViewSkeleton />
+              ) : null}
+            </div>
+          )}
         </div>
       )}
     </main>

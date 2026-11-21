@@ -15,6 +15,7 @@ import {
   canHoldFolders,
   canMoveFolder,
   findFolder,
+  isMissing,
   itemCount,
 } from "../library/libraryTree";
 import { folderMovePicker } from "../library/MovePicker";
@@ -144,13 +145,17 @@ export const homeHeaderModel = (
       pathOf,
     };
   }
+  // a project not found holds nothing and takes nothing: its box says the rest (#253 R7)
+  const missing = isMissing(folder);
   return {
     path: above.map(crumbOf),
     current: folder.name,
     ...place,
-    caption: `${plural(itemCount(folder), "item")} · edited ${relativeTime(folder.updatedAt)}`,
+    caption: missing
+      ? null
+      : `${plural(itemCount(folder), "item")} · edited ${relativeTime(folder.updatedAt)}`,
     // a stray listing has no folder on disk to act on
-    actions: folder.stray ? null : { folder, parent: above.at(-1) ?? null },
+    actions: folder.stray || missing ? null : { folder, parent: above.at(-1) ?? null },
     switch: true,
     cardSize: true,
     pathOf,

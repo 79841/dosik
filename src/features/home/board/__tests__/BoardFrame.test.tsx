@@ -346,6 +346,71 @@ describe("project frame (#221 D12·D14·D15, T33)", () => {
     expect(actions.dropFrame).not.toHaveBeenCalled();
   });
 
+  describe("a project not found (#253 R7, Library-Missing)", () => {
+    const lost: FolderMeta = {
+      ...folder("arc", 0, { board: { x: 40, y: 80 } }),
+      name: "architecture",
+      missing: true,
+      path: "/Users/someone/Projects/architecture",
+      shown: "~/Projects/architecture",
+    };
+    const showLost = () => renderInBoard(<BoardFrame frame={frameOf(lost)} />, fakeApi([lost]));
+    const lostName = () => screen.getByRole("button", { name: "architecture, not found" });
+
+    it("keeps its place, 344 × 216 in board units — the canvas's 240 × 150", () => {
+      showLost();
+      expect(screen.getByRole("region", { name: "architecture" })).toHaveStyle({
+        left: "40px",
+        top: "80px",
+        width: "344px",
+        height: "216px",
+      });
+    });
+
+    it("header: a grey badge, its name muted, “Not found” where the count goes, and ⋯ alone", () => {
+      showLost();
+      const heading = screen.getByRole("heading", { level: 2, name: /architecture/ });
+      const badge = heading.previousElementSibling!;
+      expect(badge).toHaveClass("bg-fill-subtle", "text-muted", "h-5", "w-5");
+      expect(badge).toHaveTextContent("A");
+      expect(heading).toHaveClass("text-muted-strong");
+      expect(heading).not.toHaveClass("text-ink");
+      const status = within(screen.getByRole("region", { name: "architecture" })).getByText(
+        "Not found",
+      );
+      expect(status).toHaveClass("text-[16px]", "font-medium", "text-muted");
+      expect(screen.queryByRole("button", { name: /New in/ })).toBeNull();
+      expect(screen.getByRole("button", { name: "More for architecture" })).toBeInTheDocument();
+    });
+
+    it("its ⋯ and Shift+F10 open its menu; no F2 — there is nothing to rename", () => {
+      showLost();
+      expect(lostName()).toHaveAttribute("aria-keyshortcuts", "Shift+F10");
+      fireEvent.keyDown(lostName(), { key: "F2" });
+      expect(useBoardStore.getState().renaming).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "More for architecture" }));
+      expect(useBoardStore.getState().menu).toMatchObject({ kind: "project", folder: "arc" });
+    });
+
+    it("its body: “Can't find this folder”, the last path, Locate… — the box across the frame", () => {
+      showLost();
+      const title = screen.getByText("Can't find this folder");
+      expect(title.parentElement).toHaveStyle({
+        left: "20px",
+        top: "64px",
+        width: "304px",
+        height: "132px",
+      });
+      expect(screen.getByText("~/Projects/architecture")).toHaveClass("font-mono");
+      const locate = screen.getByRole("button", { name: "Locate…" });
+      expect(locate).toHaveAttribute("tabindex", "-1");
+      mockedInvoke.mockResolvedValue("cancelled");
+      fireEvent.click(locate);
+      expect(mockedInvoke).toHaveBeenCalledWith("locate_project", { id: "arc" });
+      expect(screen.queryByText("No folders or diagrams yet")).toBeNull();
+    });
+  });
+
   it("stray cannot be dragged", () => {
     renderInBoard(<BoardFrame frame={frameOf(strayFolder)} />, fakeApi([strayFolder]));
     const name = screen.getByRole("button", { name: /^My Diagrams/ });
