@@ -5,6 +5,13 @@
 
 mod legacy;
 
+// The folder-backed library: a project is a folder on disk, a diagram a
+// `.dosik` file in it, and the app's own record of ids, orders and places
+// sits in the app data. The commands above still go to `legacy`; until they
+// move over, these modules are reached from their tests alone.
+#[allow(dead_code)]
+mod names;
+
 use std::path::PathBuf;
 
 use tauri::{AppHandle, Manager};
