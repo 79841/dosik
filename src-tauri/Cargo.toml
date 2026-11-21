@@ -34,4 +34,8 @@ toml_edit = "0.25"
 # Delete in the library moves things to the system Trash, never removes them
 # outright; no dates of trashed items are read, so `jiff` stays out
 trash = { version = "5.4.0", default-features = false, features = ["freedesktop", "coinit_apartmentthreaded"] }
+# The library's folders are watched, so what Finder or an agent changes in
+# them shows while the app is open; events come in batches, 300 ms apart
+notify = "8.2"
+notify-debouncer-mini = "0.7"
 

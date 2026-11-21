@@ -20,12 +20,14 @@ mod ops;
 mod removal;
 mod state;
 mod walk;
+mod watch;
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use ctx::Library;
 use listing::{shown_path, FolderMeta};
@@ -33,11 +35,27 @@ use ops::{ItemKind, Loaded, SaveOutcome};
 use removal::{BoardFailure, FolderBoard, LocateOutcome, SystemTrash};
 use state::BoardSpot;
 
-/// The library the app runs on — or why there is none — and the move of
-/// the older library, made once per run before anything else.
+/// what the window listens for (`LIBRARY_CHANGED_EVENT` in `useLibraryWatch.ts`)
+pub const LIBRARY_CHANGED_EVENT: &str = "library-changed";
+
+/// What changed outside the app: the diagrams whose files changed or went —
+/// maybe none, when something new turned up. Either way the library is
+/// worth listing again.
+#[derive(Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct LibraryChanged {
+    pub changed: Vec<String>,
+}
+
+/// The library the app runs on — or why there is none — the move of the
+/// older library, made once per run before anything else, and the watch on
+/// its folders.
 pub struct AppLibrary {
     library: Result<Library, String>,
     moved: OnceLock<Result<(), String>>,
+    /// the stamp the app last read or wrote of each diagram, by id — what
+    /// tells its own writes from someone else's
+    seen: Mutex<HashMap<String, String>>,
+    watcher: OnceLock<watch::Watcher>,
 }
 
 impl AppLibrary {
@@ -45,7 +63,45 @@ impl AppLibrary {
         AppLibrary {
             library,
             moved: OnceLock::new(),
+            seen: Mutex::new(HashMap::new()),
+            watcher: OnceLock::new(),
         }
+    }
+
+    fn seen(&self) -> std::sync::MutexGuard<'_, HashMap<String, String>> {
+        self.seen.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// the diagram `id` as the app just read or wrote it
+    fn note_seen(&self, id: &str, stamp: &str) {
+        self.seen().insert(id.to_string(), stamp.to_string());
+    }
+
+    /// What a batch of the watch's paths tells — `None`: nothing.
+    fn sort_out(&self, paths: &[PathBuf]) -> Option<LibraryChanged> {
+        let lib = self.ready().ok()?;
+        let held = lib.lock();
+        let st = lib.load_state(&held).ok()?;
+        let changed = watch::sort_out(lib, &st, &mut self.seen(), paths)?;
+        Some(LibraryChanged { changed })
+    }
+
+    /// The watch on what the record has now — the inbox made first, so a
+    /// note the MCP server leaves is seen as it lands. Nothing before the
+    /// watch has started.
+    fn rewatch(&self) {
+        let (Some(watcher), Ok(lib)) = (self.watcher.get(), self.ready()) else {
+            return;
+        };
+        let _ = std::fs::create_dir_all(lib.inbox_dir());
+        let roots = {
+            let held = lib.lock();
+            match lib.load_state(&held) {
+                Ok(st) => watch::roots(lib, &st),
+                Err(_) => return,
+            }
+        };
+        watcher.watch(&roots);
     }
 
     /// The library, once the older one has been moved into it. A move that
@@ -83,14 +139,34 @@ fn open(app: &AppHandle) -> Result<Library, String> {
     ))
 }
 
-/// Puts the library in the app's hands, and moves the older one off the
-/// main thread — the window's first questions wait for it, not the window.
+/// Puts the library in the app's hands; off the main thread — the window's
+/// first questions wait for it, not the window — moves the older one and
+/// starts watching the folders, telling the window what changed in them.
 pub fn setup(app: &AppHandle) {
     let shelf = Arc::new(AppLibrary::new(open(app)));
     app.manage(Arc::clone(&shelf));
+    let app = app.clone();
     std::thread::spawn(move || {
         if let Err(error) = shelf.ready() {
             eprintln!("dosik: {error}");
+            return;
+        }
+        let weak: Weak<AppLibrary> = Arc::downgrade(&shelf);
+        let started = watch::Watcher::start(move |paths| {
+            let Some(shelf) = weak.upgrade() else {
+                return;
+            };
+            if let Some(changed) = shelf.sort_out(&paths) {
+                let _ = app.emit(LIBRARY_CHANGED_EVENT, changed);
+            }
+        });
+        match started {
+            Ok(watcher) => {
+                let _ = shelf.watcher.set(watcher);
+                shelf.rewatch();
+            }
+            // the app works without it: changes outside show on the next listing
+            Err(error) => eprintln!("dosik: {error}"),
         }
     });
 }
@@ -98,19 +174,25 @@ pub fn setup(app: &AppHandle) {
 /// runs `job` on the library off the main thread
 async fn blocking<T: Send + 'static>(
     shelf: &Shelf<'_>,
-    job: impl FnOnce(&Library) -> Result<T, String> + Send + 'static,
+    job: impl FnOnce(&AppLibrary, &Library) -> Result<T, String> + Send + 'static,
 ) -> Result<T, String> {
     let shelf = Arc::clone(shelf);
-    tauri::async_runtime::spawn_blocking(move || job(shelf.ready()?))
+    tauri::async_runtime::spawn_blocking(move || job(&shelf, shelf.ready()?))
         .await
         .map_err(|error| format!("the library could not be reached: {error}"))?
 }
 
 /// Every project with its folders and diagrams, the record brought in line
 /// with the disk on the way — off the main thread: it reads every diagram.
+/// The watch follows: a project taken in or found again is watched from now.
 #[tauri::command]
 pub async fn list_library(shelf: Shelf<'_>) -> Result<Vec<FolderMeta>, String> {
-    blocking(&shelf, listing::list).await
+    blocking(&shelf, |shelf, lib| {
+        let listed = listing::list(lib)?;
+        shelf.rewatch();
+        Ok(listed)
+    })
+    .await
 }
 
 /// A new project in the default location — or, with `parent`, a folder
@@ -129,8 +211,10 @@ pub fn create_folder(
         &name,
         board.as_ref(),
         parent.as_deref(),
-    )
-    .map(drop)
+    )?;
+    // the first project may have made the default location
+    shelf.rewatch();
+    Ok(())
 }
 
 /// Resolves the projects that could not take their place (none: all did);
@@ -141,19 +225,24 @@ pub async fn set_folder_boards(
     shelf: Shelf<'_>,
     boards: Vec<FolderBoard>,
 ) -> Result<Vec<BoardFailure>, String> {
-    blocking(&shelf, move |lib| Ok(removal::save_boards(lib, &boards))).await
+    blocking(&shelf, move |_, lib| Ok(removal::save_boards(lib, &boards))).await
 }
 
+/// A project or folder renamed on disk — an added project's folder moves, and the watch with it.
 #[tauri::command]
 pub fn rename_folder(shelf: Shelf<'_>, id: String, name: String) -> Result<(), String> {
-    folders::rename_folder(shelf.ready()?, &id, &name).map(drop)
+    folders::rename_folder(shelf.ready()?, &id, &name)?;
+    shelf.rewatch();
+    Ok(())
 }
 
 /// A project or folder to the Trash — a folder added to the library is
 /// refused: it is removed from the library instead (`remove_project`).
 #[tauri::command]
 pub fn delete_folder(shelf: Shelf<'_>, id: String) -> Result<(), String> {
-    removal::delete_folder(shelf.ready()?, &id, &SystemTrash)
+    removal::delete_folder(shelf.ready()?, &id, &SystemTrash)?;
+    shelf.rewatch();
+    Ok(())
 }
 
 /// A diagram into `folder`, to `index` in its order — the top if left out.
@@ -194,7 +283,9 @@ pub fn reorder_item(
 /// file's), and its stamp — what a save of it brings back as `base`.
 #[tauri::command(async)]
 pub fn load_project(shelf: Shelf<'_>, id: String) -> Result<Loaded, String> {
-    ops::load(shelf.ready()?, &id)
+    let loaded = ops::load(shelf.ready()?, &id)?;
+    shelf.note_seen(&id, &loaded.stamp);
+    Ok(loaded)
 }
 
 /// Writes a diagram where it is — renamed after its title — or, new, into
@@ -211,13 +302,18 @@ pub fn save_project(
     folder: Option<String>,
     base: Option<String>,
 ) -> Result<SaveOutcome, String> {
-    ops::save(
+    let outcome = ops::save(
         shelf.ready()?,
         &id,
         &contents,
         folder.as_deref(),
         base.as_deref(),
-    )
+    )?;
+    // the app's own write: the watch says nothing of it
+    if let SaveOutcome::Saved { stamp, .. } = &outcome {
+        shelf.note_seen(&id, stamp);
+    }
+    Ok(outcome)
 }
 
 /// A diagram to the Trash.
@@ -264,7 +360,7 @@ pub async fn locate_project(
     id: String,
 ) -> Result<LocateAnswer, String> {
     use tauri_plugin_dialog::DialogExt;
-    blocking(&shelf, move |lib| {
+    blocking(&shelf, move |shelf, lib| {
         let mut picker = app.dialog().file();
         if let Some(start) = last_place(lib, &id)? {
             picker = picker.set_directory(start);
@@ -273,10 +369,12 @@ pub async fn locate_project(
             return Ok(LocateAnswer::Cancelled);
         };
         let path = picked.into_path().map_err(|e| e.to_string())?;
-        Ok(match removal::locate_project_at(lib, &id, &path)? {
+        let answer = match removal::locate_project_at(lib, &id, &path)? {
             LocateOutcome::Located => LocateAnswer::Located,
             LocateOutcome::Already => LocateAnswer::Already,
-        })
+        };
+        shelf.rewatch();
+        Ok(answer)
     })
     .await
 }
@@ -284,7 +382,9 @@ pub async fn locate_project(
 /// Remove from Library: the project's record goes, its folder stays.
 #[tauri::command]
 pub fn remove_project(shelf: Shelf<'_>, id: String) -> Result<(), String> {
-    removal::remove_project(shelf.ready()?, &id)
+    removal::remove_project(shelf.ready()?, &id)?;
+    shelf.rewatch();
+    Ok(())
 }
 
 /// Where an item is on disk: `path` whole, for copying and opening;
@@ -407,6 +507,33 @@ mod tests {
     fn no_library_is_told_too() {
         let shelf = AppLibrary::new(Err("no app data folder".into()));
         assert_eq!(shelf.ready().err().as_deref(), Some("no app data folder"));
+    }
+
+    #[test]
+    fn what_the_app_reads_and_writes_is_not_told_as_a_change() {
+        let lib = test_library("mod-seen");
+        let file = lib.default_location.join("P").join("Flow.dosik");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, r#"{"title":"Flow","nodes":[],"edges":[]}"#).unwrap();
+        let shelf = AppLibrary::new(Ok(lib));
+        let listed = listing::list(shelf.ready().unwrap()).unwrap();
+        let id = listed[0].diagrams[0].id.clone();
+        // read by the app: as it is, nothing to tell
+        let loaded = ops::load(shelf.ready().unwrap(), &id).unwrap();
+        shelf.note_seen(&id, &loaded.stamp);
+        assert_eq!(shelf.sort_out(std::slice::from_ref(&file)), None);
+        // written by someone else: told, with the diagram's id
+        std::fs::write(&file, r#"{"title":"Flow","nodes":[1],"edges":[]}"#).unwrap();
+        assert_eq!(
+            shelf.sort_out(std::slice::from_ref(&file)),
+            Some(LibraryChanged {
+                changed: vec![id.clone()]
+            })
+        );
+        assert_eq!(
+            serde_json::to_value(LibraryChanged { changed: vec![id] }).unwrap(),
+            serde_json::json!({ "changed": [listed[0].diagrams[0].id] })
+        );
     }
 
     #[test]
