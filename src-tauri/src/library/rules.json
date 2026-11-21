@@ -358,5 +358,38 @@
       "dir": true,
       "kind": "skip"
     }
-  ]
+  ],
+  "broad": {
+    "home": "/Users/a",
+    "cases": [
+      {
+        "path": "/",
+        "broad": true
+      },
+      {
+        "path": "/Users",
+        "broad": true
+      },
+      {
+        "path": "/Users/a",
+        "broad": true
+      },
+      {
+        "path": "/Users/a/Documents",
+        "broad": false
+      },
+      {
+        "path": "/Users/a/work/Repo",
+        "broad": false
+      },
+      {
+        "path": "/Users/a2",
+        "broad": false
+      },
+      {
+        "path": "/opt/diagrams",
+        "broad": false
+      }
+    ]
+  }
 }
