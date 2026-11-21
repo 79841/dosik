@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Ellipsis, FolderPlus, Plus } from "lucide-react";
+import { ChevronRight, Ellipsis, FolderPlus, Plus } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { DROP_RING, DROP_TARGET, FOCUS_RING, FOCUS_TREE_ROW } from "../../shared/lib/palette";
@@ -45,6 +45,7 @@ import {
 import { DiagramGlyph, FolderGlyph } from "../../shared/ui/KindGlyph";
 import { besidePointer, Menu, type MenuItem } from "../../shared/ui/Menu";
 import { ProjectBadge } from "../../shared/ui/ProjectBadge";
+import { FoldGroup } from "./FoldGroup";
 import { type DropTarget, dropAt, keyboardStep, placementNotice, type RowBox } from "./treeDrop";
 import { TreeDragLayer } from "./TreeDragLayer";
 import { unfoldedFolders, useTreeStore } from "./treeStore";
@@ -227,6 +228,13 @@ const MORE_ON_FOCUS =
  */
 const TAIL =
   "sticky right-0 flex-none self-stretch items-center rounded-r-[5px] bg-[linear-gradient(to_right,transparent,var(--row-bg)_12px)] pl-3 pr-2";
+
+/**
+ * The chevron's turn with the fold (canvas `Sidebar-Drag` ③): 90°, 180ms,
+ * ease-out — snapped under reduced motion (#260 R1)
+ */
+const CHEVRON_MOTION =
+  "motion-safe:transition-transform motion-safe:duration-180 motion-safe:ease-[cubic-bezier(0.2,0,0,1)]";
 
 /** a row's own controls — a double click on them does not open the row (#220), nor does a press there drag it (#230 D9) */
 const ROW_CONTROLS = "[data-chevron],[data-more],input";
@@ -735,7 +743,7 @@ const TreeBody = ({
         onFocus={(e) => {
           if (e.target === e.currentTarget) setFocusKey(node.key);
         }}
-        className={`flex flex-col gap-px ${FOCUS_TREE_ROW} ${MORE_ON_FOCUS} ${ghost ? "opacity-40" : ""}`}
+        className={`flex flex-col ${FOCUS_TREE_ROW} ${MORE_ON_FOCUS} ${ghost ? "opacity-40" : ""}`}
       >
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: the keyboard reaches the row through its treeitem (roving tabindex, Enter/Space) */}
         <div
@@ -787,11 +795,11 @@ const TreeBody = ({
               }}
               className={`flex h-3.5 w-3.5 flex-none items-center justify-center ${chevronTone}`}
             >
-              {open ? (
-                <ChevronDown size={14} strokeWidth={2} />
-              ) : (
-                <ChevronRight size={14} strokeWidth={2} />
-              )}
+              <ChevronRight
+                size={14}
+                strokeWidth={2}
+                className={`${CHEVRON_MOTION} ${open ? "rotate-90" : ""}`}
+              />
             </span>
           ) : (
             <span aria-hidden="true" className="w-3.5 flex-none" />
@@ -871,11 +879,11 @@ const TreeBody = ({
           {/* last in the row: painted over the sticky tail's fill */}
           {dropInto ? <span data-drop-ring="" aria-hidden="true" className={DROP_RING} /> : null}
         </div>
-        {open ? (
-          // biome-ignore lint/a11y/useSemanticElements: the WAI-ARIA tree's child list is a group
-          <ul role="group" className="m-0 flex list-none flex-col gap-px p-0">
-            {children.map((child) => renderItem(child, level + 1))}
-          </ul>
+        {expandable ? (
+          <FoldGroup
+            open={open}
+            render={() => children.map((child) => renderItem(child, level + 1))}
+          />
         ) : null}
       </li>
     );

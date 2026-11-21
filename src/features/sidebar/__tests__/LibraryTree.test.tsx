@@ -174,6 +174,83 @@ describe("sidebar tree (#217 R3)", () => {
     });
   });
 
+  describe("fold motion (#260 R1)", () => {
+    const icons = (name: RegExp) =>
+      [...chevron(name).querySelectorAll("svg")].map((svg) => svg.getAttribute("class"));
+    const groupOf = (name: RegExp) =>
+      item(name).querySelector(":scope > [data-fold]") as HTMLElement | null;
+
+    it("the chevron is one ChevronRight that turns 90° while unfolded, 180ms ease-out, only when motion is allowed", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      expect(icons(/^Work/)).toHaveLength(1);
+      const svg = chevron(/^Work/).querySelector("svg")!;
+      expect(svg).toHaveClass("lucide-chevron-right");
+      expect(svg).not.toHaveClass("rotate-90");
+      expect(
+        svg
+          .getAttribute("class")!
+          .split(/\s+/)
+          .filter((c) => /transition|duration|ease/.test(c)),
+      ).toEqual([
+        "motion-safe:transition-transform",
+        "motion-safe:duration-180",
+        "motion-safe:ease-[cubic-bezier(0.2,0,0,1)]",
+      ]);
+      await user.click(chevron(/^Work/));
+      expect(chevron(/^Work/).querySelector("svg")).toBe(svg);
+      expect(svg).toHaveClass("rotate-90");
+      expect(tree().querySelector(".lucide-chevron-down")).toBeNull();
+    });
+
+    it("folding: aria-expanded at once, the rows fold out of the screen reader's and the focus' reach, then go", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.click(chevron(/^Work/));
+      const group = groupOf(/^Work/)!;
+      expect(group).toHaveClass("grid-rows-[1fr]");
+      await user.click(chevron(/^Work/));
+      expect(item(/^Work/)).toHaveAttribute("aria-expanded", "false");
+      expect(groupOf(/^Work/)).toBe(group);
+      expect(group).toHaveClass("grid-rows-[0fr]", "opacity-0");
+      expect(group).toHaveAttribute("inert");
+      expect(within(tree()).queryByRole("treeitem", { name: /^Login flow/ })).toBeNull();
+      expect(within(tree()).queryByRole("group")).toBeNull();
+      fireEvent.transitionEnd(group);
+      expect(groupOf(/^Work/)).toBeNull();
+    });
+
+    it("→ and ← fold the same way as the chevron — a second press turns the motion back", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.tab();
+      await user.tab();
+      await user.keyboard("{ArrowRight}");
+      const group = groupOf(/^Work/)!;
+      expect(group).toHaveClass("grid-rows-[1fr]");
+      await user.keyboard("{ArrowLeft}");
+      expect(group).toHaveClass("grid-rows-[0fr]");
+      expect(item(/^Work/)).toHaveFocus();
+      // before the motion ends: the same rows turn back
+      await user.keyboard("{ArrowRight}");
+      expect(groupOf(/^Work/)).toBe(group);
+      expect(group).toHaveClass("grid-rows-[1fr]");
+      expect(group).not.toHaveAttribute("inert");
+      expect(item(/^Login flow/)).toBeInTheDocument();
+    });
+
+    it("the rows stand 31 apart from 2 below the list's top — the pitch a drag works out (30 tall, 1 between)", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.click(chevron(/^Work/));
+      expect(tree()).toHaveClass("pt-0.5", "gap-y-px");
+      expect(row(/^Work/)).toHaveClass("h-[30px]");
+      // the 1px between a row and its first child, and between children, is inside the group
+      expect(item(/^Work/)).not.toHaveClass("gap-px");
+      expect(within(item(/^Work/)).getByRole("group")).toHaveClass("[&>li]:mt-px");
+    });
+  });
+
   describe("clicks — once selects, twice or Enter opens (#230 D8, T15·T16)", () => {
     const homeView = () => useAppStore.getState().homeView;
     const selected = () =>
