@@ -106,4 +106,49 @@ describe("useOpenRequests — opens files handed over by the OS (#149)", () => {
     await waitFor(() => expect(order).toContain("take"));
     expect(order.indexOf("listen")).toBeLessThan(order.indexOf("take"));
   });
+
+  describe("a file in a project of the library (#253 D16)", () => {
+    it("opens as that library diagram, by the id Rust found — the rest as files", async () => {
+      let pending: unknown = [
+        { path: "/lib/Payments/Flow.dosik", diagram: "d1" },
+        { path: "/tmp/mine.dosik" },
+      ];
+      mockedInvoke.mockImplementation(async (cmd, args) => {
+        if (cmd === "take_open_requests") {
+          const taken = pending;
+          pending = [];
+          return taken;
+        }
+        if (cmd === "load_project") {
+          expect(args).toEqual({ id: "d1" });
+          return { contents: JSON.stringify(blankDoc()), name: "Flow", stamp: "1-2-ab" };
+        }
+        if (cmd === "read_text_file") return JSON.stringify({ ...blankDoc(), title: "Mine" });
+        if (cmd === "list_library") return [];
+        return undefined;
+      });
+      renderHook(() => useOpenRequests());
+      await waitFor(() => expect(useDiagramStore.getState().filePath).toBe("/tmp/mine.dosik"));
+      const tabs = useAppStore.getState().tabs;
+      expect(tabs.map((t) => [t.projectId, t.filePath, t.title])).toEqual([
+        ["d1", null, "Flow"],
+        [null, "/tmp/mine.dosik", "Mine"],
+      ]);
+      // the tree is listed again: the diagram may be new to it
+      expect(mockedInvoke.mock.calls.some(([c]) => c === "list_library")).toBe(true);
+      expect(mockedInvoke.mock.calls.filter(([c]) => c === "read_text_file")).toHaveLength(1);
+    });
+
+    it("what is no request at all is left out", async () => {
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "take_open_requests")
+          return [5, null, { diagram: "x" }, { path: "/tmp/ok.dosik" }];
+        if (cmd === "read_text_file") return JSON.stringify({ ...blankDoc(), title: "OK" });
+        return undefined;
+      });
+      renderHook(() => useOpenRequests());
+      await waitFor(() => expect(useDiagramStore.getState().filePath).toBe("/tmp/ok.dosik"));
+      expect(useAppStore.getState().tabs).toHaveLength(1);
+    });
+  });
 });

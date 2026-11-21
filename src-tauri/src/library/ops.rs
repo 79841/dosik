@@ -169,6 +169,42 @@ pub fn item_path(lib: &Library, kind: ItemKind, id: &str) -> Result<PathBuf, Str
     }
 }
 
+/// The library diagram the file at `path` is, when it is one: a diagram
+/// file in a project of the library, no deeper than the listing reads and
+/// with no hidden name on the way. One the record has no id for yet — made
+/// just now, by an agent say — gets one, as the next listing would give it.
+pub fn diagram_id_at(lib: &Library, path: &Path) -> Result<Option<String>, String> {
+    if !disk::is_real_file(path) {
+        return Ok(None);
+    }
+    let held = lib.lock();
+    let mut st = lib.load_state(&held)?;
+    let Some((project, rel)) = super::listing::item_in_project(&st, path) else {
+        return Ok(None);
+    };
+    let names: Vec<&str> = rel.split('/').collect();
+    let last = names.len() - 1;
+    let shown = !rel.is_empty()
+        && names.len() <= MAX_DEPTH
+        && names
+            .iter()
+            .enumerate()
+            .all(|(i, name)| match walk::classify(name, i < last) {
+                walk::Entry::Folder => i < last,
+                walk::Entry::Diagram(_) => i == last,
+                walk::Entry::Skip | walk::Entry::Other => false,
+            });
+    if !shown || !disk::is_real_dir(&st.projects[project].root()) {
+        return Ok(None);
+    }
+    if let Some(id) = st.projects[project].ids.get(&rel) {
+        return Ok(Some(id.clone()));
+    }
+    let id = st.ensure_id(project, &rel);
+    lib.save_state(&held, &st)?;
+    Ok(Some(id))
+}
+
 /// the title a diagram's JSON gives, or none
 fn title_of(contents: &str) -> String {
     serde_json::from_str::<serde_json::Value>(contents)
@@ -447,6 +483,51 @@ pub(crate) mod tests {
         assert!(item_path(&lib, ItemKind::Diagram, &flow).is_err());
         std::fs::remove_dir(p_dir(&lib).join("Sub")).unwrap();
         assert!(item_path(&lib, ItemKind::Folder, &sub).is_err());
+    }
+
+    #[test]
+    fn a_file_opened_from_outside_is_the_library_diagram_it_is() {
+        let (lib, _) = with_project("ops-open-at");
+        put(&p_dir(&lib).join("Sub/Flow.dosik"), &titled("Flow"));
+        put(&p_dir(&lib).join("Old.DOSIK.JSON"), &titled("Old"));
+        let listed = listed_p(&lib);
+        let flow = listed.folders[0].diagrams[0].id.clone();
+        let old = listed.diagrams[0].id.clone();
+        let at = |p: PathBuf| diagram_id_at(&lib, &p).unwrap();
+        assert_eq!(at(p_dir(&lib).join("Sub/Flow.dosik")), Some(flow));
+        assert_eq!(at(p_dir(&lib).join("Old.DOSIK.JSON")), Some(old));
+        // made just now, not listed yet: an id now, the same the listing keeps
+        put(&p_dir(&lib).join("New.dosik"), &titled("New"));
+        let new = at(p_dir(&lib).join("New.dosik")).expect("an id");
+        assert_eq!(at(p_dir(&lib).join("New.dosik")), Some(new.clone()));
+        let listed = listed_p(&lib);
+        assert!(listed
+            .diagrams
+            .iter()
+            .any(|d| d.id == new && d.title == "New"));
+        // no diagram of the library's
+        put(&p_dir(&lib).join("notes.txt"), "x");
+        put(&p_dir(&lib).join(".hidden/In.dosik"), &titled("In"));
+        put(&lib.default_location.join("Loose.dosik"), &titled("Loose"));
+        let outside = lib.default_location.parent().unwrap().join("Mine.dosik");
+        put(&outside, &titled("Mine"));
+        for path in [
+            p_dir(&lib).join("notes.txt"),
+            p_dir(&lib).join(".hidden/In.dosik"),
+            p_dir(&lib).join("Gone.dosik"),
+            p_dir(&lib).join("Sub"),
+            lib.default_location.join("Loose.dosik"),
+            outside,
+        ] {
+            assert_eq!(at(path.clone()), None, "{}", path.display());
+        }
+        // deeper than the listing reads
+        let mut deep = p_dir(&lib);
+        for n in 0..MAX_DEPTH {
+            deep = deep.join(format!("d{n}"));
+        }
+        put(&deep.join("Deep.dosik"), &titled("Deep"));
+        assert_eq!(at(deep.join("Deep.dosik")), None);
     }
 
     #[test]

@@ -131,6 +131,17 @@ impl AppLibrary {
         self.seen().insert(id.to_string(), stamp.to_string());
     }
 
+    /// The library diagram the file at `path` is, if it is one (#253 D16) —
+    /// what a file the OS hands over opens as. None while there is no
+    /// library to look in.
+    pub fn diagram_at(&self, path: &Path) -> Option<String> {
+        let lib = self.ready().ok()?;
+        ops::diagram_id_at(lib, path).unwrap_or_else(|error| {
+            eprintln!("dosik: {error}");
+            None
+        })
+    }
+
     /// What a batch of the watch's paths tells — `None`: nothing.
     fn sort_out(&self, paths: &[PathBuf]) -> Option<LibraryChanged> {
         let lib = self.ready().ok()?;
