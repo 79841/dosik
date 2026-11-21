@@ -65,6 +65,26 @@ export const LabeledEdge = ({
     startPointerDrag(e, screenToFlowPosition, handlers);
   };
 
+  // One layout for the canvas and the windowless SVG export — see `edgeLayout`
+  // (#148). Two memos, as before the move: the sibling numbers follow every
+  // edge change (cheap), and routing follows only this edge's own path fields
+  // and those numbers — a drag on another edge's label must not reroute this
+  // one (#152). The measured `sourceX/sourceY` only stand in while an
+  // endpoint node is missing from the store.
+  const siblings = useMemo(
+    () =>
+      edgeSiblings(
+        { id, source, target, sourceHandle: sourceHandleId, targetHandle: targetHandleId },
+        nodes,
+        edges,
+      ),
+    [id, source, target, sourceHandleId, targetHandleId, nodes, edges],
+  );
+  const { parallelOffset, selfLoopIndex } = siblings;
+  const soleSource = siblings.soleEnds.source;
+  const soleTarget = siblings.soleEnds.target;
+  const selfLoopWidth = data?.selfLoopWidth;
+  const labelT = data?.labelT;
   // an end of this line dragged onto a shape: draw the line it lands as, not one
   // run to the free end along the shape's face (#210)
   // (selected per edge: a snap for another line's drag re-renders nothing here)
@@ -73,41 +93,6 @@ export const LabeledEdge = ({
   const landingAnchor = useCanvasUiStore((s) => (ownSnap(s) ? s.snapFor : null));
   const snapNode = useCanvasUiStore((s) => (ownSnap(s) ? s.snapTarget?.nodeId : undefined));
   const snapHandle = useCanvasUiStore((s) => (ownSnap(s) ? s.snapTarget?.handle : undefined));
-  // One layout for the canvas and the windowless SVG export — see `edgeLayout`
-  // (#148). Two memos, as before the move: the sibling numbers follow every
-  // edge change (cheap), and routing follows only this edge's own path fields
-  // and those numbers — a drag on another edge's label must not reroute this
-  // one (#152). The sibling numbers include whether each end is alone on its
-  // side (#257), judged for the line as it is drawn — the landed one while an
-  // end is dragged onto a shape — so the preview straightens as the drop will.
-  // The measured `sourceX/sourceY` only stand in while an endpoint node is
-  // missing from the store.
-  const siblings = useMemo(() => {
-    const ends = { id, source, target, sourceHandle: sourceHandleId, targetHandle: targetHandleId };
-    return edgeSiblings(
-      landingAnchor && snapNode && snapHandle
-        ? landedEdge(ends, landingAnchor, { nodeId: snapNode, handle: snapHandle })
-        : ends,
-      nodes,
-      edges,
-    );
-  }, [
-    id,
-    source,
-    target,
-    sourceHandleId,
-    targetHandleId,
-    nodes,
-    edges,
-    landingAnchor,
-    snapNode,
-    snapHandle,
-  ]);
-  const { parallelOffset, selfLoopIndex } = siblings;
-  const soleSource = siblings.soleEnds.source;
-  const soleTarget = siblings.soleEnds.target;
-  const selfLoopWidth = data?.selfLoopWidth;
-  const labelT = data?.labelT;
   const layout = useMemo(() => {
     const routed = {
       id,
@@ -306,9 +291,7 @@ export const LabeledEdge = ({
           anchorId = node.id;
           store.setNodePositionLive(node.id, p.x - 6, p.y - 6);
         } else {
-          // it comes loose where it is drawn, which for an auto end may be off
-          // its handle (#257) — the line does not move until the pointer does
-          anchorId = store.detachEndpointToAnchor(id, end, end === "source" ? tipStart : tipEnd);
+          anchorId = store.detachEndpointToAnchor(id, end, p);
         }
       },
       onMove: (p) => {

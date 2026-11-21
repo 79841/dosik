@@ -3,7 +3,6 @@ import { act, render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeDoc, makeEdge, makeNode } from "../../../shared/lib/__tests__/testFixtures";
-import { findSnapTarget } from "../../../shared/lib/edgeUtils";
 import { useDiagramStore } from "../../../shared/lib/store";
 import { pickHandles } from "../../../shared/lib/store/nodeFactory";
 import { useCanvasUiStore } from "../canvasUiStore";
@@ -113,70 +112,6 @@ describe("a dragged end shows the line it will land as (#210)", () => {
   });
 });
 
-describe("a dragged end previews the straight line it lands as (#257)", () => {
-  it("between boxes of different sizes, the preview is the line the drop makes", () => {
-    const store = useDiagramStore.getState();
-    store.loadDoc(
-      makeDoc(
-        [
-          makeNode({ id: "a", shape: "rect", x: 0, y: 0, width: 160, height: 144 }),
-          makeNode({ id: "b", shape: "rect", x: 400, y: 0, width: 160, height: 164 }),
-        ],
-        [
-          {
-            ...makeEdge({ id: "e", source: "a", target: "b" }),
-            sourceHandle: "right",
-            targetHandle: "left",
-          },
-        ],
-      ),
-      null,
-    );
-    // b's end, drawn level at y 72, is pulled loose and put down at (398, 80):
-    // near the middle of b's left side, so it snaps to the bare side
-    const anchorId = store.detachEndpointToAnchor("e", "target", { x: 400, y: 72 })!;
-    const drop = { x: 398, y: 80 };
-    const snap = findSnapTarget(useDiagramStore.getState().nodes, drop, [anchorId], undefined, {
-      x: 160,
-      y: 72,
-    })!;
-    expect(snap).toMatchObject({ nodeId: "b", handle: "left" });
-    store.setNodePositionLive(anchorId, snap.point.x - 6, snap.point.y - 6);
-    act(() => useCanvasUiStore.getState().setSnapTarget(snap, anchorId));
-
-    const edge = useDiagramStore.getState().edges[0]!;
-    const c = render(
-      <ReactFlowProvider>
-        <svg>
-          <LabeledEdge
-            id="e"
-            source="a"
-            target={anchorId}
-            sourceX={160}
-            sourceY={72}
-            targetX={snap.point.x}
-            targetY={snap.point.y}
-            sourcePosition={Position.Right}
-            targetPosition={Position.Left}
-            sourceHandleId={edge.sourceHandle}
-            targetHandleId={edge.targetHandle}
-            selected
-            data={edge.data}
-          />
-        </svg>
-      </ReactFlowProvider>,
-    ).container;
-    const preview = c.querySelector("path.react-flow__edge-path")?.getAttribute("d");
-    act(() => useCanvasUiStore.getState().setSnapTarget(null));
-
-    store.rewireAnchorToNode(anchorId, snap.nodeId, snap.handle);
-    const { nodes, edges } = useDiagramStore.getState();
-    const landed = layoutEdge(edges[0]!, nodes, { edges })!.d;
-    expect(preview).toBe(landed);
-    expect(landed).toBe("M 160 72 L 400 72");
-  });
-});
-
 describe("a new line dragged onto a shape previews its route (#210)", () => {
   beforeEach(() => {
     useDiagramStore
@@ -226,53 +161,6 @@ describe("a new line dragged onto a shape previews its route (#210)", () => {
     // the line, not the arrowhead's path in its <marker>
     const line = [...c.querySelectorAll("path")].find((p) => !p.closest("marker"));
     expect(line?.getAttribute("d")).toBe(expected.d);
-    act(() => useCanvasUiStore.getState().setSnapTarget(null));
-  });
-
-  it("does not slide an end on a side that already holds a line (#257)", () => {
-    useDiagramStore.getState().loadDoc(
-      makeDoc(
-        [
-          makeNode({ id: "a", shape: "rect", x: 0, y: 0, width: 160, height: 164 }),
-          makeNode({ id: "b", shape: "rect", x: 400, y: 0, width: 160, height: 144 }),
-          makeNode({ id: "c", shape: "rect", x: 400, y: 300, width: 160, height: 56 }),
-        ],
-        // a's right side is already taken by a line to c
-        [
-          {
-            ...makeEdge({ id: "e0", source: "a", target: "c" }),
-            sourceHandle: "right",
-            targetHandle: "left",
-          },
-        ],
-      ),
-      null,
-    );
-    act(() =>
-      useCanvasUiStore
-        .getState()
-        .setSnapTarget({ nodeId: "b", handle: "left", point: { x: 400, y: 72 } }),
-    );
-    const c = render(
-      <svg>
-        <ConnectionLine
-          {...({
-            fromX: 160,
-            fromY: 82,
-            toX: 390,
-            toY: 72,
-            fromPosition: Position.Right,
-            toPosition: Position.Left,
-            fromNode: { id: "a", data: { shape: "rect" } },
-            fromHandle: { id: "right" },
-            toNode: { id: "b", data: { shape: "rect" } },
-          } as unknown as ConnectionLineComponentProps)}
-        />
-      </svg>,
-    ).container;
-    const line = [...c.querySelectorAll("path")].find((p) => !p.closest("marker"));
-    // a's end stays in its middle (82); b's lone end comes level with it
-    expect(line?.getAttribute("d")).toBe("M 160 82 L 400 82");
     act(() => useCanvasUiStore.getState().setSnapTarget(null));
   });
 

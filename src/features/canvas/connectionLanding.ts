@@ -1,10 +1,5 @@
-import {
-  outlinePointOnNode,
-  type SnapTarget,
-  sideHandleAt,
-  spreadsOnSides,
-} from "../../shared/lib/edgeUtils";
-import { placeEnds } from "../../shared/lib/placeEnds";
+import { outlinePointOnNode, type SnapTarget, sideHandleAt } from "../../shared/lib/edgeUtils";
+import { placeEnds, spreadsOnSides } from "../../shared/lib/placeEnds";
 import { parseSide } from "../../shared/lib/sideAttach";
 import { pickHandles } from "../../shared/lib/store/nodeFactory";
 import type { DiagramEdge, DiagramNode } from "../../shared/lib/types";

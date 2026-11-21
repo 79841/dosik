@@ -1,7 +1,7 @@
 import { getSmoothStepPath, type ConnectionLineComponentProps, Position } from "@xyflow/react";
 import { useEffect, useMemo } from "react";
 
-import { connectionEndShape, DEFAULT_EDGE_WIDTH, soleOnSide } from "../../shared/lib/edgeUtils";
+import { connectionEndShape, DEFAULT_EDGE_WIDTH } from "../../shared/lib/edgeUtils";
 import { canvasInk, THEME_COLOR_TOKENS, THEME_EDGE_STROKE } from "../../shared/lib/palette";
 import { useDiagramStore } from "../../shared/lib/store";
 import { pickHandles } from "../../shared/lib/store/nodeFactory";
@@ -68,7 +68,6 @@ export const ConnectionLine = ({
   // router as the finished line, stub and outline included (#210); out
   // in the open, a plain step line to the pointer
   const nodes = useDiagramStore((s) => s.nodes);
-  const edges = useDiagramStore((s) => s.edges);
   const fromId = fromNode?.id;
   const fromHandleId = fromHandle?.id ?? null;
   const landingNode = landing?.nodeId;
@@ -81,24 +80,19 @@ export const ConnectionLine = ({
     // a start on a shape's body or a lifeline's strip is placed the way
     // `onConnect` places it — facing the other shape
     const fromBody = !fromHandleId || fromHandleId === "body" || fromHandleId === "line";
-    const preview = {
-      id: "connection-preview",
-      source: from.id,
-      target: to.id,
-      sourceHandle: fromBody ? pickHandles(from, to).sourceHandle : fromHandleId,
-      targetHandle: landingHandle,
-      data: { pathStyle },
-    };
-    // a new line is no one's parallel yet; but an end on a side that already
-    // holds lines will be spread among them, so it may not slide (#257)
-    return layoutEdge(preview, nodes, {
-      siblings: {
-        parallelOffset: 0,
-        selfLoopIndex: undefined,
-        soleEnds: soleOnSide(preview, edges),
+    return layoutEdge(
+      {
+        id: "connection-preview",
+        source: from.id,
+        target: to.id,
+        sourceHandle: fromBody ? pickHandles(from, to).sourceHandle : fromHandleId,
+        targetHandle: landingHandle,
+        data: { pathStyle },
       },
-    });
-  }, [nodes, edges, fromId, fromHandleId, landingNode, landingHandle, pathStyle]);
+      nodes,
+      { edges: [] },
+    );
+  }, [nodes, fromId, fromHandleId, landingNode, landingHandle, pathStyle]);
   const [stepPath] = getSmoothStepPath({
     sourceX: fromX,
     sourceY: fromY,

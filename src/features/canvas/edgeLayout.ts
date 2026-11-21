@@ -1,4 +1,4 @@
-import type { Position } from "@xyflow/react";
+import { Position } from "@xyflow/react";
 
 import {
   buildEdgePath,
@@ -8,19 +8,17 @@ import {
 } from "../../shared/lib/edgeGeometry";
 import {
   DEFAULT_EDGE_WIDTH,
-  drawnEnds,
   effectiveMarkerEnd,
   effectiveMarkerStart,
   handlePointOnNode,
+  handleSlidTo,
   isSequenceMessage,
   nodeBounds,
-  outlinePointAt,
   outlinePointOnNode,
   routingObstacles,
-  soleOnSide,
 } from "../../shared/lib/edgeUtils";
 import { canvasInk, type ColorToken } from "../../shared/lib/palette";
-import { parseSide } from "../../shared/lib/sideAttach";
+import { drawnEnds, soleOnSide } from "../../shared/lib/placeEnds";
 import type {
   DiagramEdge,
   DiagramEdgeData,
@@ -117,10 +115,8 @@ const NOT_SOLE = { source: false, target: false };
 
 /**
  * Parallel edges between the same pair get separated by an offset; self-loops
- * on one node get an index; and each end learns whether it is alone on its
- * side, which decides whether it may slide to straighten the line (#257).
- * Split from `layoutEdge` so the canvas can recompute this on every edge
- * change and route only when the numbers move (#152).
+ * on one node get an index. Split from `layoutEdge` so the canvas can recompute
+ * this on every edge change and route only when the numbers move (#152).
  */
 export const edgeSiblings = (
   edge: Pick<EdgeInput, "id" | "source" | "target" | "sourceHandle" | "targetHandle">,
@@ -143,6 +139,7 @@ export const edgeSiblings = (
   if (isSequenceMessage(edge, nodes)) {
     return { parallelOffset: 0, selfLoopIndex: undefined, soleEnds: NOT_SOLE };
   }
+  const soleEnds = soleOnSide(edge, edges);
   // only lines that share both end points overlap; ends placed apart along
   // their sides already keep the lines apart (#204 D11)
   const same = (a: string | null | undefined, b: string | null | undefined) =>
@@ -159,16 +156,13 @@ export const edgeSiblings = (
           same(e.sourceHandle, edge.targetHandle) &&
           same(e.targetHandle, edge.sourceHandle))),
   );
-  if (siblings.length < 2) {
-    return { parallelOffset: 0, selfLoopIndex: undefined, soleEnds: soleOnSide(edge, edges) };
-  }
+  if (siblings.length < 2) return { parallelOffset: 0, selfLoopIndex: undefined, soleEnds };
   const idx = siblings.findIndex((e) => e.id === id);
   const dirSign = source < target ? 1 : -1;
   return {
     parallelOffset: (idx - (siblings.length - 1) / 2) * 18 * dirSign,
     selfLoopIndex: undefined,
-    // parallel lines share both sides
-    soleEnds: NOT_SOLE,
+    soleEnds,
   };
 };
 
@@ -237,9 +231,8 @@ export const layoutEdge = (
   //
   // Reading the model also restores the "verdict = render" invariant:
   // waypoint pruning, the slide clamp and the obstacle set all judge with
-  // `handlePointOnNode` — through `drawnEnds` where an auto end slides
-  // (#257) — and `nodeBounds` is exactly what `ShapeNode` sizes itself with,
-  // so there is nothing left for the DOM to disagree about.
+  // `handlePointOnNode`, and `nodeBounds` is exactly what `ShapeNode` sizes
+  // itself with, so there is nothing left for the DOM to disagree about.
   //
   // Anchors have no side — their point is the stored centre and their
   // direction follows where the line actually goes, so the arrowhead matches
@@ -287,16 +280,16 @@ export const layoutEdge = (
       ? { source: nodeBounds(sourceNode), target: nodeBounds(targetNode) }
       : undefined;
 
-  // the drawn ends reach in to a curved or slanted outline (#204 D10) — an end
-  // slid along its side (#257) from the spot it slid to
+  // the drawn ends reach in to a curved or slanted outline (#204 D10)
   const outline = (n: DiagramNode | undefined, handleId: string | null | undefined, at: Point) => {
     if (!n || n.data.shape === "anchor") return undefined;
     const placed = handlePointOnNode(n, handleId);
-    const side = parseSide(handleId);
-    const p =
-      side && (placed.x !== at.x || placed.y !== at.y)
-        ? outlinePointAt(n, side, at)
-        : outlinePointOnNode(n, handleId);
+    const slid = placed.x !== at.x || placed.y !== at.y;
+    const o = outlinePointOnNode(n, slid ? (handleSlidTo(n, handleId, at) ?? handleId) : handleId);
+    // a slid end (#257) reads the outline's depth at its new spot but keeps
+    // its own place along the side — the spot's handle is rounded
+    const across = placed.position === Position.Left || placed.position === Position.Right;
+    const p = !slid ? o : across ? { x: o.x, y: at.y } : { x: at.x, y: o.y };
     return p.x === at.x && p.y === at.y ? undefined : { x: p.x, y: p.y };
   };
   const reachS = outline(sourceNode, edge.sourceHandle, sPoint);

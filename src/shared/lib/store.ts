@@ -31,9 +31,6 @@ import {
   sideHandleAt,
   findSnapTarget,
   type SnapTarget,
-  drawnEnds,
-  soleOnSide,
-  spreadsOnSides,
 } from "./edgeUtils";
 import { alignTops, distributeEvenly } from "./lifelineAlign";
 import { BACKDROP_STYLE, DEFAULT_NODE_SIZE, isBackdrop } from "./palette";
@@ -49,7 +46,14 @@ import {
   landFragment,
   PASTE_OFFSET,
 } from "./store/clipboard";
-import { bothEnds, type EdgeEndRef, placeEnds } from "./placeEnds";
+import {
+  bothEnds,
+  drawnEnds,
+  type EdgeEndRef,
+  placeEnds,
+  soleOnSide,
+  spreadsOnSides,
+} from "./placeEnds";
 import { parseSide } from "./sideAttach";
 import { makeEdge } from "./store/edgeFactory";
 import { cloneSnapshot, HISTORY_LIMIT, restoreSnapshot } from "./store/history";

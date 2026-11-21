@@ -272,22 +272,6 @@ export interface EndpointBounds {
   target: Rect;
 }
 
-/**
- * How two ends on opposite sides face each other: the axis they face along
- * and the gap between them along it (zero when touching, negative once they
- * have crossed). Null when the sides are not opposite.
- */
-const facing = (
-  s: Point,
-  t: Point,
-  sd: Point,
-  td: Point,
-): { axis: "x" | "y"; gap: number } | null => {
-  if (sd.x !== 0 && sd.x === -td.x) return { axis: "x", gap: (t.x - s.x) * sd.x };
-  if (sd.y !== 0 && sd.y === -td.y) return { axis: "y", gap: (t.y - s.y) * sd.y };
-  return null;
-};
-
 /** Rect intersection, touching edges included (two flush boxes count). */
 const rectsOverlap = (a: Rect, b: Rect): boolean =>
   a.x <= b.x + b.width && b.x <= a.x + a.width && a.y <= b.y + b.height && b.y <= a.y + a.height;
@@ -320,9 +304,10 @@ const stubLengths = (
 ): { source: number; target: number } => {
   const total = sLen + tLen;
   if (total === 0) return { source: sLen, target: tLen };
-  const faced = facing(s, t, sd, td);
-  if (!faced) return { source: sLen, target: tLen };
-  const sep = faced.gap;
+  const facingX = sd.x !== 0 && sd.x === -td.x;
+  const facingY = sd.y !== 0 && sd.y === -td.y;
+  if (!facingX && !facingY) return { source: sLen, target: tLen };
+  const sep = facingX ? (t.x - s.x) * sd.x : (t.y - s.y) * sd.y;
   if (sep >= total) return { source: sLen, target: tLen };
   // Still approaching each other, just closer than two stubs: shrink both so
   // they meet midway instead of crossing (#69). This branch keeps a non-zero
@@ -350,7 +335,7 @@ const stubLengths = (
   // further apart than a stub pair across their shared line cannot collide, so
   // there is nothing to collapse for. It gets the common cases right and is
   // what every caller without bounds used to get.
-  const across = faced.axis === "x" ? Math.abs(t.y - s.y) : Math.abs(t.x - s.x);
+  const across = facingX ? Math.abs(t.y - s.y) : Math.abs(t.x - s.x);
   return across > total ? { source: sLen, target: tLen } : { source: 0, target: 0 };
 };
 
@@ -396,11 +381,10 @@ export interface SideSpan {
 /**
  * Two ends on facing sides whose stretches overlap are joined by one straight
  * line instead of a short step (#257). An end with a span may slide within
- * it; an end without one stays put. The line runs level with the end that has
- * the shorter stretch (the source on a tie) — so the end with the longer
- * usable stretch is the one that slides — or, when that spot is out of the
- * other end's reach, along the nearest edge of the overlap. Moving a shape
- * therefore moves the line smoothly, never in a jump.
+ * it; an end without one stays put. The line keeps an end's own spot when the
+ * other end can reach it — the end with the shorter stretch first, so the end
+ * on the larger shape is the one that moves — and otherwise runs through the
+ * middle of the overlap.
  *
  * Everything else comes back unchanged and the router bends as before: ends
  * that do not face each other across a gap (touching and crossed pairs are
@@ -415,9 +399,13 @@ export const alignFacingEnds = (
   obstacles: Rect[] = [],
 ): { source: EdgeEndpoint; target: EdgeEndpoint } => {
   const unchanged = { source, target };
-  const faced = facing(source, target, dir(source.position), dir(target.position));
-  if (!faced || faced.gap <= 0) return unchanged;
-  const facingX = faced.axis === "x";
+  const sd = dir(source.position);
+  const td = dir(target.position);
+  const facingX = sd.x !== 0 && sd.x === -td.x;
+  const facingY = sd.y !== 0 && sd.y === -td.y;
+  if (!facingX && !facingY) return unchanged;
+  const gap = facingX ? (target.x - source.x) * sd.x : (target.y - source.y) * sd.y;
+  if (gap <= 0) return unchanged;
   const ps = facingX ? source.y : source.x;
   const pt = facingX ? target.y : target.x;
   if (ps === pt) return unchanged;
@@ -426,8 +414,9 @@ export const alignFacingEnds = (
   const lo = Math.max(s.min, t.min);
   const hi = Math.min(s.max, t.max);
   if (lo > hi) return unchanged;
-  const level = s.max - s.min <= t.max - t.min ? ps : pt;
-  const at = Math.min(Math.max(level, lo), hi);
+  const reachable = (v: number) => v >= lo && v <= hi;
+  const kept = s.max - s.min <= t.max - t.min ? [ps, pt] : [pt, ps];
+  const at = kept.find(reachable) ?? (lo + hi) / 2;
   const aligned = {
     source: facingX ? { ...source, y: at } : { ...source, x: at },
     target: facingX ? { ...target, y: at } : { ...target, x: at },
@@ -485,10 +474,6 @@ const orthogonalizeChain = (points: Point[]): Point[] => {
  * renderer would use, so a slide detouring around an obstacle keeps its extra
  * bends — equal counts mean the waypoints still carry the user's intent,
  * more means they are spent.
- *
- * `fresh` is where the ends would be drawn once the waypoints are gone, when
- * that differs from `source`/`target` — an auto end slides to straighten a
- * line with no bends of its own (#257), so the baseline is routed from there.
  */
 export const waypointsWorsenPath = (
   source: EdgeEndpoint,
@@ -496,21 +481,17 @@ export const waypointsWorsenPath = (
   waypoints: EdgeWaypoint[],
   obstacles: Rect[],
   bounds?: EndpointBounds,
-  fresh: { source: EdgeEndpoint; target: EdgeEndpoint } = { source, target },
 ): boolean => {
   if (waypoints.length === 0) return false;
+  const s: Point = { x: source.x, y: source.y };
+  const t: Point = { x: target.x, y: target.y };
+  const sd = dir(source.position);
+  const td = dir(target.position);
   // same stub math as buildEdgePath, so the verdict matches what would render
-  const route = (from: EdgeEndpoint, to: EdgeEndpoint, through: EdgeWaypoint[]) => {
-    const { source: sStub, target: tStub } = stubPoints(from, to, undefined, bounds);
-    const inner =
-      through.length > 0
-        ? orthogonalizeChain([sStub, ...through, tStub])
-        : routeOrthogonal(sStub, tStub, dir(from.position), dir(to.position), obstacles);
-    return simplify([{ x: from.x, y: from.y }, ...inner, { x: to.x, y: to.y }]);
-  };
-  return (
-    bendCount(route(source, target, waypoints)) > bendCount(route(fresh.source, fresh.target, []))
-  );
+  const { source: sStub, target: tStub } = stubPoints(source, target, undefined, bounds);
+  const forced = simplify([s, ...orthogonalizeChain([sStub, ...waypoints, tStub]), t]);
+  const fresh = simplify([s, ...routeOrthogonal(sStub, tStub, sd, td, obstacles), t]);
+  return bendCount(forced) > bendCount(fresh);
 };
 
 const catmullRomPath = (points: Point[]): string => {
