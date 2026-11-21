@@ -124,17 +124,29 @@ fn write_binary_file(path: String, base64: String) -> Result<(), String> {
 }
 
 /// The window menu off macOS — a right click on the band (`at_pointer`), or
-/// Alt+Space. Synchronous, so it runs on the main thread, where the menu has
-/// to be tracked. Nothing elsewhere: macOS has its own window.
-#[tauri::command]
+/// Alt+Space. The menu is tracked on the main thread, from the event loop: a
+/// synchronous command would run inside the webview's own event handler,
+/// where a nested message loop is not supported and would hold every other
+/// call (a bridge op's result among them) until the menu closed. Nothing
+/// elsewhere: macOS has its own window.
+#[cfg(windows)]
+#[tauri::command(async)]
 fn show_window_menu(window: tauri::WebviewWindow, at_pointer: bool) -> Result<(), String> {
-    #[cfg(windows)]
-    return window_frame::win32::show_system_menu(&window, at_pointer);
-    #[cfg(not(windows))]
-    {
-        let _ = (window, at_pointer);
-        Ok(())
-    }
+    let target = window.clone();
+    window
+        .run_on_main_thread(move || {
+            if let Err(error) = window_frame::win32::show_system_menu(&target, at_pointer) {
+                eprintln!("dosik: no window menu: {error}");
+            }
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+#[tauri::command(async)]
+fn show_window_menu(window: tauri::WebviewWindow, at_pointer: bool) -> Result<(), String> {
+    let _ = (window, at_pointer);
+    Ok(())
 }
 
 /// Off macOS on Windows: the webview's browser keys, the Snap layouts spot,
@@ -148,15 +160,8 @@ fn set_up_window_frame(app: &tauri::App) {
     };
     window_frame::win32::apply_webview_prefs(&window, tauri::is_dev());
     window_frame::win32::install_max_spot(&window);
-    let size = app
-        .config()
-        .app
-        .windows
-        .first()
-        .map(|w| (w.width, w.height))
-        .unwrap_or((1440.0, 900.0));
-    window_frame::place_first_window(&window, size);
-    // the spot follows the Maximize button, and leaves in full screen
+    // the spot follows the Maximize button, and leaves in full screen — from
+    // the first placement on
     let follow = window.clone();
     window.on_window_event(move |event| {
         if matches!(
@@ -166,6 +171,14 @@ fn set_up_window_frame(app: &tauri::App) {
             window_frame::win32::place_max_spot(&follow);
         }
     });
+    let size = app
+        .config()
+        .app
+        .windows
+        .first()
+        .map(|w| (w.width, w.height))
+        .unwrap_or((1440.0, 900.0));
+    window_frame::place_first_window(&window, size);
 }
 
 /// Brings the running window forward when a second launch is refused (#109).

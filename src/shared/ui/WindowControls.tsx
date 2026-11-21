@@ -49,8 +49,8 @@ const CLOSE = (
 
 /** a caption button: 46 × the band, square, flush; its focus ring drawn inside — it touches the window's edge */
 const BUTTON = `flex h-10 w-(--caption-button) flex-none items-center justify-center transition-colors ${FOCUS_RING_INSET}`;
-/** Minimize and Maximize: `selected` under the pointer, `hover` while pressed */
-const PLAIN = "hover:bg-selected hover:text-ink active:bg-hover";
+/** Minimize and Maximize: `selected` under the pointer, `hover` with a muted glyph while pressed */
+const PLAIN = "hover:bg-selected hover:text-ink active:bg-hover active:text-muted";
 /** Close: the system's red under the pointer, deeper while pressed, a white glyph on both */
 const CLOSING =
   "hover:bg-caption-close hover:text-on-caption-close active:bg-caption-close-pressed active:text-on-caption-close";
@@ -58,7 +58,8 @@ const CLOSING =
  * The native Maximize spot takes the pointer from the page (Snap layouts,
  * `window_frame.rs`): its state comes from Rust and paints the same way
  */
-const NATIVE_SPOT = "data-[state=hover]:bg-selected data-[state=pressed]:bg-hover";
+const NATIVE_SPOT =
+  "data-[state=hover]:bg-selected data-[state=hover]:text-ink data-[state=pressed]:bg-hover data-[state=pressed]:text-muted";
 
 const act = (call: (win: NonNullable<ReturnType<typeof currentWindowOrNull>>) => Promise<void>) => {
   const win = currentWindowOrNull();

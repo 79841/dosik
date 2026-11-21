@@ -3184,6 +3184,8 @@ mod tests {
             .collect()
     }
 
+    // used by a test that runs on Unix only
+    #[cfg(unix)]
     fn order_strings(order: &[ItemKey]) -> Vec<String> {
         order.iter().map(ToString::to_string).collect()
     }

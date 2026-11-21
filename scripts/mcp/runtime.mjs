@@ -396,10 +396,15 @@ const UNINSTALL_KEY = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Unins
 /** the app's program on Windows: the bundle's product name */
 const WINDOWS_EXE = "Dosik.exe";
 
-/** the folder in `reg query`'s answer for InstallLocation, or null */
+/**
+ * The folder in `reg query`'s answer for InstallLocation, or null. The
+ * installer writes it in quotes. (`reg` answers in the console's code page: a
+ * folder with non-ASCII letters may come back unreadable, and then the
+ * per-user default is tried.)
+ */
 export const parseInstallLocation = (regOutput) => {
   const match = /InstallLocation\s+REG_(?:EXPAND_)?SZ\s+(.+)/i.exec(regOutput);
-  return match ? match[1].trim() : null;
+  return match ? match[1].trim().replace(/^"(.*)"$/, "$1") : null;
 };
 
 /**

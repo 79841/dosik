@@ -54,7 +54,7 @@ describe("image files (#8)", () => {
   });
 });
 
-describe("picture files dropped on the page itself — Windows, where the webview keeps file drops (spec R8)", () => {
+describe("picture files dropped on the page itself — Windows, where the webview keeps file drops", () => {
   const file = (name: string, bytes = 10) => {
     const f = new File([], name);
     Object.defineProperty(f, "size", { value: bytes });

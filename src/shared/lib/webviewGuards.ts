@@ -19,8 +19,8 @@ const carriesFiles = (e: DragEvent): boolean =>
   [...(e.dataTransfer?.types ?? [])].includes("Files");
 
 /**
- * What the webview would do on its own and an app must not, off macOS (spec
- * R6, R8). WebView2 shows a browser menu (Back, Reload, Save as, Print,
+ * What the webview would do on its own and an app must not, off macOS.
+ * WebView2 shows a browser menu (Back, Reload, Save as, Print,
  * Inspect) on any right click nothing took, and opens a file dropped where
  * nothing took it — navigating away from the app. So:
  *

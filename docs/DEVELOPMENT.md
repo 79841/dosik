@@ -9,7 +9,7 @@ Built with Tauri 2, React 19, React Flow, zustand, and Tailwind CSS 4.
 ```bash
 pnpm install
 pnpm tauri dev     # development run
-pnpm tauri build   # build installers — src-tauri/target/release/bundle/ (macOS: .app, .dmg)
+pnpm tauri build   # build installers — src-tauri/target/release/bundle/ (macOS: .app, .dmg; Windows: NSIS setup .exe)
 pnpm test          # vitest unit tests
 ```
 
@@ -48,7 +48,7 @@ This adds six tools.
 | `apply_ops` | Applies edit ops — in the app, the canvas updates immediately |
 | `describe_ops` | Lists the available ops, shapes, and colors — answers from the spec even without the app |
 | `export_diagram` | Exports to a file (`md`, `mmd`, `dosik.json`, `svg`) |
-| `open_in_dosik` | Opens a `.dosik.json` in the installed app (macOS) |
+| `open_in_dosik` | Opens a `.dosik.json` in the installed app (macOS and Windows) |
 | `render_diagram` | Draws a diagram — as an in-conversation app on hosts that render apps, otherwise as SVG |
 
 **Arguments choose the target.** Read, edit, and export take `file` (an absolute path to a `.dosik.json`).

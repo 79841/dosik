@@ -95,7 +95,9 @@ const isClickable = (el: HTMLElement): boolean =>
  * only itself. The band's empty places, and nothing else, are its title bar.
  */
 export const isOnDragRegion = (target: EventTarget | null): boolean => {
-  for (let el = target instanceof HTMLElement ? target : null; el; el = el.parentElement) {
+  for (let el = target instanceof Element ? target : null; el; el = el.parentElement) {
+    // what is not an HTML element (an icon's SVG) is passed over, as drag.js does
+    if (!(el instanceof HTMLElement)) continue;
     const attr = el.getAttribute("data-tauri-drag-region");
     if (attr === null) {
       if (isClickable(el)) return false;

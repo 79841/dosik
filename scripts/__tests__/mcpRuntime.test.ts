@@ -358,13 +358,18 @@ describe("MCP server runtime (#2)", () => {
     const REG_OUT = [
       "",
       "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Dosik",
-      "    InstallLocation    REG_SZ    D:\\Apps\\Dosik",
+      // the installer writes the folder in quotes
+      '    InstallLocation    REG_SZ    "D:\\Apps\\Dosik"',
       "",
     ].join("\r\n");
     const FILE = "C:\\Users\\someone\\Documents\\a.dosik.json";
 
     it("reads where the installer put Dosik from its uninstall entry", () => {
       expect(parseInstallLocation(REG_OUT)).toBe("D:\\Apps\\Dosik");
+      // written without quotes, the same
+      expect(parseInstallLocation("    InstallLocation    REG_SZ    D:\\Apps\\Dosik")).toBe(
+        "D:\\Apps\\Dosik",
+      );
       expect(
         parseInstallLocation("    InstallLocation    REG_EXPAND_SZ    %LOCALAPPDATA%\\Dosik"),
       ).toBe("%LOCALAPPDATA%\\Dosik");

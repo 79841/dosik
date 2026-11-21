@@ -193,6 +193,13 @@ describe("F11: full screen", () => {
     expect(state.fullscreen).toBe(false);
   });
 
+  it("two quick presses: the second waits for the first and leaves — not both entering", async () => {
+    const { win } = fakeWindow();
+    await Promise.all([toggleFullscreen(), toggleFullscreen()]);
+    expect(win.setFullscreen.mock.calls).toEqual([[true], [false]]);
+    expect(frame().fullscreen).toBe(false);
+  });
+
   it("moves on silently when the window refuses, and outside Tauri", async () => {
     const { win } = fakeWindow();
     win.setFullscreen.mockRejectedValue(new Error("not allowed"));

@@ -51,8 +51,8 @@ pub struct Rect {
 pub enum Placement {
     /// this size, at this place — the middle of the work area
     Centered(Rect),
-    /// the size does not fit the work area
-    Maximized,
+    /// the size does not fit the work area: maximized on it
+    Maximized(Rect),
 }
 
 /// The first window: `size` (logical) at the monitor's `scale`, in the middle
@@ -62,7 +62,7 @@ pub fn first_placement(work_area: Rect, scale: f64, size: (f64, f64)) -> Placeme
     let width = (size.0 * scale).round() as u32;
     let height = (size.1 * scale).round() as u32;
     if width > work_area.width || height > work_area.height {
-        return Placement::Maximized;
+        return Placement::Maximized(work_area);
     }
     Placement::Centered(Rect {
         x: work_area.x + ((work_area.width - width) / 2) as i32,
@@ -176,7 +176,13 @@ pub fn place_first_window<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>, s
             let _ = window.set_position(tauri::PhysicalPosition::new(rect.x, rect.y));
             let _ = window.set_size(tauri::PhysicalSize::new(rect.width, rect.height));
         }
-        Some(Placement::Maximized) => {
+        Some(Placement::Maximized(area)) => {
+            // maximizing a hidden window shows and hides it again (tao), a
+            // flash: it is given the work area first, shown, then maximized —
+            // which then changes nothing that shows
+            let _ = window.set_position(tauri::PhysicalPosition::new(area.x, area.y));
+            let _ = window.set_size(tauri::PhysicalSize::new(area.width, area.height));
+            let _ = window.show();
             let _ = window.maximize();
         }
         None => {
@@ -196,7 +202,7 @@ pub mod win32 {
     use tauri::{Emitter, Manager};
     use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3;
     use windows::core::{w, Interface, PCWSTR};
-    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, WPARAM};
     use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -204,13 +210,14 @@ pub mod win32 {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CreateWindowExW, DefWindowProcW, EnableMenuItem, FindWindowExW, GetCursorPos, GetParent,
-        GetSystemMenu, IsZoomed, PostMessageW, RegisterClassExW, SetMenuDefaultItem, SetWindowPos,
-        ShowWindow, TrackPopupMenu, HTMAXBUTTON, HWND_TOP, MENU_ITEM_FLAGS, MF_BYCOMMAND,
-        MF_ENABLED, MF_GRAYED, SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE,
-        SWP_NOACTIVATE, SWP_NOOWNERZORDER, SW_HIDE, SW_SHOWNOACTIVATE, TPM_LEFTBUTTON,
-        TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_NCHITTEST, WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN,
-        WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE, WM_SYSCOMMAND, WNDCLASSEXW, WS_CHILD,
-        WS_CLIPSIBLINGS, WS_EX_LAYERED, WS_EX_NOREDIRECTIONBITMAP,
+        GetSystemMenu, IsZoomed, PostMessageW, RegisterClassExW, SetLayeredWindowAttributes,
+        SetMenuDefaultItem, SetWindowPos, ShowWindow, TrackPopupMenu, HTMAXBUTTON, HWND_TOP,
+        LWA_ALPHA, MENU_ITEM_FLAGS, MF_BYCOMMAND, MF_ENABLED, MF_GRAYED, SC_CLOSE, SC_MAXIMIZE,
+        SC_MINIMIZE, SC_MOVE, SC_RESTORE, SC_SIZE, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SW_HIDE,
+        SW_SHOWNOACTIVATE, TPM_LEFTBUTTON, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_NCHITTEST,
+        WM_NCLBUTTONDBLCLK, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_NCMOUSEMOVE,
+        WM_SYSCOMMAND, WNDCLASSEXW, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_LAYERED,
+        WS_EX_NOREDIRECTIONBITMAP,
     };
 
     use super::{max_spot, max_spot_shown, menu_items, menu_point, MenuCommand, SpotState};
@@ -304,7 +311,18 @@ pub mod win32 {
         Ok(())
     }
 
+    /// the state the web side was last told, so a pointer moving over the spot sends nothing new
+    static TOLD: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
     fn tell(state: SpotState) {
+        let code = match state {
+            SpotState::Rest => 0,
+            SpotState::Hover => 1,
+            SpotState::Pressed => 2,
+        };
+        if TOLD.swap(code, std::sync::atomic::Ordering::Relaxed) == code {
+            return;
+        }
         if let Some(app) = APP.get() {
             let _ = app.emit(super::MAX_BUTTON_EVENT, state.as_str());
         }
@@ -337,7 +355,7 @@ pub mod win32 {
                 } else {
                     SpotState::Hover
                 });
-                return LRESULT(0);
+                // on to Windows, which offers Snap layouts for a pointer resting on HTMAXBUTTON
             }
             WM_NCLBUTTONDOWN | WM_NCLBUTTONDBLCLK => {
                 PRESSED.store(true, Ordering::Relaxed);
@@ -448,9 +466,17 @@ pub mod win32 {
                 instance,
                 None,
             );
-            if let Err(error) = created {
+            let spot = match created {
+                Ok(spot) => spot,
+                Err(error) => {
+                    eprintln!("dosik: no Snap layouts on Maximize: {error}");
+                    return;
+                }
+            };
+            // a layered window is not shown — and gets no pointer — until its
+            // attributes are set; with no redirection surface, opaque draws nothing
+            if let Err(error) = SetLayeredWindowAttributes(spot, COLORREF(0), 255, LWA_ALPHA) {
                 eprintln!("dosik: no Snap layouts on Maximize: {error}");
-                return;
             }
         }
         place_max_spot(window);
@@ -491,7 +517,7 @@ mod tests {
         };
         assert_eq!(
             first_placement(small, 1.0, (1440.0, 900.0)),
-            Placement::Maximized
+            Placement::Maximized(small)
         );
         // one pixel short in either direction is enough
         let narrow = Rect {
@@ -500,7 +526,7 @@ mod tests {
         };
         assert_eq!(
             first_placement(narrow, 1.0, (1440.0, 900.0)),
-            Placement::Maximized
+            Placement::Maximized(narrow)
         );
     }
 
@@ -545,7 +571,7 @@ mod tests {
         // 125% on a 1080p laptop: 1800×1125 is taller than the work area
         assert_eq!(
             first_placement(WORK_1080P, 1.25, (1440.0, 900.0)),
-            Placement::Maximized
+            Placement::Maximized(WORK_1080P)
         );
     }
 

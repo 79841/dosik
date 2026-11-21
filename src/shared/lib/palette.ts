@@ -155,7 +155,7 @@ export const nodeLabelColor = (
  * label sizes assume this monospaced face (`textLayout.ts`).
  */
 export const FONT_MONO =
-  "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, 'Malgun Gothic', 'Segoe UI Emoji', monospace";
+  "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, 'Apple SD Gothic Neo', Consolas, 'Malgun Gothic', 'Segoe UI Emoji', monospace";
 
 /** Default edge color when no palette color is set (light theme): the ink (#210). */
 export const EDGE_STROKE = INK_LIGHT;

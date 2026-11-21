@@ -118,7 +118,18 @@ export const useWindowFrameWatch = (mac: boolean = isMacPlatform()): void => {
  * store, so a full screen left some other way is not entered twice. The
  * first time in a run it says how to leave.
  */
-export const toggleFullscreen = async (): Promise<void> => {
+/** a toggle under way — a second press waits for it instead of reading the same state */
+let toggling: Promise<void> | null = null;
+
+export const toggleFullscreen = (): Promise<void> => {
+  const run = (toggling ?? Promise.resolve()).then(toggleOnce);
+  toggling = run.finally(() => {
+    if (toggling === run) toggling = null;
+  });
+  return run;
+};
+
+const toggleOnce = async (): Promise<void> => {
   const win = currentWindowOrNull();
   if (!win) return;
   try {

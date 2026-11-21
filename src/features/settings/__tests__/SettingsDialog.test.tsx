@@ -801,11 +801,20 @@ describe("Settings off macOS: the caption buttons ride above the scrim (the canv
     expect(dialog()).toHaveAttribute("open");
   });
 
+  it("in a small window the dialog keeps 56 clear above and below — off the band and the caption buttons", () => {
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(dialog()).toHaveClass("max-h-[calc(100vh-112px)]");
+    expect(dialog()).not.toHaveClass("max-h-[calc(100vh-32px)]");
+  });
+
   it("not on macOS", () => {
     pretendMac();
     render(<SettingsDialog />);
     act(() => openSettings("General"));
     expect(within(dialog()).queryByRole("group", { name: "Window" })).toBeNull();
+    // macOS keeps its 16 margin
+    expect(dialog()).toHaveClass("max-h-[calc(100vh-32px)]");
   });
 });
 

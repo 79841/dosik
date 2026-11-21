@@ -282,7 +282,7 @@ jobs:
           [ "${#installers[@]}" -eq 1 ] || { echo "::error::expected one installer, found ${#installers[@]}"; exit 1; }
           version="$(node -p "require('./package.json').version")"
           [ "$(basename "${installers[0]}")" = "Dosik_${version}_x64-setup.exe" ] || { echo "::error::the installer is not Dosik_${version}_x64-setup.exe"; exit 1; }
-          runner_home="${USERPROFILE##*[\\/]}"
+          runner_home="$USERNAME"
           for exe in src-tauri/target/release/*.exe; do
             homes="$(grep -aoE '[A-Za-z]:[\\/]+[Uu]sers[\\/]+[A-Za-z0-9._-]+' "$exe" | sed -E 's#.*[\\/]##' | sort -fu | grep -vixF "$runner_home" || true)"
             [ -z "$homes" ] || { echo "::error::$(basename "$exe") contains local home paths"; exit 1; }

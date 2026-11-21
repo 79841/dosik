@@ -61,6 +61,21 @@ describe("isOnDragRegion — Tauri's own rule for what drags the window (drag.js
     expect(isOnDragRegion(at("<div data-tauri-drag-region><b data-t></b></div>"))).toBe(false);
   });
 
+  it("an icon's SVG is passed over as Tauri does — it drags in the band, not on a button", () => {
+    const icon = (around: string) => {
+      document.body.innerHTML = around;
+      return document.querySelector("path") as Element;
+    };
+    expect(
+      isOnDragRegion(icon('<div data-tauri-drag-region="deep"><svg><path/></svg></div>')),
+    ).toBe(true);
+    expect(
+      isOnDragRegion(
+        icon('<div data-tauri-drag-region="deep"><button><svg><path/></svg></button></div>'),
+      ),
+    ).toBe(false);
+  });
+
   it("outside any region, or no element at all: no drag", () => {
     expect(isOnDragRegion(at("<div><span data-t></span></div>"))).toBe(false);
     expect(isOnDragRegion(null)).toBe(false);

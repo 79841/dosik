@@ -2,11 +2,11 @@
 
 <p align="center">
   <b>Clean diagrams, drawn by you or by AI.</b><br>
-  Flowcharts, architecture, sequence, class, and ER diagrams in a calm desktop app for macOS.
+  Flowcharts, architecture, sequence, class, and ER diagrams in a calm desktop app for macOS and Windows.
 </p>
 
 <p align="center">
-  <a href="https://github.com/79841/dosik/releases/latest"><b>Download for macOS</b></a>
+  <a href="https://github.com/79841/dosik/releases/latest"><b>Download for macOS and Windows</b></a>
 </p>
 
 ![Dosik editor with an architecture diagram](docs/images/editor.png)
@@ -36,14 +36,14 @@ Click **Ask AI**, describe what you want in plain words, and watch it appear on 
 
 ![The AI assistant drawing a diagram](docs/images/ai-chat.png)
 
-Choose Claude or GPT in **Settings ▸ AI assistant** (⌘,). Each can connect two ways:
+Choose Claude or GPT in **Settings ▸ AI assistant** (⌘, — Ctrl+, on Windows). Each can connect two ways:
 
 | | Subscription — no API key | API key — pay per use |
 |---|---|---|
-| **Claude** | Your Claude plan, through [Claude Code](https://claude.com/claude-code) signed in on this Mac | An Anthropic API key |
-| **GPT** | Your ChatGPT plan, through the Codex CLI signed in on this Mac | An OpenAI API key |
+| **Claude** | Your Claude plan, through [Claude Code](https://claude.com/claude-code) signed in on your computer | An Anthropic API key |
+| **GPT** | Your ChatGPT plan, through the Codex CLI signed in on your Mac (macOS only) | An OpenAI API key |
 
-API keys are kept in the macOS Keychain.
+API keys are kept in the macOS Keychain, or in Windows Credential Manager.
 
 ## Use Dosik from Claude and ChatGPT
 
@@ -74,32 +74,36 @@ Claude Code and Codex need Node.js 18 or later; the Claude Desktop extension bri
 ## Share it anywhere
 
 - **Export ▾** in the toolbar: Markdown (Mermaid), PNG, or SVG — save a file or copy to the clipboard. Right-click shapes to export just those
-- **Paste Mermaid** with ⌘V and it becomes shapes you can edit
+- **Paste Mermaid** with ⌘V (Ctrl+V on Windows) and it becomes shapes you can edit
 - **Mermaid preview** (`<>` in the toolbar) shows your diagram as Mermaid, side by side
 
 ![Mermaid preview next to a flowchart](docs/images/mermaid.png)
 
 ## Light or dark
 
-Follow macOS, or pick one in Settings ▸ General.
+Follow the system, or pick one in Settings ▸ General.
 
 ![Dosik in dark mode](docs/images/dark.png)
 
 ## Install
 
-Download the `.dmg` for your Mac from [Releases](https://github.com/79841/dosik/releases/latest), open it, and drag Dosik to Applications.
+Download the file for your computer from [Releases](https://github.com/79841/dosik/releases/latest).
 
-| Mac | File |
+| Computer | File |
 |---|---|
-| Apple silicon (M1 and later) | `Dosik_<version>_aarch64.dmg` |
-| Intel | `Dosik_<version>_x64.dmg` |
+| Mac with Apple silicon (M1 and later) | `Dosik_<version>_aarch64.dmg` |
+| Mac with Intel | `Dosik_<version>_x64.dmg` |
+| Windows 10 or 11 (64-bit) | `Dosik_<version>_x64-setup.exe` |
 
-- macOS 11 or later. Signed with Developer ID and notarized by Apple, so it opens normally
-- Windows and Linux versions are not available yet
-- Your diagrams are plain `.dosik.json` files on your Mac — Settings ▸ General shows where. Nothing leaves your Mac unless you use an AI feature
-- Dosik doesn't show up in Finder's "Open With" yet; open files with **Open file…** in the sidebar
+- **Mac**: open the `.dmg` and drag Dosik to Applications. macOS 11 or later. Signed with Developer ID and notarized by Apple, so it opens normally
+- **Windows**: run the setup file. It installs for your user only, with no administrator rights. The installer is not code-signed yet, so Windows SmartScreen may stop it — choose **More info**, then **Run anyway**. Dosik runs on Microsoft Edge WebView2, which Windows 11 has; on a PC without it, the installer downloads it
+- Linux versions are not available yet
+- Your diagrams are plain `.dosik.json` files on your computer — Settings ▸ General shows where. Nothing leaves your computer unless you use an AI feature
+- Dosik doesn't show up in "Open With" yet; open files with **Open file…** in the sidebar
 
 ## Shortcuts
+
+On Windows, press Ctrl where it says ⌘ (⇧ is Shift). F11 turns full screen on and off.
 
 | Keys | Action |
 |---|---|

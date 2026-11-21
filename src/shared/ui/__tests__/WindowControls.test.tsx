@@ -122,10 +122,10 @@ describe("Windows caption buttons (the canvas's Win-Caption)", () => {
     }
   });
 
-  it("Minimize and Maximize: `selected` under the pointer, `hover` while pressed", () => {
+  it("Minimize and Maximize: `selected` under the pointer, `hover` with a muted glyph while pressed", () => {
     render(<WindowControls platform="other" />);
     for (const name of ["Minimize", "Maximize"]) {
-      expect(button(name)).toHaveClass("hover:bg-selected", "active:bg-hover");
+      expect(button(name)).toHaveClass("hover:bg-selected", "active:bg-hover", "active:text-muted");
     }
   });
 
@@ -180,6 +180,11 @@ describe("Windows caption buttons (the canvas's Win-Caption)", () => {
     expect(button("Maximize")).toHaveClass("data-[state=hover]:bg-selected");
     act(() => useWindowFrame.setState({ maxButton: "pressed" }));
     expect(button("Maximize")).toHaveClass("data-[state=pressed]:bg-hover");
+    // the glyph as a pointer's: lit under it — in a window not focused too — and muted while pressed
+    expect(button("Maximize")).toHaveClass(
+      "data-[state=hover]:text-ink",
+      "data-[state=pressed]:text-muted",
+    );
     // the others have no native spot
     expect(button("Minimize")).not.toHaveAttribute("data-state");
   });

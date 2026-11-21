@@ -16,7 +16,7 @@ const drag = (type: "dragover" | "drop", types: string[]): Event => {
   return e;
 };
 
-describe("the webview's own behaviour off macOS (spec R6, R8)", () => {
+describe("the webview's own behaviour off macOS", () => {
   let stop: () => void = () => {};
 
   beforeEach(() => {

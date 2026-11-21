@@ -728,21 +728,28 @@ fn open_with_claude<R: tauri::Runtime>(
         let program = claude_desktop_exe_candidates(&places.local_data)
             .into_iter()
             .find(|p| p.exists());
-        return match (program, file) {
-            (Some(program), file) => {
-                let mut cmd = std::process::Command::new(program);
-                if let Some(file) = file {
-                    cmd.arg(file);
-                }
-                cmd.spawn()
-                    .map(|_| ())
-                    .map_err(|_| "Claude Desktop could not be opened.".to_string())
+        let opened = match file {
+            // the extension through the association Claude Desktop registers —
+            // surer than a guessed program, which may not pass the file on
+            Some(file) => {
+                app.opener()
+                    .open_path(file.to_string_lossy(), None::<&str>)
+                    .is_ok()
+                    || program.is_some_and(|program| {
+                        std::process::Command::new(program)
+                            .arg(file)
+                            .spawn()
+                            .is_ok()
+                    })
             }
-            (None, Some(file)) => app
-                .opener()
-                .open_path(file.to_string_lossy(), None::<&str>)
-                .map_err(|_| "Claude Desktop could not be opened.".to_string()),
-            (None, None) => Err("Claude Desktop could not be found.".into()),
+            None => {
+                program.is_some_and(|program| std::process::Command::new(program).spawn().is_ok())
+            }
+        };
+        return if opened {
+            Ok(())
+        } else {
+            Err("Claude Desktop could not be opened.".into())
         };
     }
     let mut cmd = std::process::Command::new("open");

@@ -27,21 +27,23 @@ vi.mock("../useImageFileDrop", async (importOriginal) => ({
 const { DiagramCanvas } = await import("../DiagramCanvas");
 const { ReactFlowProvider } = await import("@xyflow/react");
 const { useToastStore } = await import("../../../shared/lib/toastStore");
+const { useDiagramStore } = await import("../../../shared/lib/store");
+const { SHAPE_DRAG_MIME } = await import("../DiagramCanvas");
 
 const file = (name: string) => new File(["x"], name);
-/** what a drop carrying these files hands the canvas */
-const drop = (files: File[]) => {
+/** what a drop carrying these files (or a shape from the strip) hands the canvas */
+const drop = (files: File[], shape = "") => {
   const event = {
     clientX: 10,
     clientY: 20,
     preventDefault: vi.fn(),
-    dataTransfer: { files, getData: () => "" },
+    dataTransfer: { files, getData: (type: string) => (type === SHAPE_DRAG_MIME ? shape : "") },
   };
   (captured.onDrop as (e: unknown) => void)(event);
   return event;
 };
 
-describe("files dropped on the canvas (spec R8)", () => {
+describe("files dropped on the canvas", () => {
   beforeEach(() => {
     placing.placeBlobs.mockClear();
     useToastStore.getState().dismissAll();
@@ -66,6 +68,15 @@ describe("files dropped on the canvas (spec R8)", () => {
     expect(useToastStore.getState().toasts.map((t) => t.text)).toEqual([
       "Error: Only png, jpg, jpeg, gif, webp pictures can be dropped here",
     ]);
+  });
+
+  it("a shape dragged from the strip becomes a node — the HTML5 drag the webview now hands over", () => {
+    const before = useDiagramStore.getState().nodes.length;
+    const e = drop([], "diamond");
+    expect(e.preventDefault).toHaveBeenCalled();
+    const nodes = useDiagramStore.getState().nodes;
+    expect(nodes).toHaveLength(before + 1);
+    expect(nodes.at(-1)?.data.shape).toBe("diamond");
   });
 
   it("a drop with no files and no shape is left alone", () => {

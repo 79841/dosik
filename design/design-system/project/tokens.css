@@ -176,7 +176,7 @@
   --grid-gutter: 16px;
   --baseline: 4px;
   --font-sans: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Malgun Gothic", "Segoe UI Emoji", monospace;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, "Apple SD Gothic Neo", Consolas, "Malgun Gothic", "Segoe UI Emoji", monospace;
 }
 .type-title-xl { font-family: var(--font-sans); font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.015em; }
 .type-title-lg { font-family: var(--font-sans); font-size: 16px; line-height: 24px; font-weight: 600; }

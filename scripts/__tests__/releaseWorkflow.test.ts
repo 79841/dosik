@@ -44,7 +44,7 @@ describe("release: the Windows x64 installer", () => {
     expect(check).toMatch(/Dosik_\$\{version\}_x64-setup\.exe/);
     expect(check).toMatch(/expected one installer/);
     expect(check).toMatch(/\[Uu\]sers/);
-    expect(check).toMatch(/USERPROFILE/);
+    expect(check).toMatch(/USERNAME/);
   });
 
   it("attests the installer's provenance and uploads it, replacing an earlier run's", () => {

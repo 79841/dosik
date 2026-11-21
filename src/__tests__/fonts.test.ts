@@ -54,10 +54,11 @@ describe("faces: Manrope for the interface, IBM Plex Mono for the diagram (#216 
   it("the mono stack names Windows' faces after the macOS ones, before the generic family", () => {
     // Plex Mono has no Hangul and no emoji: on Windows they would fall to
     // whatever the webview picks, and the canvas and the SVG export could pick
-    // differently. The macOS faces come first, so a Mac never reaches these
+    // differently. macOS's Hangul face comes before Windows' — a Mac with
+    // Malgun Gothic installed keeps the face its label widths were measured with
     const mono = DESIGN_TOKENS.type.families.mono;
     expect(mono).toBe(
-      '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Malgun Gothic", "Segoe UI Emoji", monospace',
+      '"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, "Apple SD Gothic Neo", Consolas, "Malgun Gothic", "Segoe UI Emoji", monospace',
     );
   });
 });
