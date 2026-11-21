@@ -1,6 +1,6 @@
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { waitFor } from "@testing-library/react";
+import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useToastStore } from "../toastStore";
@@ -10,6 +10,7 @@ import {
   resetWindowFrame,
   toggleFullscreen,
   useWindowFrame,
+  useWindowFrameWatch,
   watchWindowFrame,
 } from "../windowFrame";
 
@@ -126,6 +127,26 @@ describe("the window's frame state, off macOS (the canvas's Win-Caption)", () =>
     await waitFor(() => expect(mockedListen).toHaveBeenCalled());
     stop();
     await waitFor(() => expect(off).toHaveBeenCalledTimes(2));
+  });
+
+  it("a focus that cannot be read leaves the glyphs as they are", async () => {
+    const { win } = fakeWindow();
+    win.isFocused.mockRejectedValue(new Error("window is going away"));
+    watchWindowFrame();
+    await waitFor(() => expect(win.isFocused).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(frame().focused).toBe(true);
+  });
+
+  it("the Frame follows the window off macOS only — on macOS the native window has its frame", async () => {
+    const { win } = fakeWindow();
+    const mac = renderHook(() => useWindowFrameWatch(true));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(win.onResized).not.toHaveBeenCalled();
+    mac.unmount();
+    const other = renderHook(() => useWindowFrameWatch(false));
+    await waitFor(() => expect(win.onResized).toHaveBeenCalledTimes(1));
+    other.unmount();
   });
 
   it("does nothing outside Tauri", () => {
