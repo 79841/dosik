@@ -1,6 +1,6 @@
 [package]
 name = "dosik"
-version = "0.1.0"
+version = "0.2.0"
 description = "Dosik — a diagram app AI agents can edit"
 authors = ["Dosik"]
 license = "MIT"
