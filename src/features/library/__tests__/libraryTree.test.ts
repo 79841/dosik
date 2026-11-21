@@ -5,6 +5,8 @@ import {
   allDiagrams,
   canHoldFolders,
   canMoveDiagrams,
+  canMoveFolder,
+  canPlace,
   childrenOf,
   diagramsUnder,
   findDiagram,
@@ -12,10 +14,15 @@ import {
   folderList,
   foldersUnder,
   isInside,
+  isMissing,
   itemCount,
+  latestProject,
   newestFirst,
+  placedInList,
   projectOf,
   savableFolder,
+  siblingsOf,
+  takesItems,
 } from "../libraryTree";
 
 const diagram = (id: string, updatedAt = 1, title = id): ProjectMeta => ({
@@ -183,5 +190,63 @@ describe("libraryTree (#229 D8·D10, T33)", () => {
     expect(canHoldFolders(lib, "c9")).toBe(true);
     expect(canHoldFolders(lib, "c10")).toBe(false);
     expect(canHoldFolders(lib, "gone")).toBe(false);
+  });
+});
+
+/** a project whose folder cannot be found (#253 D9, R7): its place kept, nothing goes into it */
+describe("a project not found (#253 R7)", () => {
+  /** Payments · architecture (not found, its frame placed) · Onboarding */
+  const lib = (): FolderMeta[] => [
+    folder("pay", "Payments", 5, [diagram("led", 5)], [folder("chk", "Checkout", 4)]),
+    folder("arc", "architecture", 0, [], [], { missing: true, board: { x: 40, y: 80 } }),
+    folder("on", "Onboarding", 2, [diagram("wel", 2)]),
+  ];
+
+  it("isMissing and takesItems — one rule: not found, or the stray listing, takes nothing", () => {
+    const [pay, arc] = lib();
+    expect(isMissing(arc!)).toBe(true);
+    expect(isMissing(pay!)).toBe(false);
+    expect(takesItems(pay!)).toBe(true);
+    expect(takesItems(arc!)).toBe(false);
+    expect(takesItems(folder("default", "My Diagrams", 1, [], [], { stray: true }))).toBe(false);
+  });
+
+  it("is no place to save in, move to or drop on", () => {
+    expect(savableFolder(lib(), "arc")).toBeNull();
+    expect(canPlace(lib(), "diagram:led", "arc")).toBe(false);
+    expect(canPlace(lib(), "folder:chk", "arc")).toBe(false);
+    // the rest of the library still takes them
+    expect(canPlace(lib(), "diagram:led", "on")).toBe(true);
+  });
+
+  it("does not move itself, yet keeps its place among the projects", () => {
+    expect(canPlace(lib(), "folder:arc", null)).toBe(false);
+    expect(canPlace(lib(), "folder:on", null)).toBe(true);
+    expect(siblingsOf(lib(), "folder:on")).toEqual({
+      parent: null,
+      keys: ["folder:pay", "folder:arc", "folder:on"],
+      index: 2,
+    });
+    expect(placedInList(lib(), "folder:on", { parent: null, index: 0 }).map((f) => f.id)).toEqual([
+      "on",
+      "pay",
+      "arc",
+    ]);
+  });
+
+  it("is never where a new diagram goes by default — not even as the only project", () => {
+    expect(latestProject(lib())?.id).toBe("pay");
+    expect(latestProject([lib()[1]!])).toBeNull();
+  });
+
+  it("is no destination for Move to… — left out of the folder list", () => {
+    expect(folderList(lib()).map(({ folder: f }) => f.id)).toEqual(["pay", "chk", "on"]);
+    expect(canMoveDiagrams([lib()[0]!, lib()[1]!].map((f) => ({ ...f, folders: [] })))).toBe(false);
+    expect(canMoveFolder([lib()[0]!, lib()[1]!], "chk")).toBe(false);
+  });
+
+  it("lists none of its diagrams — Recent and the counts leave it out, whatever a listing carried", () => {
+    const carried = lib().map((f) => (f.missing ? { ...f, diagrams: [diagram("ghost", 9)] } : f));
+    expect(allDiagrams(carried).map((e) => e.diagram.id)).toEqual(["led", "wel"]);
   });
 });

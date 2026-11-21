@@ -183,6 +183,39 @@ describe("dropAt — dragging a project: project blocks (#230 D9)", () => {
   });
 });
 
+describe("a project not found (#253 R7)", () => {
+  /** onb · lost (not found) · pay ▾ […] */
+  const lost = (): FolderMeta[] => {
+    const [onb, pay] = library();
+    return [onb!, folder("lost", [], [], { missing: true }), pay!];
+  };
+  const s = scene(lost(), ["pay", "chk"]);
+
+  it("takes nothing dropped on it — its row is no way in", () => {
+    expect(s.at("diagram:pyt", s.top("folder:lost") + 13)).toBeNull();
+    expect(s.at("folder:chk", s.top("folder:lost") + 2)).toBeNull();
+  });
+
+  it("keeps its place among the projects — a project dragged past it counts it", () => {
+    expect(s.at("folder:onb", s.top("diagram:pyt") + 20)).toMatchObject({
+      placement: { parent: null, index: 2 },
+    });
+    expect(s.at("folder:pay", s.top("folder:lost") + 2)).toEqual({
+      kind: "slot",
+      placement: { parent: null, index: 1 },
+      line: { row: "folder:lost", edge: "top", level: 1 },
+    });
+  });
+
+  it("does not move itself — no drop, no ⌥↑/⌥↓", () => {
+    expect(s.at("folder:lost", 50)).toBeNull();
+    expect(keyboardStep(lost(), "folder:lost", -1)).toBeNull();
+    expect(keyboardStep(lost(), "folder:lost", 1)).toBeNull();
+    // the others step over it
+    expect(keyboardStep(lost(), "folder:pay", -1)).toEqual({ parent: null, index: 1, count: 3 });
+  });
+});
+
 describe("keyboardStep (#230 D10, T14)", () => {
   it("a slot between siblings — edge at the ends, null for stray", () => {
     expect(keyboardStep(library(), "diagram:led", 1)).toEqual({

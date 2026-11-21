@@ -88,6 +88,17 @@ describe("Move to… picker (#229 D13)", () => {
     expect(line(/^Archive/).querySelector("[data-spacer]")).toHaveClass("w-3.5");
   });
 
+  it("a project not found is no destination — left out like the stray listing (#253 R7)", () => {
+    show({
+      folders: [
+        ...library(),
+        { ...folder("lost", "architecture", 0), diagrams: [], missing: true },
+      ],
+    });
+    expect(names()).not.toContain("architecture, project");
+    expect(within(tree()).queryByText("architecture")).toBeNull();
+  });
+
   it("the current parent — check, 'Current', disabled (name at 35%), chevron still works", async () => {
     const { onMove } = show();
     const current = row(/^Payments/);

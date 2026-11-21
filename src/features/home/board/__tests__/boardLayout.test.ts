@@ -254,6 +254,17 @@ describe("drop target — another folder's frame, only when canPlace allows (#23
     expect(dropTarget(layout, "diagram:pay-0", "pay", { x: 5000, y: 5000 })).toBeNull();
   });
 
+  it("a project not found takes no card — its frame is in its place, but no way in (#253 R7)", () => {
+    const lost: FolderMeta[] = [
+      pay,
+      folder("arc", 0, { missing: true, board: { x: 0, y: 600 }, diagrams: [] }),
+    ];
+    const lostLayout = persistentLayout(lost, effectiveBoards(lost, {}), {});
+    expect(lostLayout.byId.get("arc")).toMatchObject({ x: 0, y: 600, pinned: true });
+    expect(dropTarget(lostLayout, "diagram:pay-0", "pay", onOnb)).toBeNull();
+    expect(dropTarget(lostLayout, "folder:chk", "pay", onOnb)).toBeNull();
+  });
+
   it("folder card → another project frame ○ — with its subfolders", () => {
     expect(dropTarget(layout, "folder:chk", "pay", onOnb)).toBe("onb");
     expect(dropTarget(layout, "folder:chk", "pay", onPay)).toBeNull();

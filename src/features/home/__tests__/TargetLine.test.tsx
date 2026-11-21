@@ -82,6 +82,24 @@ describe("New diagrams go to … · Change (#220 D8, T23)", () => {
     expect(document.querySelector(".bg-project-grey")).toBeNull();
   });
 
+  it("a project not found is no choice — and never the line's name (#253 R7)", async () => {
+    useLibraryStore.setState({
+      folders: [
+        project("lost", "architecture", { updatedAt: 9, missing: true }),
+        project("work", "Work", { updatedAt: 2 }),
+        project("side", "Side"),
+      ],
+    });
+    const user = userEvent.setup();
+    render(<TargetLine />);
+    expect(spoken(change().parentElement!)).not.toContain("architecture");
+    await user.click(change());
+    expect(screen.getAllByRole("menuitemradio").map((i) => i.textContent)).toEqual([
+      "Work",
+      "Side",
+    ]);
+  });
+
   it("choosing changes the label, closes the menu, and moves focus to Change", async () => {
     const user = userEvent.setup();
     render(<TargetLine />);

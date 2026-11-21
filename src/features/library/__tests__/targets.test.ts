@@ -97,6 +97,24 @@ describe("where a new diagram goes (#220 D8)", () => {
       expect(targetFolder()).toBe("side");
     });
 
+    it("a project not found is never a target — Home showing it, Change having picked it, or the newest (#253 R7)", () => {
+      const lost: FolderMeta = {
+        id: "arc",
+        name: "architecture",
+        updatedAt: 99,
+        missing: true,
+        diagrams: [],
+        folders: [],
+      };
+      useLibraryStore.setState({ folders: [lost, ...library()] });
+      showHomeTab({ kind: "folder", folder: "arc" });
+      expect(targetFolder()).toBe("work");
+      useAppStore.setState({ newDiagramTarget: "arc" });
+      expect(targetFolder()).toBe("work");
+      expect(namedTarget([lost, ...library()], "arc")?.id).toBe("work");
+      expect(defaultTarget([lost])).toBeNull();
+    });
+
     it("a diagram in a stray project is not a target — it has no folder", () => {
       openDocument(blankDoc(), { projectId: "lost" });
       expect(targetFolder()).toBe("work");
