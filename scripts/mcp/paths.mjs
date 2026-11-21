@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -47,3 +47,60 @@ export const resolveMcpPaths = (here) => {
 
 /** this server's own paths — bundled into one file, `import.meta.url` is that file */
 export const MCP_PATHS = resolveMcpPaths(dirname(fileURLToPath(import.meta.url)));
+
+/** the path rules of `platform` — Windows paths can be worked out on any machine, for tests */
+const pathsOf = (platform) => (platform === "win32" ? win32 : posix);
+
+/** `value` when it is a whole path on `platform` */
+const absolute = (value, platform) =>
+  typeof value === "string" && value !== "" && pathsOf(platform).isAbsolute(value)
+    ? value
+    : undefined;
+
+/**
+ * The app's data folder, where it keeps its library record — Tauri's app
+ * data folder for the bundle identifier: `~/Library/Application Support/<id>`
+ * on macOS, `%APPDATA%\<id>` on Windows, `$XDG_DATA_HOME/<id>` (else
+ * `~/.local/share/<id>`) on Linux. `DOSIK_APP_DATA` names another one — a
+ * test instance built with an identifier of its own (#253).
+ */
+export const appDataDir = (bundleId, platform, env, home) => {
+  const told = absolute(env.DOSIK_APP_DATA, platform);
+  if (told) return told;
+  const paths = pathsOf(platform);
+  if (platform === "darwin") return paths.join(home, "Library", "Application Support", bundleId);
+  if (platform === "win32") {
+    return paths.join(
+      absolute(env.APPDATA, platform) ?? paths.join(home, "AppData", "Roaming"),
+      bundleId,
+    );
+  }
+  return paths.join(
+    absolute(env.XDG_DATA_HOME, platform) ?? paths.join(home, ".local", "share"),
+    bundleId,
+  );
+};
+
+/**
+ * Whether to work with a development run's library — `DOSIK_DEV=1`. A
+ * development run of the app keeps its record in `library-dev` and its
+ * projects in `Documents/Dosik Dev`, apart from the real ones; this is how
+ * the MCP server is pointed at the same two.
+ */
+export const isDevRun = (env) => /^(1|true|yes)$/i.test(env.DOSIK_DEV ?? "");
+
+/** where in the app data the library's record and inbox are: `library`, or `library-dev` */
+export const libraryRecordDir = (appData, dev, platform) =>
+  pathsOf(platform).join(appData, dev ? "library-dev" : "library");
+
+/**
+ * The library folder by the app's own rule, for when its record does not
+ * name it yet: the folder `DOSIK_LIBRARY_DIR` names, when whole; else `Dosik`
+ * in Documents — `Dosik Dev` for a development run. (The app asks the OS for
+ * Documents; here it is the one in the home folder, which it is unless moved.)
+ */
+export const libraryLocation = (env, dev, home, platform) => {
+  const told = absolute(env.DOSIK_LIBRARY_DIR, platform);
+  if (told) return told;
+  return pathsOf(platform).join(home, "Documents", dev ? "Dosik Dev" : "Dosik");
+};

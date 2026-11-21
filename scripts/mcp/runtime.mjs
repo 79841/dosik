@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import { MCP_PATHS } from "./paths.mjs";
-import { ToolError } from "./tools.mjs";
+import { ToolError } from "./toolError.mjs";
 
 /**
  * The side of the MCP server that starts processes and writes files (#2).

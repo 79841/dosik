@@ -1,11 +1,15 @@
 import { isAbsolute } from "node:path";
 
 import { bridgeUrl, probeBridge, resolvePort, sendOps } from "../opsClient.mjs";
+import { LIBRARY_TOOL_NAMES, libraryToolDefinitions, runLibraryTool } from "./library.mjs";
 import { applyOpsSchema, loadSpec, opNames } from "./opSchema.mjs";
+import { ToolError } from "./toolError.mjs";
 import { LEGACY_URI_KEY, VIEW_URI, viewSummaryText } from "./view.mjs";
 
 /**
- * The six tools an agent sees, and what each one does (#2, #149, #148).
+ * The tools an agent sees, and what each one does (#2, #149, #148): six for
+ * a diagram, here, and five for the library's projects and folders, in
+ * `library.mjs` (#253).
  *
  * The bridge speaks eleven ops, but they are not eleven tools: `op` is already
  * one well-defined language with its schema in `docs/openapi.yaml`, and
@@ -22,7 +26,7 @@ import { LEGACY_URI_KEY, VIEW_URI, viewSummaryText } from "./view.mjs";
  * Everything here is pure except the injected `deps`, so the decisions can be
  * tested without a running app.
  */
-export class ToolError extends Error {}
+export { ToolError };
 
 /**
  * A result already in MCP's own shape (`content` + `structuredContent`), which
@@ -192,6 +196,7 @@ export const toolDefinitions = (spec = loadSpec(), { view = false } = {}) => [
     },
   },
   view ? renderInView : renderAsSvg,
+  ...libraryToolDefinitions(),
 ];
 
 /**
@@ -332,6 +337,8 @@ export const requireBridge = async (deps) => {
  *   shape follows the variant the client was given
  */
 export const runTool = async (name, args, deps, { view = false } = {}) => {
+  // the library is folders on disk: no app, no bridge (#253)
+  if (LIBRARY_TOOL_NAMES.includes(name)) return runLibraryTool(name, args, deps.library);
   switch (name) {
     case "get_diagram": {
       if (hasFile(args)) return elideImages(await deps.fileMode.read(checkFile(args.file)));

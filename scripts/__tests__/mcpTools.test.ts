@@ -1,5 +1,10 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
+import { createLibrary } from "../mcp/library.mjs";
 import { applyOpsSchema, loadSpec, opNames } from "../mcp/opSchema.mjs";
 import { HEADLESS_FORMATS, WINDOWED_FORMATS } from "../../src/features/headless/cli";
 import { DRAWING_META_KEY as VIEW_DRAWING_KEY } from "../../src/features/mcp-view/diagramView";
@@ -45,10 +50,11 @@ const deps = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("MCP tools (#2)", () => {
-  it("has six tools — not one per op", () => {
+  it("has six tools for a diagram — not one per op — and five for the library", () => {
     // ops are already one language defined by the spec. Spreading them over 11
     // tools would write that spec in two places. The fifth is an explicit tool
-    // that opens a file in the app (#149)
+    // that opens a file in the app (#149). The library's projects are folders,
+    // and their tools work on folders (#253)
     expect(toolDefinitions().map((t) => t.name)).toEqual([
       "get_diagram",
       "apply_ops",
@@ -56,7 +62,53 @@ describe("MCP tools (#2)", () => {
       "export_diagram",
       "open_in_dosik",
       "render_diagram",
+      "list_projects",
+      "add_project",
+      "list_project",
+      "create_folder",
+      "create_diagram",
     ]);
+  });
+
+  it("runs the library tools on the library it is given — without the app", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "dosik-mcp-tools-")));
+    try {
+      const folder = join(base, "Lib");
+      mkdirSync(join(folder, "P"), { recursive: true });
+      const library = createLibrary({
+        bundleId: "app.test",
+        env: { DOSIK_APP_DATA: join(base, "data"), DOSIK_LIBRARY_DIR: folder },
+        home: join(base, "home"),
+      });
+      const d = deps({ library, probeBridge: vi.fn(async () => ({ state: "down" })) });
+      await expect(runTool("list_projects", {}, d)).resolves.toEqual({
+        libraryFolder: folder,
+        projects: [{ name: "P", path: join(folder, "P"), missing: false }],
+      });
+      await expect(
+        runTool("create_diagram", { path: join(folder, "P"), title: "Flow" }, d),
+      ).resolves.toEqual({ path: join(folder, "P", "Flow.dosik"), name: "Flow" });
+      expect(d.probeBridge).not.toHaveBeenCalled();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("says so when a library tool runs on a server with no library", async () => {
+    await expect(runTool("list_projects", {}, deps())).rejects.toThrow(/no library/);
+  });
+
+  it("says in the library tools' descriptions that they need no app", () => {
+    for (const name of [
+      "list_projects",
+      "add_project",
+      "list_project",
+      "create_folder",
+      "create_diagram",
+    ]) {
+      const tool = toolDefinitions().find((t) => t.name === name);
+      expect(tool?.description, name).toMatch(/without the Dosik app/);
+    }
   });
 
   it("derives the apply_ops schema from openapi.yaml — not written by hand", () => {
