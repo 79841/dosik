@@ -147,6 +147,8 @@ describe("Window config (#125, #127, #217)", () => {
       "core:window:allow-close",
       // ⌘W and the close button both end in destroy() after the guard runs
       "core:window:allow-destroy",
+      // F11 off macOS
+      "core:window:allow-set-fullscreen",
     ]) {
       expect(permissions).toContain(p);
     }

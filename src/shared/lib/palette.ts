@@ -205,6 +205,13 @@ export const ACCENT_SOFT = "bg-selected text-ink";
 export const FOCUS_RING =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 /**
+ * The same outline drawn inside the control — for one that touches the
+ * window's edge (the Windows caption buttons), where an outline outside it
+ * would be cut off.
+ */
+export const FOCUS_RING_INSET =
+  "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus";
+/**
  * Keyboard focus on a menu item: the hover wash, no outline — an outline is
  * clipped by a scrolling menu and reads heavy in a list (#178).
  * `outline-hidden`, not `-none`: forced-colors mode drops the wash, and keeps

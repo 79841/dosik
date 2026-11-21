@@ -27,6 +27,7 @@ import { SidebarResizeEdge } from "./features/sidebar/SidebarResizeEdge";
 import { Toolbar } from "./features/toolbar/Toolbar";
 import { EDITOR_TOAST_BOTTOM, TOAST_BOTTOM } from "./shared/lib/editorLayout";
 import { useDockedWidth, useSidebarStore } from "./shared/lib/sidebarLayout";
+import { useWindowFrameWatch } from "./shared/lib/windowFrame";
 import { ErrorBoundary } from "./shared/ui/ErrorBoundary";
 import { Toaster } from "./shared/ui/Toaster";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
@@ -150,6 +151,9 @@ const Frame = () => {
   }, []);
   // File ▸ Close Tab (⌘W) on macOS
   useMenuEvents();
+  // off macOS, the caption buttons and the band follow the window: maximized,
+  // focused, full screen
+  useWindowFrameWatch();
 
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-frame">

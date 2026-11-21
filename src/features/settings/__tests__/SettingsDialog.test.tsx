@@ -770,3 +770,35 @@ describe("Integrations", () => {
     expect(await within(dialog()).findByText(/claude mcp failed: nope/)).toBeInTheDocument();
   });
 });
+
+describe("Settings off macOS: the caption buttons ride above the scrim (the canvas's Win-Settings)", () => {
+  it("they are inside the dialog, and pressing one neither closes Settings nor moves its first focus", async () => {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const close = vi.fn(async () => {});
+    vi.mocked(getCurrentWindow).mockReturnValue({ close } as never);
+    const user = userEvent.setup();
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(dialog()).toHaveFocus();
+    const caption = within(dialog()).getByRole("group", { name: "Window" });
+    await user.click(within(caption).getByRole("button", { name: "Close" }));
+    expect(close).toHaveBeenCalledTimes(1);
+    // the press was on a button, not the scrim: Settings stays
+    expect(useSettingsStore.getState().open).toBe(true);
+    expect(dialog()).toHaveAttribute("open");
+  });
+
+  it("not on macOS", () => {
+    Object.defineProperty(navigator, "userAgent", {
+      value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+      configurable: true,
+    });
+    try {
+      render(<SettingsDialog />);
+      act(() => openSettings("General"));
+      expect(within(dialog()).queryByRole("group", { name: "Window" })).toBeNull();
+    } finally {
+      delete (navigator as { userAgent?: string }).userAgent;
+    }
+  });
+});

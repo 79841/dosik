@@ -2,6 +2,7 @@ import { Info, type LucideIcon, Plug, SlidersHorizontal, Sparkles, X } from "luc
 import { useId, useLayoutEffect, useRef } from "react";
 
 import { FOCUS_RING } from "../../shared/lib/palette";
+import { DialogCaption } from "../../shared/ui/DialogCaption";
 import { Toaster } from "../../shared/ui/Toaster";
 import { IconAction } from "./parts";
 import { AboutSection } from "./sections/AboutSection";
@@ -136,6 +137,8 @@ const SettingsShell = () => {
       <div className="pointer-events-none fixed inset-0 [--dsk-toast-board-lift:0px] [--dsk-toast-editor-lift:0px] [--dsk-toast-lift:0px] [--dsk-toast-right:0px]">
         <Toaster />
       </div>
+      {/* off macOS, the window's caption buttons above the scrim */}
+      <DialogCaption />
     </dialog>
   );
 };

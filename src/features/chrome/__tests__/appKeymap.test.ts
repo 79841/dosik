@@ -11,7 +11,14 @@ vi.mock("../../library/navigation", () => navigation);
 const saving = vi.hoisted(() => ({ saveActiveDocument: vi.fn(async () => {}) }));
 vi.mock("../../library/saveDocument", () => saving);
 
+import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { waitFor } from "@testing-library/react";
+
 import { useSidebarStore } from "../../../shared/lib/sidebarLayout";
+import { useToastStore } from "../../../shared/lib/toastStore";
+import { resetWindowFrame, useWindowFrame } from "../../../shared/lib/windowFrame";
+import { useAppStore } from "../../library/appStore";
 import { useSettingsStore } from "../../settings/settingsStore";
 import { handleAppKeyDown } from "../appKeymap";
 
@@ -205,9 +212,10 @@ describe("tab shortcuts (#218 D12, T39)", () => {
     ignored({ key: "1", code: "Numpad1", metaKey: true }, true);
   });
 
-  it("Ctrl+W closes the active tab outside macOS — ⌘W on macOS belongs to the menu, so it is left alone", () => {
+  it("Ctrl+W closes the active tab outside macOS — ⌘W on macOS belongs to the menu, so it is left alone", async () => {
+    useAppStore.setState({ activeTab: "tab-1", view: "editor" });
     handled({ key: "w", code: "KeyW", ctrlKey: true }, false);
-    expect(navigation.closeActiveDocumentTab).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(navigation.closeActiveDocumentTab).toHaveBeenCalledTimes(1));
     ignored({ key: "w", code: "KeyW", metaKey: true }, true);
     expect(navigation.closeActiveDocumentTab).toHaveBeenCalledTimes(1);
   });
@@ -317,5 +325,121 @@ describe("⌘S — save (#219 D5·D18, T21)", () => {
     handleAppKeyDown(held, true);
     expect(held.defaultPrevented).toBe(true);
     expect(saving.saveActiveDocument).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("off macOS: the window's keys (the canvas's Win-Caption)", () => {
+  let win: {
+    isFullscreen: ReturnType<typeof vi.fn>;
+    setFullscreen: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+  };
+  const windowMenuCalls = () =>
+    vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "show_window_menu");
+
+  beforeEach(() => {
+    resetWindowFrame();
+    useToastStore.setState({ toasts: [] });
+    useAppStore.setState({ tabs: [], activeTab: null, view: "home" });
+    useSettingsStore.setState({ open: false });
+    let fullscreen = false;
+    win = {
+      isFullscreen: vi.fn(async () => fullscreen),
+      setFullscreen: vi.fn(async (on: boolean) => {
+        fullscreen = on;
+      }),
+      close: vi.fn(async () => {}),
+    };
+    vi.mocked(getCurrentWindow).mockReturnValue(win as never);
+    vi.mocked(invoke).mockClear();
+  });
+
+  it("F11 turns full screen on, then off — and the key does nothing else", async () => {
+    const e = press({ key: "F11", code: "F11" });
+    handleAppKeyDown(e, false);
+    expect(e.defaultPrevented).toBe(true);
+    await waitFor(() => expect(win.setFullscreen).toHaveBeenCalledWith(true));
+    await waitFor(() => expect(useWindowFrame.getState().fullscreen).toBe(true));
+    handleAppKeyDown(press({ key: "F11", code: "F11" }), false);
+    await waitFor(() => expect(win.setFullscreen).toHaveBeenLastCalledWith(false));
+  });
+
+  it("F11 works with a dialog open, and a held F11 toggles once", async () => {
+    const shown = document.createElement("dialog");
+    const field = document.createElement("input");
+    shown.append(field);
+    document.body.append(shown);
+    shown.showModal();
+    handleAppKeyDown(press({ key: "F11", code: "F11" }, field), false);
+    handleAppKeyDown(press({ key: "F11", code: "F11", repeat: true }, field), false);
+    await waitFor(() => expect(win.setFullscreen).toHaveBeenCalledTimes(1));
+    shown.close();
+    shown.remove();
+  });
+
+  it("F11 on macOS is left to the window — View ▸ Full Screen is the menu's", () => {
+    const e = press({ key: "F11", code: "F11" });
+    handleAppKeyDown(e, true);
+    expect(e.defaultPrevented).toBe(false);
+    expect(win.setFullscreen).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+W on Home asks the window to close — as ⌘W does on macOS", async () => {
+    handleAppKeyDown(press({ key: "w", code: "KeyW", ctrlKey: true }), false);
+    await waitFor(() => expect(win.close).toHaveBeenCalledTimes(1));
+    expect(navigation.closeActiveDocumentTab).not.toHaveBeenCalled();
+  });
+
+  it("Ctrl+W with Settings open closes Settings — pressed inside it, too — and nothing behind it", async () => {
+    useAppStore.setState({ activeTab: "tab-1", view: "editor" });
+    useSettingsStore.setState({ open: true });
+    const shown = document.createElement("dialog");
+    const field = document.createElement("input");
+    shown.append(field);
+    document.body.append(shown);
+    shown.showModal();
+    const e = press({ key: "w", code: "KeyW", ctrlKey: true }, field);
+    handleAppKeyDown(e, false);
+    expect(e.defaultPrevented).toBe(true);
+    await waitFor(() => expect(useSettingsStore.getState().open).toBe(false));
+    expect(navigation.closeActiveDocumentTab).not.toHaveBeenCalled();
+    expect(win.close).not.toHaveBeenCalled();
+    shown.close();
+    shown.remove();
+  });
+
+  it("Ctrl+W with From Mermaid… open waits — the dialog is not closed under the typing", async () => {
+    const shown = document.createElement("dialog");
+    document.body.append(shown);
+    shown.showModal();
+    handleAppKeyDown(press({ key: "w", code: "KeyW", ctrlKey: true }, shown), false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(win.close).not.toHaveBeenCalled();
+    expect(navigation.closeActiveDocumentTab).not.toHaveBeenCalled();
+    shown.close();
+    shown.remove();
+  });
+
+  it("Alt+Space opens the window menu under the band's left end, as a title bar does", () => {
+    const e = press({ key: " ", code: "Space", altKey: true });
+    handleAppKeyDown(e, false);
+    expect(e.defaultPrevented).toBe(true);
+    expect(windowMenuCalls()).toEqual([["show_window_menu", { atPointer: false }]]);
+  });
+
+  it("Alt+Space: not on macOS, not in full screen, not repeated", () => {
+    handleAppKeyDown(press({ key: " ", code: "Space", altKey: true }), true);
+    handleAppKeyDown(press({ key: " ", code: "Space", altKey: true, repeat: true }), false);
+    useWindowFrame.setState({ fullscreen: true });
+    handleAppKeyDown(press({ key: " ", code: "Space", altKey: true }), false);
+    expect(windowMenuCalls()).toHaveLength(0);
+  });
+
+  it("leaves the text editing keys alone", () => {
+    for (const key of ["c", "v", "x", "z", "a"]) {
+      const e = press({ key, code: `Key${key.toUpperCase()}`, ctrlKey: true });
+      handleAppKeyDown(e, false);
+      expect(e.defaultPrevented).toBe(false);
+    }
   });
 });

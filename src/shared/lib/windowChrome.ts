@@ -70,6 +70,44 @@ export const TAB_WIDTH = 176;
 /** the pinned Home tab, icon only (`tab-pinned-width`) */
 export const TAB_PINNED_WIDTH = 36;
 
+const CLICKABLE_TAGS = new Set(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "SUMMARY"]);
+const INTERACTIVE_ROLES = new Set([
+  "button",
+  "link",
+  "menuitem",
+  "tab",
+  "checkbox",
+  "radio",
+  "switch",
+  "option",
+]);
+
+const isClickable = (el: HTMLElement): boolean =>
+  CLICKABLE_TAGS.has(el.tagName) ||
+  (el.hasAttribute("contenteditable") && el.getAttribute("contenteditable") !== "false") ||
+  (el.hasAttribute("tabindex") && el.getAttribute("tabindex") !== "-1") ||
+  INTERACTIVE_ROLES.has(el.getAttribute("role") ?? "");
+
+/**
+ * Whether a pointer on `target` would drag the window — Tauri's own rule
+ * (`drag.js`): walking up, a clickable element without a drag region of its
+ * own stops it, `"false"` stops it, `"deep"` takes the subtree, a bare region
+ * only itself. The band's empty places, and nothing else, are its title bar.
+ */
+export const isOnDragRegion = (target: EventTarget | null): boolean => {
+  for (let el = target instanceof HTMLElement ? target : null; el; el = el.parentElement) {
+    const attr = el.getAttribute("data-tauri-drag-region");
+    if (attr === null) {
+      if (isClickable(el)) return false;
+      continue;
+    }
+    if (attr === "false") return false;
+    if (attr === "deep") return true;
+    return el === target;
+  }
+  return false;
+};
+
 /** the window's own controls are the OS's on macOS and the app's everywhere else */
 export const isMacPlatform = (userAgent: string = navigator.userAgent): boolean =>
   userAgent.includes("Mac");
