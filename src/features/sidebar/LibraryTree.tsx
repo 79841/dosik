@@ -43,7 +43,7 @@ import {
   visibleRows,
 } from "./treeModel";
 import { besidePointer, Menu, type MenuItem } from "../../shared/ui/Menu";
-import { FoldGroup } from "./FoldGroup";
+import { FOLD_MS, FoldGroup } from "./FoldGroup";
 import {
   AUTO_UNFOLD_MS,
   autoUnfoldKey,
@@ -58,7 +58,8 @@ import {
   rowBoxes,
 } from "./treeDrop";
 import { TreeDragLayer } from "./TreeDragLayer";
-import { NodeGlyph, TreePreviewRow } from "./TreePreviewRow";
+import { TreePreviewRow } from "./TreePreviewRow";
+import { NodeGlyph, shownName } from "./treeRowParts";
 import { unfoldedFolders, useTreeStore } from "./treeStore";
 
 type Point = { x: number; y: number };
@@ -221,9 +222,6 @@ const rowName = (node: TreeNode): string =>
     ? `${node.title}, diagram, edited ${relativeTime(node.diagram.updatedAt)}`
     : `${node.folder.name}, ${node.kind}, ${plural(node.count, "item")}`;
 
-const shownName = (node: TreeNode): string =>
-  node.kind === "diagram" ? node.title : node.folder.name;
-
 /**
  * Shows the row's `…` in place of its count while the row has keyboard focus
  * — hover does it on the row itself. Its own row only: the treeitem holds its
@@ -369,6 +367,9 @@ const TreeBody = ({
     focusNext.current = null;
   });
 
+  /** the reveal's second scroll — kept past the reveal, which is cleared at once */
+  const revealAgain = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(revealAgain.current), []);
   // the diagram just opened scrolls into view (D7), whichever tree is mounted
   // biome-ignore lint/correctness/useExhaustiveDependencies: rows is the trigger — the row appears once its project unfolds
   useEffect(() => {
@@ -376,6 +377,12 @@ const TreeBody = ({
     const el = items.current.get(reveal);
     if (!el) return;
     el.scrollIntoView?.({ block: "nearest" });
+    // the folders it unfolded are still growing, the list shorter than it
+    // will be: once more when they have grown, or this may fall short (#260)
+    clearTimeout(revealAgain.current);
+    revealAgain.current = setTimeout(() => {
+      if (el.isConnected) el.scrollIntoView?.({ block: "nearest" });
+    }, FOLD_MS + 50);
     useTreeStore.getState().clearReveal();
   }, [reveal, rows]);
 
@@ -780,11 +787,10 @@ const TreeBody = ({
     const tinted = pointerOpen && !isSelected;
     /** the `…` shows only on hover — not while a drag or a right-click menu holds the row */
     const quiet = drag !== null || pointerOpen;
-    // a drag: the collapsed folder it would go into, filled — there is no
-    // preview then (#230 D9, #260 R2) — and the dragged row, which has left
-    // its place: its preview stands in for it
-    const dropInto =
-      shownDrag?.preview === null && drag?.target?.kind === "into" && drag.target.row === node.key;
+    // a drag: the collapsed folder it would go into, filled — an unfolded one
+    // shows the preview as its first item instead (#230 D9, #260 R2) — and
+    // the dragged row, which has left its place: its preview stands in for it
+    const dropInto = drag?.target?.kind === "into" && drag.target.row === node.key && !open;
     const leaving = draggedKey === node.key;
     /** how far the row stands out of the preview's way */
     const offset = shownDrag?.offsets.get(node.key) ?? 0;
@@ -865,7 +871,6 @@ const TreeBody = ({
           ) : (
             <span aria-hidden="true" className="w-3.5 flex-none" />
           )}
-          {/* a top row (a project, or the stray listing) shows its badge */}
           <NodeGlyph node={node} open={open} />
           {node.kind !== "diagram" && renaming === node.folder.id ? (
             <NameInput

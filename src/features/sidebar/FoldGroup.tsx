@@ -16,6 +16,10 @@ const FOLD_MOTION =
  */
 type Phase = "closed" | "opening" | "growing" | "open" | "closing";
 
+/** the motion is over: open, or gone */
+const settled = (now: Phase): Phase =>
+  now === "growing" ? "open" : now === "closing" ? "closed" : now;
+
 /**
  * A tree row's children, unfolding and folding (#260 R1): the list grows
  * from height 0 and fades in, and folds back the same way; a toggle before
@@ -25,11 +29,16 @@ type Phase = "closed" | "opening" | "growing" | "open" | "closing";
  * rows only while they are drawn.
  *
  * It clips its rows only while it moves: open, a row gliding out of its
- * place in a drag (#260 R2) must not be cut at the group's edge.
+ * place in a drag (#260 R2) must not be cut at the group's edge. While it
+ * grows the list is shorter than it will be, so a row scrolled into view or
+ * focused then may fall short of the view: once grown, the focus inside it
+ * is scrolled into view again.
  */
 export const FoldGroup = ({ open, render }: { open: boolean; render: () => ReactNode }) => {
   const [phase, setPhase] = useState<Phase>(open ? "open" : "closed");
   const box = useRef<HTMLDivElement>(null);
+  /** it is growing — not open from the start */
+  const grew = useRef(false);
 
   // the prop moved: the motion starts, or turns back, from where it is
   if (open && (phase === "closed" || phase === "closing")) {
@@ -39,22 +48,29 @@ export const FoldGroup = ({ open, render }: { open: boolean; render: () => React
   }
 
   useLayoutEffect(() => {
-    if (phase !== "opening") return;
-    // laid out at height 0 first, so going to full height is a transition
-    void box.current?.offsetHeight;
-    setPhase("growing");
+    if (phase === "opening") {
+      // laid out at height 0 first, so going to full height is a transition
+      void box.current?.offsetHeight;
+      setPhase("growing");
+      return;
+    }
+    if (phase !== "open") {
+      grew.current = phase === "growing";
+      return;
+    }
+    if (!grew.current) return;
+    grew.current = false;
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && box.current?.contains(focused)) {
+      focused.scrollIntoView?.({ block: "nearest" });
+    }
   }, [phase]);
-
-  /** the motion is over: open, or gone */
-  const settle = () =>
-    setPhase((now) => (now === "growing" ? "open" : now === "closing" ? "closed" : now));
 
   // a transition that never runs (reduced motion, a browser that cannot
   // animate the rows' height) ends no later than this
-  // biome-ignore lint/correctness/useExhaustiveDependencies: settle only reads the phase it is handed
   useEffect(() => {
     if (phase !== "growing" && phase !== "closing") return;
-    const timer = setTimeout(settle, FOLD_MS + 50);
+    const timer = setTimeout(() => setPhase(settled), FOLD_MS + 50);
     return () => clearTimeout(timer);
   }, [phase]);
 
@@ -68,7 +84,7 @@ export const FoldGroup = ({ open, render }: { open: boolean; render: () => React
       inert={leaving}
       aria-hidden={leaving ? "true" : undefined}
       onTransitionEnd={(e) => {
-        if (e.target === e.currentTarget) settle();
+        if (e.target === e.currentTarget) setPhase(settled);
       }}
       // overflow-y-clip, not hidden: it makes no scroll box, so a row's
       // sticky tail still sticks to the list's edge (Sidebar-Deep)

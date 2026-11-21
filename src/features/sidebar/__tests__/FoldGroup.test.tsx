@@ -117,4 +117,60 @@ describe("FoldGroup (#260 R1)", () => {
     expect(list.parentElement).toBe(group());
     expect(list).toHaveClass("min-h-0", "[&>li]:mt-px");
   });
+
+  describe("the focus inside rows that grew is scrolled into view again (#260)", () => {
+    const focusable = () => (
+      <>
+        <li tabIndex={-1} data-child="">
+          Login flow
+        </li>
+        <li tabIndex={-1} data-child="">
+          Sequence
+        </li>
+      </>
+    );
+    const scroll = vi.fn();
+    beforeEach(() => {
+      scroll.mockClear();
+      Element.prototype.scrollIntoView = scroll;
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+    });
+    /** a closed group opened, its first row focused while it grows */
+    const grow = () => {
+      const view = render(<FoldGroup open={false} render={focusable} />);
+      view.rerender(<FoldGroup open render={focusable} />);
+      act(() => (children()[0] as HTMLElement).focus());
+      return view;
+    };
+
+    it("when its motion ends — the list was shorter while it grew, so the first scroll fell short", () => {
+      grow();
+      expect(scroll).not.toHaveBeenCalled();
+      fireEvent.transitionEnd(group()!);
+      expect(scroll).toHaveBeenCalledTimes(1);
+      expect(scroll.mock.contexts[0]).toBe(children()[0]);
+      expect(scroll).toHaveBeenCalledWith({ block: "nearest" });
+    });
+
+    it("when the timer settles it too — no transition under reduced motion", () => {
+      grow();
+      act(() => vi.advanceTimersByTime(FOLD_MS + 50));
+      expect(scroll.mock.contexts).toEqual([children()[0]]);
+    });
+
+    it("not when the focus is elsewhere, nor for a group open from the start, nor when it folds", () => {
+      const { rerender } = render(<FoldGroup open={false} render={focusable} />);
+      rerender(<FoldGroup open render={focusable} />);
+      fireEvent.transitionEnd(group()!);
+      expect(scroll).not.toHaveBeenCalled();
+      rerender(<FoldGroup open={false} render={focusable} />);
+      fireEvent.transitionEnd(group()!);
+      render(<FoldGroup open render={focusable} />);
+      act(() => (children()[0] as HTMLElement).focus());
+      act(() => vi.advanceTimersByTime(FOLD_MS * 4));
+      expect(scroll).not.toHaveBeenCalled();
+    });
+  });
 });

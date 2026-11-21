@@ -1,24 +1,9 @@
 import { ChevronRight } from "lucide-react";
 
-import { DiagramGlyph, FolderGlyph } from "../../shared/ui/KindGlyph";
-import { ProjectBadge } from "../../shared/ui/ProjectBadge";
 import { indentClass } from "../library/libraryParts";
 
 import type { TreeNode } from "./treeModel";
-
-/**
- * A row's glyph (#229 D6, #236 D2·D3): a project's badge, a folder's Folder
- * (FolderOpen while unfolded), a diagram's mark — coloured by kind, selected
- * or not.
- */
-export const NodeGlyph = ({ node, open = false }: { node: TreeNode; open?: boolean }) =>
-  node.kind === "diagram" ? (
-    <DiagramGlyph />
-  ) : node.kind === "folder" ? (
-    <FolderGlyph open={open} />
-  ) : (
-    <ProjectBadge id={node.folder.id} name={node.folder.name} />
-  );
+import { NodeGlyph, shownName } from "./treeRowParts";
 
 /**
  * Where a dragged row would land (#260 R2, canvas `Sidebar-Drag` ①·④): the
@@ -55,9 +40,7 @@ export const TreePreviewRow = ({
           <span className="w-3.5 flex-none" />
         )}
         <NodeGlyph node={node} />
-        <span className="ml-0.5 flex-[1_0_auto]">
-          {node.kind === "diagram" ? node.title : node.folder.name}
-        </span>
+        <span className="ml-0.5 flex-[1_0_auto]">{shownName(node)}</span>
         {count !== null ? (
           <span className="flex-none pl-3 text-[12px] font-medium text-muted-strong">{count}</span>
         ) : null}

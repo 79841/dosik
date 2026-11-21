@@ -94,7 +94,10 @@ export interface ShownRow {
 export interface DragView {
   /** the rows top to bottom, the preview's among them */
   shown: ShownRow[];
-  /** where among `shown` the preview stands, at what level — none while the target is a collapsed folder */
+  /**
+   * where among `shown` the preview stands, at what level — none while the
+   * target is a collapsed folder, or when the dragged row is not among `rows`
+   */
   preview: { index: number; level: number } | null;
   /** how far each row but the dragged one stands from its own place, in px — none for a row that stays */
   offsets: ReadonlyMap<TreeKey, number>;

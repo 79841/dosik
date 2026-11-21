@@ -26,6 +26,7 @@ import { resetUnsavedGuardForTests } from "../../library/unsavedGuard";
 import { resetAutosaveForTests, useAutosave } from "../../library/useAutosave";
 import { DROP_RING, DROP_TARGET } from "../../../shared/lib/palette";
 import { badgeColour } from "../../../shared/lib/projectBadge";
+import { FOLD_MS } from "../FoldGroup";
 import { ProjectsSection } from "../LibraryTree";
 import { dropAt } from "../treeDrop";
 import { folderKey } from "../treeModel";
@@ -245,6 +246,25 @@ describe("sidebar tree (#217 R3)", () => {
       expect(group).toHaveClass("grid-rows-[1fr]");
       expect(group).not.toHaveAttribute("inert");
       expect(item(/^Login flow/)).toBeInTheDocument();
+    });
+
+    it("the focus that went into rows still unfolding is scrolled into view again once they have (#260)", () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const scroll = vi.fn();
+      Element.prototype.scrollIntoView = scroll;
+      try {
+        renderTree();
+        act(() => item(/^Work/).focus());
+        fireEvent.keyDown(item(/^Work/), { key: "ArrowRight" });
+        fireEvent.keyDown(item(/^Work/), { key: "ArrowRight" });
+        expect(item(/^Login flow/)).toHaveFocus();
+        expect(scroll).not.toHaveBeenCalled();
+        act(() => vi.advanceTimersByTime(FOLD_MS + 50));
+        expect(scroll.mock.contexts).toEqual([item(/^Login flow/)]);
+      } finally {
+        Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+        vi.useRealTimers();
+      }
     });
 
     it("the rows stand 31 apart from 2 below the list's top — the pitch a drag works out (30 tall, 1 between)", async () => {
@@ -505,6 +525,28 @@ describe("sidebar tree (#217 R3)", () => {
       // the selected row is the active tab's diagram (#217 D6)
       expect(item(/^Sequence, diagram/)).toHaveAttribute("aria-selected", "true");
       expect(item(/^Login v2/)).toHaveAttribute("aria-selected", "false");
+    });
+
+    it("scrolls it into view again once its folders have unfolded — the list was shorter while they grew (#260)", () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const scroll = vi.fn();
+      Element.prototype.scrollIntoView = scroll;
+      try {
+        renderTree();
+        act(() => {
+          openDocument({ ...blankDoc(), title: "Sequence" }, { projectId: "p2" });
+        });
+        expect(scroll).toHaveBeenCalledTimes(1);
+        act(() => vi.advanceTimersByTime(FOLD_MS + 49));
+        expect(scroll).toHaveBeenCalledTimes(1);
+        act(() => vi.advanceTimersByTime(1));
+        expect(scroll).toHaveBeenCalledTimes(2);
+        expect(scroll.mock.contexts[1]).toBe(item(/^Sequence, diagram/));
+        expect(scroll).toHaveBeenLastCalledWith({ block: "nearest" });
+      } finally {
+        Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+        vi.useRealTimers();
+      }
     });
 
     it("scrolls the open diagram's row into view (D7)", () => {
@@ -873,6 +915,31 @@ describe("sidebar tree (#217 R3)", () => {
       expect(row(/^Work/)).not.toHaveClass("bg-selected");
       expect(ring(/^Work/)).toBeNull();
       firePointer("pointercancel", 70, 0);
+    });
+
+    it("an unfolded folder is never ringed — not even when the dragged row has left the rows some other way (#260 R2)", () => {
+      renderTree();
+      dragTo(/^Login flow/, 70, rowTop(/^Sequence/) + 20);
+      // a listing lands with Login flow moved into the collapsed Archive elsewhere
+      const elsewhere = (): FolderMeta[] => {
+        const [work, personal] = ordered();
+        return [
+          {
+            ...work!,
+            order: ["diagram:p2"],
+            diagrams: work!.diagrams.filter((d) => d.id !== "p1"),
+            folders: [{ ...work!.folders[0]!, diagrams: [work!.diagrams[0]!] }],
+          },
+          personal!,
+        ];
+      };
+      act(() => useLibraryStore.setState({ folders: elsewhere() }));
+      expect(lifted()).not.toBeNull();
+      // Work, Archive, Sequence, Personal: into Work, unfolded
+      firePointer("pointermove", 70, 102 + 15);
+      expect(ring(/^Work/)).toBeNull();
+      expect(row(/^Work/)).not.toHaveClass("bg-selected");
+      firePointer("pointercancel", 0, 0);
     });
 
     it("into a collapsed folder: no preview, the folder row filled and ringed, no row moves — the dragged row's place stays empty (#260 R2)", () => {
@@ -1426,6 +1493,23 @@ describe("sidebar tree (#217 R3)", () => {
         wait(1000);
         pressEscape();
         expect(unfolded("arc")).toBe(true);
+      });
+
+      it("the tree going away mid-drag (the sidebar hidden, the peek closed): what the drag unfolded folds back, the wait is called off", () => {
+        const first = renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(600);
+        expect(unfolded("arc")).toBe(true);
+        first.unmount();
+        expect(unfolded("arc")).toBe(false);
+        expect(lifted()).toBeNull();
+
+        const second = renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(300);
+        second.unmount();
+        wait(1000);
+        expect(unfolded("arc")).toBe(false);
       });
 
       it("never the dragged folder itself, nor one with nothing in it", () => {
