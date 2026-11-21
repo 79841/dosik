@@ -124,11 +124,12 @@ fn write_binary_file(path: String, base64: String) -> Result<(), String> {
 }
 
 /// The window menu off macOS — a right click on the band (`at_pointer`), or
-/// Alt+Space. The menu is tracked on the main thread, from the event loop: a
-/// synchronous command would run inside the webview's own event handler,
-/// where a nested message loop is not supported and would hold every other
-/// call (a bridge op's result among them) until the menu closed. Nothing
-/// elsewhere: macOS has its own window.
+/// Alt+Space. The menu is tracked on the main thread from the event loop, as
+/// Tauri shows its own context menus: a synchronous command would run inside
+/// the webview's request handler, where a nested message loop is not
+/// supported. While the menu is open the event loop waits, as it does for
+/// Tauri's menus — a bridge op that arrives then is applied when the menu
+/// closes. Nothing elsewhere: macOS has its own window.
 #[cfg(windows)]
 #[tauri::command(async)]
 fn show_window_menu(window: tauri::WebviewWindow, at_pointer: bool) -> Result<(), String> {

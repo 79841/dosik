@@ -714,10 +714,43 @@ fn name_codex_config(error: String, places: &PluginPlaces) -> String {
     error.replace(CODEX_CONFIG_NAME, &config_shown(places, cfg!(windows)))
 }
 
+/// Whether Windows has a program to open this file's kind with — without
+/// one, opening it would only ask the user which app to use
+#[cfg(windows)]
+fn has_open_handler(file: &Path) -> bool {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::{AssocQueryStringW, ASSOCF_NONE, ASSOCSTR_EXECUTABLE};
+    let Some(ext) = file.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    let ext = HSTRING::from(format!(".{ext}"));
+    let mut len = 0u32;
+    // asked for the length only: a handler answers with it, none with an error
+    // SAFETY: a lookup with no output buffer; `len` outlives the call
+    unsafe {
+        AssocQueryStringW(
+            ASSOCF_NONE,
+            ASSOCSTR_EXECUTABLE,
+            &ext,
+            PCWSTR::null(),
+            None,
+            &mut len,
+        )
+    }
+    .is_ok()
+        && len > 0
+}
+
+#[cfg(not(windows))]
+fn has_open_handler(_file: &Path) -> bool {
+    false
+}
+
 /// Opens Claude Desktop, handing it `file` (the extension to install) if any.
-/// macOS: `open -b` by its bundle id. Windows: its program with the file, or
-/// — when the program is not where its installer puts it — the file through
-/// the file's own association, which Claude Desktop registers.
+/// macOS: `open -b` by its bundle id. Windows: the file through its own
+/// association when there is one (Claude Desktop registers `.mcpb`) — surer
+/// than a guessed program, which may not pass the file on — else Claude
+/// Desktop's program with the file; with no file, the program.
 fn open_with_claude<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     places: &PluginPlaces,
@@ -728,23 +761,21 @@ fn open_with_claude<R: tauri::Runtime>(
         let program = claude_desktop_exe_candidates(&places.local_data)
             .into_iter()
             .find(|p| p.exists());
+        let spawn = |file: Option<&Path>| {
+            program.as_ref().is_some_and(|program| {
+                let mut cmd = std::process::Command::new(program);
+                if let Some(file) = file {
+                    cmd.arg(file);
+                }
+                cmd.spawn().is_ok()
+            })
+        };
         let opened = match file {
-            // the extension through the association Claude Desktop registers —
-            // surer than a guessed program, which may not pass the file on
-            Some(file) => {
-                app.opener()
-                    .open_path(file.to_string_lossy(), None::<&str>)
-                    .is_ok()
-                    || program.is_some_and(|program| {
-                        std::process::Command::new(program)
-                            .arg(file)
-                            .spawn()
-                            .is_ok()
-                    })
-            }
-            None => {
-                program.is_some_and(|program| std::process::Command::new(program).spawn().is_ok())
-            }
+            Some(file) if has_open_handler(file) => app
+                .opener()
+                .open_path(file.to_string_lossy(), None::<&str>)
+                .is_ok(),
+            file => spawn(file),
         };
         return if opened {
             Ok(())

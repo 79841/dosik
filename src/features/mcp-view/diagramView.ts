@@ -525,7 +525,7 @@ export const mountDiagramView = (root: HTMLElement, host: ViewHost): DiagramView
     return "failed";
   };
 
-  /** the host's theme wins over the one the model asked for (spec D8) */
+  /** the host's theme wins over the one the model asked for */
   const matchHostTheme = () => {
     applyTheme();
     const theme = hostTheme();

@@ -26,7 +26,7 @@ describe("Studio colour tokens (#210)", () => {
     }
   });
 
-  it("light tiles and deep tones are the confirmed values (spec D2)", () => {
+  it("light tiles and deep tones are the confirmed values", () => {
     const tile = (c: keyof typeof COLOR_TOKENS) => [COLOR_TOKENS[c].fill, COLOR_TOKENS[c].stroke];
     expect(tile("mono")).toEqual(["#EAE8E4", "#4A4743"]);
     expect(tile("violet")).toEqual(["#EEE9F8", "#5B3DB5"]);

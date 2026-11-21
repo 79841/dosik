@@ -40,7 +40,7 @@ Choose Claude or GPT in **Settings ▸ AI assistant** (⌘, — Ctrl+, on Window
 
 | | Subscription — no API key | API key — pay per use |
 |---|---|---|
-| **Claude** | Your Claude plan, through [Claude Code](https://claude.com/claude-code) signed in on your computer | An Anthropic API key |
+| **Claude** | Your Claude plan, through [Claude Code](https://claude.com/claude-code) signed in on your computer (on Windows, its native installer — not npm) | An Anthropic API key |
 | **GPT** | Your ChatGPT plan, through the Codex CLI signed in on your Mac (macOS only) | An OpenAI API key |
 
 API keys are kept in the macOS Keychain, or in Windows Credential Manager.
@@ -96,7 +96,7 @@ Download the file for your computer from [Releases](https://github.com/79841/dos
 | Windows 10 or 11 (64-bit) | `Dosik_<version>_x64-setup.exe` |
 
 - **Mac**: open the `.dmg` and drag Dosik to Applications. macOS 11 or later. Signed with Developer ID and notarized by Apple, so it opens normally
-- **Windows**: run the setup file. It installs for your user only, with no administrator rights. The installer is not code-signed yet, so Windows SmartScreen may stop it — choose **More info**, then **Run anyway**. Dosik runs on Microsoft Edge WebView2, which Windows 11 has; on a PC without it, the installer downloads it
+- **Windows**: run the setup file. It installs for your user only, with no administrator rights. The installer is not code-signed yet, so Windows SmartScreen may stop it — choose **More info**, then **Run anyway** (with Smart App Control on, Windows 11 does not offer that). Dosik runs on Microsoft Edge WebView2, which Windows 11 has; on a PC without it, the installer downloads it, so stay online while it runs
 - Linux versions are not available yet
 - Your diagrams are plain `.dosik.json` files on your computer — Settings ▸ General shows where. Nothing leaves your computer unless you use an AI feature
 - Dosik doesn't show up in "Open With" yet; open files with **Open file…** in the sidebar

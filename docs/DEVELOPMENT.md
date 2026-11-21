@@ -30,7 +30,7 @@ Open **Settings ▸ Integrations** (⌘,) and install Dosik into:
 - **Claude Desktop** — a Dosik extension; Claude Desktop asks you to confirm
 - **ChatGPT and Codex** — one entry in `~/.codex/config.toml`, which the ChatGPT desktop app and the Codex CLI share
 
-The app carries its MCP server and keeps a copy in its app data, refreshed when Dosik updates, so moving or updating Dosik keeps the AI apps working. Claude Code and Codex start it with Node.js 18 or later (the Claude Desktop extension uses Claude's own). Restart the AI app after a change. Dosik writes to `~/.codex/config.toml` and registers with Claude Code's user scope; a `CODEX_HOME` or `CLAUDE_CONFIG_DIR` set only in a shell profile is not seen by an app opened from Finder.
+The app carries its MCP server and keeps a copy in its app data, refreshed when Dosik updates, so moving or updating Dosik keeps the AI apps working. Claude Code and Codex start it with Node.js 18 or later (the Claude Desktop extension uses Claude's own). Restart the AI app after a change. Dosik writes to `~/.codex/config.toml` and registers with Claude Code's user scope; a `CODEX_HOME` or `CLAUDE_CONFIG_DIR` set only in a shell profile is not seen by an app opened from Finder or the Start menu.
 
 From a checkout, for development:
 
