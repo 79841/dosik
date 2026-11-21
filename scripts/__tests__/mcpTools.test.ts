@@ -257,7 +257,7 @@ describe("MCP tools (#2)", () => {
 
   it("lists the supported formats for an unknown one", async () => {
     await expect(runTool("export_diagram", { path: "/tmp/a.docx" }, deps())).rejects.toThrow(
-      /available: md, mmd, dosik\.json, svg/,
+      /available: md, mmd, dosik, dosik\.json, svg/,
     );
     // PowerPoint export is gone (#192)
     await expect(runTool("export_diagram", { path: "/tmp/a.pptx" }, deps())).rejects.toThrow(

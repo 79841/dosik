@@ -42,6 +42,7 @@ const exportTo = async (path: string, args: HeadlessArgs): Promise<void> => {
     case "mmd":
       writeAtomic(path, toMermaid(doc));
       return;
+    case "dosik":
     case "dosik.json":
       writeAtomic(path, `${JSON.stringify(doc, null, 2)}\n`);
       return;

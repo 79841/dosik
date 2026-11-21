@@ -43,7 +43,7 @@ export class McpResult {
  * would blame the user's extension (#2). `scripts/__tests__` ties these
  * to `HEADLESS_FORMATS`/`WINDOWED_FORMATS` in the CLI.
  */
-export const FILE_FORMATS = ["md", "mmd", "dosik.json", "svg"];
+export const FILE_FORMATS = ["md", "mmd", "dosik", "dosik.json", "svg"];
 export const WINDOWED = ["png"];
 
 /**
