@@ -105,7 +105,11 @@ describe("wheel — same constants as React Flow (@xyflow/system 0.0.82) (#221 D
     // a step of 50 or more is a mouse notch, and lines or pages are a mouse's
     const notch = applyWheel(vp(0, 0, 1), wheel({ deltaY: -50, ctrlKey: true }), false);
     expect(notch.zoom).toBeCloseTo(2 ** (50 * 0.002));
-    const lines = applyWheel(vp(0, 0, 1), wheel({ deltaY: -2, deltaMode: 1, ctrlKey: true }), false);
+    const lines = applyWheel(
+      vp(0, 0, 1),
+      wheel({ deltaY: -2, deltaMode: 1, ctrlKey: true }),
+      false,
+    );
     expect(lines.zoom).toBeCloseTo(2 ** (2 * 0.05));
   });
 
