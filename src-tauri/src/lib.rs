@@ -254,11 +254,13 @@ pub fn run() {
             if matches!(_event, tauri::RunEvent::Reopen { .. }) && !tauri::is_dev() {
                 focus_existing(_app);
             }
-            // Files handed over by macOS — `open -b` from the MCP server's
-            // `open_in_dosik` — arrive as an Apple Event, at launch or while
-            // running, never on the command line (#149). The bundle declares
-            // no document type (a double extension like `.dosik.json` has no
-            // clean UTI), so Finder's Open With does not list Dosik (#183)
+            // Files handed over by macOS — a double-click in Finder, Open
+            // With, `open -b` from the MCP server's `open_in_dosik` — arrive
+            // as an Apple Event, at launch or while running, never on the
+            // command line (#149). The bundle declares `.dosik` as its own
+            // document type (`fileAssociations` in tauri.conf.json); the
+            // older `.dosik.json`, a double extension with no clean type of
+            // its own, still opens this way but is not claimed
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = &_event {
                 let paths = urls
