@@ -710,7 +710,7 @@ const TreeBody = ({
     // a drag: the row it would fill (into a folder) and the row its line is drawn on (#230 D9)
     const dropInto = drag?.target?.kind === "into" && drag.target.row === node.key;
     const line =
-      drag?.target?.kind === "slot" && drag.target.line.row === node.key ? drag.target.line : null;
+      drag?.target?.kind === "slot" && drag.target.spot.row === node.key ? drag.target.spot : null;
     const ghost = drag?.node.key === node.key;
     // a folder counts what is in it — none shows no number (#229 D6); a diagram has no count
     const count = node.kind !== "diagram" && node.count > 0 ? node.count : null;

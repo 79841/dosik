@@ -47,15 +47,15 @@ export const placementNotice = (
     : `Moved “${name}” to position ${index + 1} of ${count} in ${findFolder(folders, parent)?.folder.name ?? ""}`;
 
 /**
- * Where a drag would land (#230 D9): a slot among a folder's items — with
- * the row and edge its 2px line is drawn on, at the slot's level — or into a
- * folder (a project too), to its top, the folder row filled.
+ * Where a drag would land (#230 D9): a slot among a folder's items — the
+ * spot the preview stands at, before or after a row, at the slot's level
+ * (#260) — or into a folder (a project too), to its top.
  */
 export type DropTarget =
   | {
       kind: "slot";
       placement: Placement;
-      line: { row: TreeKey; edge: "top" | "bottom"; level: number };
+      spot: { row: TreeKey; edge: "top" | "bottom"; level: number };
     }
   | { kind: "into"; folder: string; row: TreeKey; placement: Placement };
 
@@ -64,6 +64,96 @@ export interface RowBox {
   top: number;
   bottom: number;
 }
+
+/** a row's height — the tree row's `h-[30px]` (#236) */
+export const ROW_HEIGHT = 30;
+/** from one row's top to the next — its height and the 1px between rows (`gap-y-px`, `mt-px`) */
+export const ROW_PITCH = 31;
+/** the tree list's top padding, above its first row — its `pt-0.5` */
+export const LIST_PAD_TOP = 2;
+
+/**
+ * The rows' boxes as they stand with the first row's top at `origin` (#260):
+ * worked out, not read from the screen, so neither the drag's preview nor the
+ * rows gliding out of its way move what is under the pointer.
+ */
+export const rowBoxes = (rows: readonly TreeRow[], origin: number): Map<TreeKey, RowBox> =>
+  new Map(
+    rows.map((row, i) => {
+      const top = origin + i * ROW_PITCH;
+      return [row.key, { top, bottom: top + ROW_HEIGHT }];
+    }),
+  );
+
+/** a row as a drag shows it — the preview's key is the dragged item's */
+export interface ShownRow {
+  key: TreeKey;
+  level: number;
+}
+
+export interface DragView {
+  /** the rows top to bottom, the preview's among them */
+  shown: ShownRow[];
+  /** where among `shown` the preview stands, at what level — none while the target is a collapsed folder */
+  preview: { index: number; level: number } | null;
+  /** how far each row but the dragged one stands from its own place, in px — none for a row that stays */
+  offsets: ReadonlyMap<TreeKey, number>;
+}
+
+/**
+ * What the tree shows while `dragged` is over `target` (#260 R2): the
+ * dragged row leaves its place and its preview stands where the drop would
+ * put it, at that depth; the rows in between make room. `rows` are the rows
+ * as they stand, the dragged one in its place (folded, if it is a folder).
+ * Into an unfolded folder the preview is its first item; into a collapsed
+ * one there is none, and nothing moves — the place stays, empty, so the
+ * folder stays under the pointer. No target: the preview is the dragged row,
+ * in its place.
+ */
+export const dragView = ({
+  rows,
+  dragged,
+  target,
+}: {
+  rows: readonly TreeRow[];
+  dragged: TreeKey;
+  target: DropTarget | null;
+}): DragView => {
+  const all = rows.map(({ key, level }) => ({ key, level }));
+  const from = rows.findIndex((r) => r.key === dragged);
+  const still = (preview: DragView["preview"]): DragView => ({
+    shown: all,
+    preview,
+    offsets: new Map(),
+  });
+  if (from < 0) return still(null);
+  const inPlace = still({ index: from, level: rows[from]!.level });
+  if (!target) return inPlace;
+  const others = all.filter((r) => r.key !== dragged);
+  let at: number;
+  let level: number;
+  if (target.kind === "into") {
+    const holder = rows.find((r) => r.key === target.row);
+    if (!holder) return inPlace;
+    if (!holder.expanded) return still(null);
+    at = others.findIndex((r) => r.key === holder.key) + 1;
+    level = holder.level + 1;
+  } else {
+    const k = others.findIndex((r) => r.key === target.spot.row);
+    if (k < 0) return inPlace;
+    at = target.spot.edge === "top" ? k : k + 1;
+    level = target.spot.level;
+  }
+  const shown = [...others.slice(0, at), { key: dragged, level }, ...others.slice(at)];
+  const placeOf = new Map(rows.map((r, i) => [r.key, i]));
+  const offsets = new Map<TreeKey, number>();
+  shown.forEach((row, i) => {
+    if (row.key === dragged) return;
+    const by = (i - placeOf.get(row.key)!) * ROW_PITCH;
+    if (by !== 0) offsets.set(row.key, by);
+  });
+  return { shown, preview: { index: at, level }, offsets };
+};
 
 /** a folder row's bands, 7/26 of its height (8 of today's 30, #236): the top band is before it, the bottom after (or into it, unfolded) */
 const BAND = 7 / 26;
@@ -135,7 +225,7 @@ const projectTarget = (
   return {
     kind: "slot",
     placement,
-    line: before
+    spot: before
       ? { row: before.row.key, edge: "top", level: 1 }
       : { row: end.last.key, edge: "bottom", level: 1 },
   };
@@ -188,11 +278,11 @@ export const dropAt = ({
   const slot = (
     parent: string,
     full: number,
-    line: { row: TreeKey; edge: "top" | "bottom"; level: number },
+    spot: { row: TreeKey; edge: "top" | "bottom"; level: number },
   ): DropTarget | null => {
     const placement = settle(folders, dragged, parent, full);
     return placement && canPlace(folders, dragged, parent)
-      ? { kind: "slot", placement, line }
+      ? { kind: "slot", placement, spot }
       : null;
   };
   /** where `row` is among its parent's items */
