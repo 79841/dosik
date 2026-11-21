@@ -31,4 +31,7 @@ tauri-plugin-clipboard-manager = "2.3.3"
 keyring = "4.2.0"
 # Settings ▸ Integrations edits ~/.codex/config.toml without disturbing the rest (#252)
 toml_edit = "0.25"
+# Delete in the library moves things to the system Trash, never removes them
+# outright; no dates of trashed items are read, so `jiff` stays out
+trash = { version = "5.4.0", default-features = false, features = ["freedesktop", "coinit_apartmentthreaded"] }
 

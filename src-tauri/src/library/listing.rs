@@ -259,7 +259,7 @@ fn take_one(lib: &Library, st: &mut LibraryState, target: &Path) -> Result<bool,
     if !is_dir {
         return Err("not a folder".into());
     }
-    check_new_project(lib, st, target, None)?;
+    check_new_project(lib, st, target, None).map_err(|r| r.to_string())?;
     let id = st.new_id();
     st.add_project(ProjectRecord::new(&id, target)?, Slot::First);
     Ok(true)
@@ -361,6 +361,24 @@ pub fn is_broad(path: &Path, home: Option<&Path>) -> bool {
     path.parent().is_none() || home.is_some_and(|home| home.starts_with(path))
 }
 
+/// Why a folder cannot become a project.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    /// it overlaps the library: it is a project, is inside one, or holds
+    /// one or the default location
+    Overlap(String),
+    /// no folder a project can be: relative, or too broad
+    Invalid(String),
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Refusal::Overlap(why) | Refusal::Invalid(why) => f.write_str(why),
+        }
+    }
+}
+
 /// Whether `path` may become a project (`except`: the project being located
 /// again, whose own place is no clash): an absolute, not too broad folder
 /// that neither is a project, nor is inside one, nor holds one or the
@@ -371,31 +389,32 @@ pub fn check_new_project(
     st: &LibraryState,
     path: &Path,
     except: Option<&str>,
-) -> Result<(), String> {
+) -> Result<(), Refusal> {
+    let overlap = |why: &str| Err(Refusal::Overlap(why.to_string()));
     if !path.is_absolute() {
-        return Err("not an absolute path".into());
+        return Err(Refusal::Invalid("not an absolute path".into()));
     }
     if is_broad(path, lib.home.as_deref()) {
-        return Err("too broad a folder for a project".into());
+        return Err(Refusal::Invalid("too broad a folder for a project".into()));
     }
     let wanted = normalized(path);
     let default = normalized(&lib.default_location);
     if default.starts_with(&wanted) {
-        return Err("it holds the library folder".into());
+        return overlap("it holds the library folder");
     }
     if wanted.starts_with(&default) && wanted.parent() != Some(default.as_path()) {
-        return Err("it is inside a project of the library folder".into());
+        return overlap("it is inside a project of the library folder");
     }
     for project in st.projects.iter().filter(|p| Some(p.id.as_str()) != except) {
         let there = normalized(&project.root());
         if there == wanted {
-            return Err("already in the library".into());
+            return overlap("already in the library");
         }
         if wanted.starts_with(&there) {
-            return Err("it is inside another project".into());
+            return overlap("it is inside another project");
         }
         if there.starts_with(&wanted) {
-            return Err("it holds another project".into());
+            return overlap("it holds another project");
         }
     }
     Ok(())
@@ -972,7 +991,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&lib.default_location).unwrap();
         let mut st = LibraryState::default();
         st.add_project(ProjectRecord::new("repo", &repo).unwrap(), Slot::First);
-        let check = |p: &Path| check_new_project(&lib, &st, p, None);
+        let check = |p: &Path| check_new_project(&lib, &st, p, None).map_err(|r| r.to_string());
         assert!(check(&base.join("work").join("Other")).is_ok());
         assert!(check(&repo).unwrap_err().contains("already"));
         assert!(check(&repo.join("inner")).unwrap_err().contains("inside"));
