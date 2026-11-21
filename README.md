@@ -1,124 +1,123 @@
-# Dosik
+<h1 align="center">Dosik</h1>
 
-A modern diagramming desktop app, named after the Korean word *dosik* (圖式) — a picture of how things are structured and related. Built with Tauri 2, React 19, and React Flow.
+<p align="center">
+  <b>Clean diagrams, drawn by you or by AI.</b><br>
+  Flowcharts, architecture, sequence, class, and ER diagrams in a calm desktop app for macOS.
+</p>
 
-Draw flowcharts, sequence, class, and ER diagrams with a clean look — borderless tinted tiles, ink-colored orthogonal connectors, and a dot-grid canvas. Diagrams autosave to a project and folder library, and export to Markdown (Mermaid) or images (PNG/SVG), as files or to the clipboard. A local HTTP bridge lets AI agents read and edit diagrams directly; their edits show up on the canvas live, with highlights.
+<p align="center">
+  <a href="https://github.com/79841/dosik/releases/latest"><b>Download for macOS</b></a>
+</p>
 
-## Features
+![Dosik editor with an architecture diagram](docs/images/editor.png)
 
-- **Editing** — nine shapes (rectangle, rounded box, ellipse, diamond, parallelogram, database cylinder, hexagon, sticky note, text), 58 architecture icons, images (paste or drop), frames (titled regions), and groups (⌘G). A nine-color tint palette (including ink for hero nodes); tags, number badges, and description lines on shapes; orthogonal connectors that route around obstacles, with solid/dashed lines, arrowheads, and labels; auto-layout in four directions; copy, cut, and duplicate (⌘C, ⌘X, ⌘D); undo/redo (⌘Z / ⇧⌘Z). Edit a selection from the bottom edit bar or the context menu
-- **Diagram types** — flowchart and architecture, sequence (lifelines, messages, activation bars, alt/loop/opt), class (UML compartments and relations), ERD (entity tables, crow's-foot relations). One diagram is one canvas
-- **Library** — projects → folders (nestable) → diagrams, with autosave. A sidebar tree on the left (drag to reorder or move into folders, context menu, ⌘\ to hide) and Home (dashboard with Start, Continue, and Recent; folder views as Cards or a Canvas board). Reveal a folder or diagram in Finder (File Explorer on Windows) or copy its path
-- **Tabs** — a pinned Library tab (Home) plus a tab per diagram. ⌘T new diagram · ⌘W close tab · ⌘1 Library · ⌘2–8 diagram tabs · ⌘9 last tab · ⌃Tab next tab · ⌘O Open file… · ⌘S save (Ctrl instead of ⌘ on Windows)
-- **AI chat** — the right panel. Ask in plain language to create or edit a diagram and it is drawn on the canvas with live highlights; selected shapes go along as context. Two vendors (Claude, GPT) × two connections:
-  - **Subscription** — uses the login of an installed Claude Code CLI or Codex CLI; no API key needed. GPT via subscription does not work on Windows yet (Codex sandbox)
-  - **API key** — stores an Anthropic or OpenAI key in the OS keychain and calls the API directly
-- **Files** — `.dosik.json` files outside the library open with Open file… and save with Save
-- **Export** — Markdown (Mermaid: flowchart, sequenceDiagram, classDiagram, erDiagram) and PNG/SVG images. Export ▾ in the toolbar exports the whole document; right-clicking shapes exports just the selection. Each format can be saved to a file or copied (Copy as Markdown, Copy image, Copy as SVG)
-- **Mermaid** — press ⌘V on the canvas with Mermaid code on the clipboard (bare code or a ` ```mermaid ` block) and it becomes editable shapes (also Home → New ▾ → From Mermaid…). Supports flowchart, sequenceDiagram, classDiagram, and erDiagram, with automatic layout. The right panel previews the current diagram as Mermaid
-- **Light and dark themes** — Light, Dark or System in Settings ▸ General (⌘,), or the switch at the bottom of the sidebar
-- **AI agent bridge** — a REST API at `http://127.0.0.1:4517` for external agents to read and edit; edits appear on the canvas immediately, with highlights. Protocol: [docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md); MCP setup below
+## Draw
+
+Pick a shape from the bar on the left, drop it, and connect it. Connectors find their own path around other shapes, so a diagram stays tidy as it grows.
+
+- **Shapes and icons** — boxes, diamonds, databases, sticky notes, frames, images, and 58 architecture icons
+- **Nine soft colors**, tags, step numbers, and short descriptions on any shape
+- **Auto layout** in four directions when you just want it arranged
+- **Start from a template** on Home: Flowchart, Sequence, Class, ERD — or paste Mermaid
+
+| Sequence | Class | ER |
+|:---:|:---:|:---:|
+| ![Sequence diagram](docs/images/sequence.png) | ![Class diagram](docs/images/class.png) | ![ER diagram](docs/images/erd.png) |
+
+## Stay organized
+
+Everything you draw is saved as you go. Projects hold folders, folders hold diagrams, and each open diagram gets a tab. Home picks up where you left off.
+
+![Home with recent diagrams](docs/images/home.png)
+
+## Ask AI to draw it
+
+Click **Ask AI**, describe what you want in plain words, and watch it appear on the canvas. Keep talking to change it — "add a cache", "color the workers". Select shapes first to point the AI at them.
+
+![The AI assistant drawing a diagram](docs/images/ai-chat.png)
+
+Choose Claude or GPT in **Settings ▸ AI assistant** (⌘,). Each can connect two ways:
+
+| | Subscription — no API key | API key — pay per use |
+|---|---|---|
+| **Claude** | Your Claude plan, through [Claude Code](https://claude.com/claude-code) signed in on this Mac | An Anthropic API key |
+| **GPT** | Your ChatGPT plan, through the Codex CLI signed in on this Mac | An OpenAI API key |
+
+API keys are kept in the macOS Keychain.
+
+## Use Dosik from Claude and ChatGPT
+
+Already working in Claude or ChatGPT? Let them draw in Dosik directly.
+
+1. Open **Settings ▸ Integrations** and click **Install** next to your AI app.
+2. Restart that app.
+3. Ask for a diagram.
+
+![Settings ▸ Integrations](docs/images/integrations.png)
+
+| App | What you get |
+|---|---|
+| **Claude Desktop** | Diagrams appear right in the conversation, and in Dosik when it's open |
+| **Claude Code** | Draws on the canvas open in Dosik, or reads and writes `.dosik.json` files in your project |
+| **ChatGPT desktop and Codex** | The same tools as Claude Code |
+
+Try:
+
+> Draw our sign-up flow in Dosik: email, verification code, then the welcome screen.
+
+> Look at the diagram open in Dosik and add a cache in front of the database.
+
+> Export `docs/architecture.dosik.json` to Markdown.
+
+Claude Code and Codex need Node.js 18 or later; the Claude Desktop extension brings its own.
+
+## Share it anywhere
+
+- **Export ▾** in the toolbar: Markdown (Mermaid), PNG, or SVG — save a file or copy to the clipboard. Right-click shapes to export just those
+- **Paste Mermaid** with ⌘V and it becomes shapes you can edit
+- **Mermaid preview** (`<>` in the toolbar) shows your diagram as Mermaid, side by side
+
+![Mermaid preview next to a flowchart](docs/images/mermaid.png)
+
+## Light or dark
+
+Follow macOS, or pick one in Settings ▸ General.
+
+![Dosik in dark mode](docs/images/dark.png)
 
 ## Install
 
-Download the file for your Mac from [Releases](https://github.com/79841/dosik/releases).
+Download the `.dmg` for your Mac from [Releases](https://github.com/79841/dosik/releases/latest), open it, and drag Dosik to Applications.
 
 | Mac | File |
 |---|---|
-| Apple Silicon | `Dosik_<version>_aarch64.dmg` |
+| Apple silicon (M1 and later) | `Dosik_<version>_aarch64.dmg` |
 | Intel | `Dosik_<version>_x64.dmg` |
 
-Each release also includes `Dosik_<arch>.app.tar.gz` (`aarch64`, `x64`) for when you only need the app — extract it into Applications.
-Windows and Linux builds are not available yet.
+- macOS 11 or later. Signed with Developer ID and notarized by Apple, so it opens normally
+- Windows and Linux versions are not available yet
+- Your diagrams are plain `.dosik.json` files on your Mac — Settings ▸ General shows where. Nothing leaves your Mac unless you use an AI feature
+- Dosik doesn't show up in Finder's "Open With" yet; open files with **Open file…** in the sidebar
 
-- **macOS**: open the dmg and drag Dosik to Applications. Builds are signed with Developer ID and notarized by Apple,
-  so they open normally (macOS only asks once to confirm an app downloaded from the internet)
-- Requires macOS 11 or later
-- Dosik does not appear in Finder's "Open With" for `.dosik.json` (the file type is not registered) — use Open… in the app.
-  The MCP tool `open_in_dosik` hands files to the installed app
-- The installed app's agent bridge listens on `127.0.0.1:4517`, the same port as a development run — if both run at once, the second cannot take the port. Give development runs another port with `DOSIK_PORT`
-- Subscription connections in AI chat look for an installed Claude Code or Codex CLI. If the app cannot find one, set the path with `CLAUDE_CLI_PATH` / `CODEX_CLI_PATH`
+## Shortcuts
 
-## Run
-
-```bash
-pnpm install
-pnpm tauri dev     # development run
-pnpm tauri build   # build installers — src-tauri/target/release/bundle/ (macOS: .app, .dmg)
-pnpm test          # vitest unit tests
-```
-
-Requirements: Node 22.13+ (pnpm 11 engines), Rust (stable), macOS/Windows/Linux.
-
-## Connect AI agents (MCP)
-
-Open **Settings ▸ Integrations** (⌘,) and install Dosik into:
-
-- **Claude Code** — registered with `claude mcp add --scope user`, for every project
-- **Claude Desktop** — a Dosik extension; Claude Desktop asks you to confirm
-- **ChatGPT and Codex** — one entry in `~/.codex/config.toml`, which the ChatGPT desktop app and the Codex CLI share
-
-The app carries its MCP server and keeps a copy in its app data, refreshed when Dosik updates, so moving or updating Dosik keeps the AI apps working. Claude Code and Codex start it with Node.js 18 or later (the Claude Desktop extension uses Claude's own). Restart the AI app after a change. Dosik writes to `~/.codex/config.toml` and registers with Claude Code's user scope; a `CODEX_HOME` or `CLAUDE_CONFIG_DIR` set only in a shell profile is not seen by an app opened from Finder.
-
-From a checkout, for development:
-
-```bash
-claude mcp add dosik -- node /absolute/path/to/dosik/scripts/mcp/server.mjs
-```
-
-`pnpm build:mcp` builds the packaged server into `src-tauri/mcp/` (release builds run it).
-
-This adds six tools.
-
-| Tool | What it does |
+| Keys | Action |
 |---|---|
-| `get_diagram` | Reads a document |
-| `apply_ops` | Applies edit ops — in the app, the canvas updates immediately |
-| `describe_ops` | Lists the available ops, shapes, and colors — answers from the spec even without the app |
-| `export_diagram` | Exports to a file (`md`, `mmd`, `dosik.json`, `svg`) |
-| `open_in_dosik` | Opens a `.dosik.json` in the installed app (macOS) |
-| `render_diagram` | Draws a diagram — as an in-conversation app on hosts that render apps, otherwise as SVG |
+| ⌘T / ⌘W | New diagram / close tab |
+| ⌘1 · ⌘2–8 · ⌘9 | Library · diagram tabs · last tab |
+| ⌘S · ⌘O | Save · open a file |
+| ⌘Z / ⇧⌘Z | Undo / redo |
+| ⌘C · ⌘X · ⌘D | Copy · cut · duplicate |
+| ⌘G | Group shapes |
+| ⌘V | Paste shapes, an image, or Mermaid code |
+| ⌘\ · ⌘, | Sidebar · Settings |
 
-**Arguments choose the target.** Read, edit, and export take `file` (an absolute path to a `.dosik.json`).
+## For developers
 
-- Without `file`, the tools work on **the canvas open in the app**. If the app is not running, they ask you to open it
-- With `file`, they work on **that file without the app**, through the same data layer as the app (the headless CLI). Editing a missing file creates it, and if any op fails the file is left untouched
-- They never silently fall back to a file when the app is closed — otherwise an agent would believe it edited the canvas while the screen stays unchanged (the same split draw.io's MCP server makes)
+Building from source, the local agent API, and the MCP tools: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-- **No tool per op.** Ops are already one language, and `docs/openapi.yaml` is the source of truth for their schema. `apply_ops`'s input schema is generated from that file, so the tool follows the spec when it changes
-- **The server never launches the app.** It is a helper process the client starts and stops per conversation, and the window belongs to the user. Only when the user asks to see a diagram does `open_in_dosik` hand the file to the **installed app** (it never starts a development build)
-- **SVG is drawn without a window.** Real vectors are built from the document with the same shape components and edge layout function (`layoutEdge`) as the canvas — no `<foreignObject>`. This is a different path from the app's Export SVG (a canvas capture)
-- **In-conversation app.** When the client says it can render MCP Apps (`ui://`), `render_diagram` opens the `ui://dosik/diagram-view` app.
-  - It supports zoom and pan, Fit, Refresh, and Open in Dosik (for `file` targets); light and dark follow the host.
-  - The SVG, in both themes, goes only to the app (in the result's `_meta`); the model gets a one-line summary and its facts (title, shape and connector counts).
-  - Other clients (such as the Claude Code CLI) get the SVG text as before.
-  - Verified client: the Claude Desktop chat tab (registered in `claude_desktop_config.json`).
-  - The app bundle builds itself into `dist-mcp-view/` on first use (or when its sources change).
-- PNG is not available here: it captures the rendered canvas, which needs a window — use the app's Export menu
-- Port: `DOSIK_PORT` (default 4517)
+## License
 
-## Structure
+[MIT](LICENSE). Development happens in this repository; it does not take issues or pull requests.
 
-- `src/features/` — chrome (title strip, document tabs), settings (the Settings dialog), sidebar (library tree), home (dashboard, folder views, Canvas board), library (library model, tabs, autosave), canvas (editor), toolbar, palette (shape bar), editbar (selection edit bar), inspector (selection editing hook), export (md/png/svg), mermaid (paste, preview), agent (bridge hook), ai (chat panel and providers), headless, mcp-view
-- `src/shared/lib/` — types, color tokens, zustand store (op application and history), edge geometry
-- `src-tauri/` — agent HTTP bridge, library and file I/O, AI CLI spawning and keychain
-- `design/design-system/project/` — design tokens (`tokens.css`, `tokens.json`; generated)
-- Bridge protocol: [docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md); spec: [docs/openapi.yaml](docs/openapi.yaml)
-
-## Create diagrams from the terminal
-
-The same command sends bridge ops whether or not the app is running. If it is not, the command starts a development build
-and waits for the bridge to respond — the first build takes a few minutes, so it reports progress.
-
-```bash
-pnpm ops '{"ops":[{"op":"add_node","node":{"label":"Hi","x":100,"y":100}}]}'
-pnpm ops --file ops.json
-cat ops.json | pnpm --silent ops
-```
-
-Only the response goes to stdout, so you can pipe it: `pnpm --silent ops … | jq`.
-Port: `DOSIK_PORT` (default 4517).
-
-## Contributing and license
-
-Development happens in this repository, but it does not accept issues or pull requests. Licensed under [MIT](LICENSE).
+The name comes from the Korean word *dosik* (圖式) — a picture of how things are structured and related.
