@@ -1,5 +1,5 @@
 {
-  "about": "Naming rules of the folder-backed library, shared by the app (Rust) and the MCP server (Node) so both name things the same way. Each section is a list of cases: what goes in and what must come out.",
+  "about": "Naming and walking rules of the folder-backed library, shared by the app (Rust) and the MCP server (Node) so both name and skip the same things. Each section is a list of cases: what goes in and what must come out.",
   "limits": {
     "chars": 80,
     "bytes": 240
@@ -265,5 +265,98 @@
       "10",
       "a"
     ]
+  ],
+  "maxDepth": 10,
+  "entries": [
+    {
+      "name": "Flow.dosik",
+      "dir": false,
+      "kind": "diagram",
+      "stem": "Flow"
+    },
+    {
+      "name": "Flow.dosik.json",
+      "dir": false,
+      "kind": "diagram",
+      "stem": "Flow"
+    },
+    {
+      "name": "Flow.DOSIK",
+      "dir": false,
+      "kind": "diagram",
+      "stem": "Flow"
+    },
+    {
+      "name": "Old.Dosik.Json",
+      "dir": false,
+      "kind": "diagram",
+      "stem": "Old"
+    },
+    {
+      "name": "a.b.dosik",
+      "dir": false,
+      "kind": "diagram",
+      "stem": "a.b"
+    },
+    {
+      "name": ".dosik",
+      "dir": false,
+      "kind": "skip"
+    },
+    {
+      "name": ".Flow.dosik",
+      "dir": false,
+      "kind": "skip"
+    },
+    {
+      "name": "Flow.dosik.tmp",
+      "dir": false,
+      "kind": "skip"
+    },
+    {
+      "name": "Flow.dosik.TMP",
+      "dir": false,
+      "kind": "skip"
+    },
+    {
+      "name": ".dosik-41-7.tmp",
+      "dir": false,
+      "kind": "skip"
+    },
+    {
+      "name": "notes.json",
+      "dir": false,
+      "kind": "other"
+    },
+    {
+      "name": "Flow.dosikx",
+      "dir": false,
+      "kind": "other"
+    },
+    {
+      "name": "Flow.json",
+      "dir": false,
+      "kind": "other"
+    },
+    {
+      "name": "Sub",
+      "dir": true,
+      "kind": "folder"
+    },
+    {
+      "name": "Archive.dosik",
+      "dir": true,
+      "kind": "folder"
+    },
+    {
+      "name": ".git",
+      "dir": true,
+      "kind": "skip"
+    },
+    {
+      "name": "build.tmp",
+      "dir": true,
+      "kind": "skip"
+    }
   ]
 }

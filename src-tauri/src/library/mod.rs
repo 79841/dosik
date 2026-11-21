@@ -15,6 +15,8 @@ mod disk;
 mod names;
 #[allow(dead_code)]
 mod state;
+#[allow(dead_code)]
+mod walk;
 
 use std::path::PathBuf;
 
