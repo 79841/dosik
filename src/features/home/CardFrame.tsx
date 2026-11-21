@@ -2,6 +2,7 @@ import { Ellipsis } from "lucide-react";
 import { type ReactNode, type RefObject, useId, useRef, useState } from "react";
 
 import { FOCUS_RING } from "../../shared/lib/palette";
+import { isMacContextClick } from "../../shared/lib/windowChrome";
 import { belowRightOf, Menu, type MenuItem } from "../../shared/ui/Menu";
 import type { ItemKey } from "../library/libraryApi";
 import { screenStamp, stillOnScreen } from "../library/screenStamp";
@@ -112,9 +113,9 @@ export const CardFrame = ({
         aria-label={editor ? name : undefined}
         // a press anywhere on the card is the card's: it is selected and its
         // main button takes the focus — the primary button only, a ctrl+click
-        // is macOS's right-click (#230 D9)
+        // is macOS's right-click (#230 D9); elsewhere it is a press
         onPointerDown={(e) => {
-          if (e.button !== 0 || e.ctrlKey) return;
+          if (e.button !== 0 || isMacContextClick(e)) return;
           if ((e.target as Element).closest("input")) return;
           select();
           main.current?.focus({ preventScroll: true });

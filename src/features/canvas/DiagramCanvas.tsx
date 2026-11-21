@@ -42,6 +42,7 @@ import { openShapeMenu } from "./selectionMenu";
 import { LabeledEdge } from "./LabeledEdge";
 import { ShapeNode } from "./ShapeNode";
 import { registerPointerAt, registerViewportCenter, registerViewportRead } from "./canvasViewport";
+import { droppedImageFiles } from "./imageFiles";
 import { placeBlobs, useImageFileDrop } from "./useImageFileDrop";
 
 export const SHAPE_DRAG_MIME = "application/modern-diagram-shape";
@@ -319,15 +320,20 @@ export const DiagramCanvas = () => {
 
   const onDrop = useCallback(
     (event: DragEvent<HTMLDivElement>) => {
-      // picture files (#8) — reach here in a browser; in Tauri the webview's
-      // drag-drop event carries them instead (useImageFileDrop)
-      const pictures = [...event.dataTransfer.files].filter((f) => f.type.startsWith("image/"));
-      if (pictures.length > 0) {
+      // picture files (#8) — reach here on Windows and in a browser; on macOS
+      // Tauri takes them first and its drag-drop event carries them instead
+      // (useImageFileDrop). Files are this drop's either way: never the
+      // webview's to open
+      const files = [...event.dataTransfer.files];
+      if (files.length > 0) {
         event.preventDefault();
-        void placeBlobs(
-          pictures.map((file) => async () => file),
-          screenToFlowPosition({ x: event.clientX, y: event.clientY }),
-        );
+        const pictures = droppedImageFiles(files);
+        if (pictures.length > 0) {
+          void placeBlobs(
+            pictures.map((file) => async () => file),
+            screenToFlowPosition({ x: event.clientX, y: event.clientY }),
+          );
+        }
         return;
       }
       const payload = event.dataTransfer.getData(SHAPE_DRAG_MIME);

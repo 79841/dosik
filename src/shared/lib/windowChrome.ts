@@ -113,6 +113,15 @@ export const isMacPlatform = (userAgent: string = navigator.userAgent): boolean 
   userAgent.includes("Mac");
 
 /**
+ * A ctrl+click that is macOS's right click — the row and the card leave it to
+ * the context menu. Off macOS a ctrl+click is a click.
+ */
+export const isMacContextClick = (
+  e: { ctrlKey: boolean },
+  mac: boolean = isMacPlatform(),
+): boolean => mac && e.ctrlKey;
+
+/**
  * Where the hidden band's first control (Show sidebar) starts: past the
  * traffic lights on macOS (88 — even in full screen, where the lights slide
  * down over the band and must not cover it), at the edge elsewhere.

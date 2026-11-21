@@ -12,6 +12,8 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { onMac } from "../../../test/platform";
+
 import { makeDoc, makeNode } from "../../../shared/lib/__tests__/testFixtures";
 import { useDiagramStore } from "../../../shared/lib/store";
 import { useToastStore } from "../../../shared/lib/toastStore";
@@ -856,9 +858,15 @@ describe("sidebar tree (#217 R3)", () => {
 
     it("a ctrl+click (right click on macOS) that also sends click does not change the selection (#230)", () => {
       renderTree();
-      fireEvent.click(row(/^Personal/), { ctrlKey: true });
+      onMac(() => fireEvent.click(row(/^Personal/), { ctrlKey: true }));
       expect(item(/^Personal/)).toHaveAttribute("aria-selected", "false");
       fireEvent.click(row(/^Personal/));
+      expect(item(/^Personal/)).toHaveAttribute("aria-selected", "true");
+    });
+
+    it("off macOS a ctrl+click is a click — it picks the row", () => {
+      renderTree();
+      fireEvent.click(row(/^Personal/), { ctrlKey: true });
       expect(item(/^Personal/)).toHaveAttribute("aria-selected", "true");
     });
 
@@ -874,7 +882,7 @@ describe("sidebar tree (#217 R3)", () => {
       tryDrag(chevron(/^Work/), { button: 0 });
       tryDrag(moreButton(/^Work/)!, { button: 0 });
       tryDrag(row(/^Personal/), { button: 2 });
-      tryDrag(row(/^Personal/), { button: 0, ctrlKey: true });
+      onMac(() => tryDrag(row(/^Personal/), { button: 0, ctrlKey: true }));
     });
 
     it("does not target rows hidden by scrolling when the pointer leaves above the list — the row at the visible edge (#230)", () => {

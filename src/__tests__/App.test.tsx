@@ -107,6 +107,20 @@ describe("App — window (#217)", () => {
     expect(within(sheet()).getByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
   });
 
+  it("off macOS the webview's own right-click menu never shows on Home — text fields keep theirs", async () => {
+    render(<App />);
+    await screen.findByRole("main");
+    const onHome = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    within(sheet()).getByRole("main", { name: "Home" }).dispatchEvent(onHome);
+    expect(onHome.defaultPrevented).toBe(true);
+    const field = document.createElement("input");
+    document.body.append(field);
+    const onField = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    field.dispatchEvent(onField);
+    expect(onField.defaultPrevented).toBe(false);
+    field.remove();
+  });
+
   it("Editor: Home + document tab; the sheet's top-left corner is rounded when docked and square when hidden (R7)", async () => {
     openDocument({ ...makeDoc([], []), title: "Orders flow" }, { projectId: "p1" });
     render(<App />);

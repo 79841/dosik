@@ -93,13 +93,26 @@ export interface WheelLike {
 }
 
 /**
- * One wheel event (D10). A pinch (macOS sends it as a wheel with `ctrlKey`)
- * and ⌘+wheel zoom about the pointer; anything else pans — two fingers on a
- * trackpad, a mouse wheel, Shift+wheel sideways off macOS.
+ * Off macOS a touchpad pinch and a mouse's Ctrl+wheel both arrive as a wheel
+ * with `ctrlKey`: the pinch in small pixel steps, a mouse notch as 100 (or in
+ * lines). Below this a step is a pinch's. An estimate: to be checked on real
+ * touchpads.
+ */
+const PINCH_STEP_MAX = 50;
+
+/** a pinch: a wheel with `ctrlKey` — every one on macOS, the small pixel steps elsewhere */
+const isPinch = (e: WheelLike, isMac: boolean): boolean =>
+  e.ctrlKey && (isMac || (e.deltaMode === 0 && Math.abs(e.deltaY) < PINCH_STEP_MAX));
+
+/**
+ * One wheel event (D10). A pinch and ⌘ or Ctrl+wheel zoom about the pointer
+ * — a pinch ten times as fast, so the board follows the fingers on both
+ * systems; anything else pans — two fingers on a trackpad, a mouse wheel,
+ * Shift+wheel sideways off macOS.
  */
 export const applyWheel = (vp: Viewport, e: WheelLike, isMac: boolean): Viewport => {
   if (e.ctrlKey || e.metaKey) {
-    const factor = e.ctrlKey && isMac ? 10 : 1;
+    const factor = isPinch(e, isMac) ? 10 : 1;
     const step = e.deltaMode === 1 ? 0.05 : e.deltaMode ? 1 : 0.002;
     return zoomAt(vp, e, vp.zoom * 2 ** (-e.deltaY * step * factor));
   }

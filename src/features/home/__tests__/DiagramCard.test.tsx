@@ -3,6 +3,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { onMac } from "../../../test/platform";
+
 import { useDiagramStore } from "../../../shared/lib/store";
 import { useAppStore } from "../../library/appStore";
 import { blankDoc, type FolderMeta, type ProjectMeta } from "../../library/libraryApi";
@@ -140,8 +142,14 @@ describe("diagram card (#231 D7·D8, T19)", () => {
   it("right button·ctrl+click (macOS right click) does not select", () => {
     show();
     fireEvent.pointerDown(card(), { button: 2 });
-    fireEvent.pointerDown(card(), { button: 0, ctrlKey: true });
+    onMac(() => fireEvent.pointerDown(card(), { button: 0, ctrlKey: true }));
     expect(useHomeSelection.getState().key).toBeNull();
+  });
+
+  it("off macOS a ctrl+press is a press — the card is selected", () => {
+    show();
+    fireEvent.pointerDown(card(), { button: 0, ctrlKey: true });
+    expect(useHomeSelection.getState().key).not.toBeNull();
   });
 
   it("pressing empty padding keeps focus on the main button — the press's default action does not steal it", () => {
