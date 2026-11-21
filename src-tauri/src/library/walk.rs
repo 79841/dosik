@@ -216,6 +216,24 @@ pub fn height(path: &Path, limit: usize) -> usize {
         .unwrap_or(0)
 }
 
+/// How new the folder at `path` (at `depth`) is, everything under it
+/// counted, from file times alone — no diagram is opened. An empty folder
+/// is as new as itself.
+pub fn newest_under(path: &Path, depth: usize) -> u64 {
+    entries(path)
+        .into_iter()
+        .filter_map(|(name, is_dir)| {
+            let at = path.join(&name);
+            if is_dir {
+                (depth < MAX_DEPTH).then(|| newest_under(&at, depth + 1))
+            } else {
+                Some(disk::modified_ms(&at))
+            }
+        })
+        .max()
+        .unwrap_or_else(|| disk::modified_ms(path))
+}
+
 /// The names already in a folder, for naming something new there or
 /// renaming something in it: every entry counts — hidden ones, links,
 /// files that are no diagram — since any of them would be in the way.
@@ -270,16 +288,31 @@ impl Siblings {
 
     /// what a new folder wanted as `wanted` is called here
     pub fn folder_name(&self, wanted: &str) -> String {
-        names::unique_name(wanted, |c| self.has(&names::fold(c)))
+        self.folder_name_avoiding(wanted, &[])
+    }
+
+    /// `folder_name`, also clear of the names in `also` — ones found taken
+    /// since this was read
+    pub fn folder_name_avoiding(&self, wanted: &str, also: &[String]) -> String {
+        names::unique_name(wanted, |c| {
+            self.has(&names::fold(c)) || also.iter().any(|t| names::same(t, c))
+        })
     }
 
     /// What a new diagram wanted as `wanted` is called here — its name,
     /// without the extension: no entry may have its file's name, and no
     /// diagram the name it would show.
     pub fn diagram_name(&self, wanted: &str, ext: &str) -> String {
+        self.diagram_name_avoiding(wanted, ext, &[])
+    }
+
+    /// `diagram_name`, also clear of the file names in `also`
+    pub fn diagram_name_avoiding(&self, wanted: &str, ext: &str, also: &[String]) -> String {
         names::unique_name(wanted, |c| {
             let folded = names::fold(c);
-            self.has(&format!("{folded}{ext}"))
+            let file = format!("{c}{ext}");
+            self.has(&names::fold(&file))
+                || also.iter().any(|t| names::same(t, &file))
                 || self
                     .entries
                     .iter()

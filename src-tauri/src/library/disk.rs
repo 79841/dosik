@@ -53,6 +53,23 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     })
 }
 
+/// Puts the temp file `tmp` at `dest`, never over anything there: a hard
+/// link fails when `dest` is taken, where a rename would replace it. Where
+/// the disk has no hard links, `dest` is looked at first and the temp file
+/// renamed. `AlreadyExists` when `dest` is taken; the temp file is then
+/// left for the caller to try another name or remove.
+pub fn place_new(tmp: &Path, dest: &Path) -> std::io::Result<()> {
+    match std::fs::hard_link(tmp, dest) {
+        Ok(()) => {
+            let _ = std::fs::remove_file(tmp);
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
+        Err(_) if exists(dest) => Err(std::io::ErrorKind::AlreadyExists.into()),
+        Err(_) => std::fs::rename(tmp, dest),
+    }
+}
+
 /// a real directory — a symbolic link to one is not
 pub fn is_real_dir(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
@@ -82,6 +99,43 @@ pub fn modified_ms(path: &Path) -> u64 {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Whether two paths are one entry on disk — one name in two cases on a
+/// disk that ignores case, say. Links are not followed.
+pub fn same_entry(a: &Path, b: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::symlink_metadata(a), std::fs::symlink_metadata(b)) {
+            (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+            _ => false,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        match (canonical(a), canonical(b)) {
+            (Some(x), Some(y)) => x == y,
+            _ => false,
+        }
+    }
+}
+
+/// `path` with links resolved and `.`/`..` gone, as the file system has it
+/// — on Windows without the `\\?\` the standard library adds — or `None`
+/// when it is not there.
+pub fn canonical(path: &Path) -> Option<PathBuf> {
+    let real = std::fs::canonicalize(path).ok()?;
+    #[cfg(windows)]
+    {
+        let text = real.to_string_lossy();
+        if let Some(rest) = text.strip_prefix(r"\\?\") {
+            if !rest.starts_with("UNC\\") {
+                return Some(PathBuf::from(rest));
+            }
+        }
+    }
+    Some(real)
 }
 
 /// Whether `rel` — a path relative to a project, `/` between its names, as

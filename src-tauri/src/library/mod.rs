@@ -18,6 +18,8 @@ mod listing;
 #[allow(dead_code)]
 mod names;
 #[allow(dead_code)]
+mod ops;
+#[allow(dead_code)]
 mod state;
 #[allow(dead_code)]
 mod walk;

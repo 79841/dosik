@@ -313,7 +313,7 @@ fn register_default_projects(lib: &Library, st: &mut LibraryState) -> bool {
                 && root
                     .file_name()
                     .is_some_and(|n| names::same(&n.to_string_lossy(), &name))
-                && same_dir(&root, &path)
+                && disk::same_entry(&root, &path)
         });
         if let Some(at) = renamed {
             st.projects[at].path = path.to_string_lossy().into_owned();
@@ -335,50 +335,13 @@ fn register_default_projects(lib: &Library, st: &mut LibraryState) -> bool {
     changed
 }
 
-/// whether two paths are one directory on disk — the same name in another
-/// case on a disk that ignores case
-fn same_dir(a: &Path, b: &Path) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        match (std::fs::symlink_metadata(a), std::fs::symlink_metadata(b)) {
-            (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
-            _ => false,
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        match (canonical(a), canonical(b)) {
-            (Some(x), Some(y)) => x == y,
-            _ => false,
-        }
-    }
-}
-
-/// `path` with links resolved and `.`/`..` gone, as the file system has it
-/// — on Windows without the `\\?\` the standard library adds — or `None`
-/// when it is not there.
-pub fn canonical(path: &Path) -> Option<PathBuf> {
-    let real = std::fs::canonicalize(path).ok()?;
-    #[cfg(windows)]
-    {
-        let text = real.to_string_lossy();
-        if let Some(rest) = text.strip_prefix(r"\\?\") {
-            if !rest.starts_with("UNC\\") {
-                return Some(PathBuf::from(rest));
-            }
-        }
-    }
-    Some(real)
-}
-
 /// `path` as the file system has it, as far as it is there — the rest as
 /// given — so two spellings of one folder compare equal, there or not.
 pub fn normalized(path: &Path) -> PathBuf {
     let mut rest = Vec::new();
     let mut at = path;
     loop {
-        if let Some(real) = canonical(at) {
+        if let Some(real) = disk::canonical(at) {
             return rest.iter().rev().fold(real, |p, name| p.join(name));
         }
         match (at.parent(), at.file_name()) {

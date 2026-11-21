@@ -17,6 +17,8 @@ pub const MAX_NAME_BYTES: usize = 240;
 pub const UNTITLED_DIAGRAM: &str = "Untitled Diagram";
 pub const UNTITLED_FOLDER: &str = "Untitled Folder";
 pub const UNTITLED_PROJECT: &str = "Untitled Project";
+/// the project a diagram goes to when there is none
+pub const MY_DIAGRAMS: &str = "My Diagrams";
 
 /// a diagram's file: `<name>.dosik`
 pub const DIAGRAM_EXT: &str = ".dosik";
