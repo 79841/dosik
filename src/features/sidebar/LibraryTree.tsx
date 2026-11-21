@@ -46,7 +46,14 @@ import { DiagramGlyph, FolderGlyph } from "../../shared/ui/KindGlyph";
 import { besidePointer, Menu, type MenuItem } from "../../shared/ui/Menu";
 import { ProjectBadge } from "../../shared/ui/ProjectBadge";
 import { FoldGroup } from "./FoldGroup";
-import { type DropTarget, dropAt, keyboardStep, placementNotice, type RowBox } from "./treeDrop";
+import {
+  type DropTarget,
+  dropAt,
+  keyboardStep,
+  LIST_PAD_TOP,
+  placementNotice,
+  rowBoxes,
+} from "./treeDrop";
 import { TreeDragLayer } from "./TreeDragLayer";
 import { unfoldedFolders, useTreeStore } from "./treeStore";
 
@@ -519,28 +526,36 @@ const TreeBody = ({
    * list's width; above or below the list, at its visible edge, never on a row
    * the scroll hides there (#230) — while it scrolls by itself, the
    * slot follows the edge. Scrolled to the top, the edge is the first row's,
-   * under the list's top padding (#230)
+   * under the list's top padding (#230). The rows' boxes are worked out from
+   * the list's top and their order, not read from the screen: the preview and
+   * the rows gliding out of its way must not move what is under the pointer
+   * (#260)
    */
   const targetAt = (dragged: TreeNode, at: Point): DropTarget | null => {
-    const box = treeBox.current?.getBoundingClientRect();
-    if (!box || at.x < box.left || at.x > box.right) return null;
-    const boxes = new Map<TreeKey, RowBox>();
-    for (const row of live.current.rows) {
-      const line = items.current.get(row.key)?.querySelector(":scope > [data-row]");
-      if (!line) continue;
-      const { top, bottom } = line.getBoundingClientRect();
-      boxes.set(row.key, { top, bottom });
-    }
-    const first = boxes.values().next().value;
+    const list = treeBox.current;
+    const box = list?.getBoundingClientRect();
+    if (!list || !box || at.x < box.left || at.x > box.right) return null;
+    const { rows } = live.current;
+    const boxes = rowBoxes(rows, box.top + LIST_PAD_TOP - list.scrollTop);
+    const first = rows[0] ? boxes.get(rows[0].key) : undefined;
     const top = Math.max(box.top, first?.top ?? box.top) + 1;
     return dropAt({
-      rows: live.current.rows,
+      rows,
       boxes,
       y: Math.min(Math.max(at.y, top), box.bottom - 1),
       dragged: dragged.key as ItemKey,
       folders: live.current.folders,
     });
   };
+
+  // the rows changed under a drag — a folder unfolded, a listing landed: the
+  // pointer that has not moved may be over another slot now (#260)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rows is the trigger; the drag reads the live pointer
+  useLayoutEffect(() => {
+    const at = live.current.at;
+    if (!at) return;
+    setDrag((now) => (now ? { ...now, target: targetAt(now.node, at) } : now));
+  }, [rows]);
 
   /** the drop (#230 D9, D13): the item goes, the screen first; focus to it, or to the folder it went into */
   const drop = (node: TreeNode, target: DropTarget) => {

@@ -27,10 +27,18 @@ import { resetAutosaveForTests, useAutosave } from "../../library/useAutosave";
 import { DROP_RING, DROP_TARGET } from "../../../shared/lib/palette";
 import { badgeColour } from "../../../shared/lib/projectBadge";
 import { ProjectsSection } from "../LibraryTree";
+import { dropAt } from "../treeDrop";
 import { folderKey } from "../treeModel";
 import { resetTreeForTests, useTreeStore } from "../treeStore";
 import { badgeIn } from "../../../test/badges";
 import { showInLabel } from "../../library/fileManager";
+
+// the tree's drop targets as they are, counted (#260)
+vi.mock("../treeDrop", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../treeDrop")>();
+  return { ...actual, dropAt: vi.fn(actual.dropAt) };
+});
+const dropAtCalls = vi.mocked(dropAt);
 
 /** "Show in …" as this web view names its file manager (#238 D10) */
 const SHOW_IN = showInLabel();
@@ -954,26 +962,60 @@ describe("sidebar tree (#217 R3)", () => {
       tryDrag(row(/^Personal/), { button: 0, ctrlKey: true });
     });
 
-    it("does not target rows hidden by scrolling when the pointer leaves above the list — the row at the visible edge (#230)", () => {
+    it("does not target rows hidden by scrolling when the pointer leaves above the list — the row at the visible edge (#230)", async () => {
       renderTree();
-      // scrolled by 54: Work and Archive sit above the list's top edge (100), hidden
-      const scrolled = () => {
-        layout();
-        [...tree().querySelectorAll<HTMLElement>("[data-row]")].forEach((line, i) => {
-          line.getBoundingClientRect = () =>
-            ({ top: 46 + i * 27, bottom: 72 + i * 27, left: 8, right: 240 }) as DOMRect;
-        });
-      };
-      scrolled();
-      const start = row(/^Sequence, diagram/).getBoundingClientRect().top + 13;
+      layout();
+      // scrolled by 62: Work (40) and Archive (71) sit above the list's top edge (100), hidden
+      tree().scrollTop = 62;
+      const start = 195 - 62 + 15;
       fireEvent.pointerDown(row(/^Sequence, diagram/), { button: 0, clientX: 60, clientY: start });
       firePointer("pointermove", 60, start + 6);
-      scrolled();
-      // over the hidden Work row, above the list
+      // over the hidden Work row, above the list: Login flow, at the visible edge
       firePointer("pointermove", 70, 60);
       expect(row(/^Work/)).not.toHaveClass("bg-selected");
-      expect(dropLine()?.closest("[data-row]")).toBe(row(/^Login flow/));
       firePointer("pointerup", 70, 60);
+      await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
+      expect(calls("reorder_item")[0]![1]).toEqual({
+        parent: "work",
+        item: "diagram:p2",
+        index: 1,
+      });
+    });
+
+    it("works the slot out from the list's top and the rows' order — not the rows' boxes on screen, which glide in a drag (#260)", async () => {
+      renderTree();
+      layout();
+      // every row drawn somewhere else, as in the middle of a glide
+      for (const line of tree().querySelectorAll<HTMLElement>("[data-row]")) {
+        line.getBoundingClientRect = () =>
+          ({ top: 500, bottom: 530, left: 8, right: 240 }) as DOMRect;
+      }
+      // worked out: Work 102, Archive 133, Login flow 164, Sequence 195
+      fireEvent.pointerDown(row(/^Sequence, diagram/), { button: 0, clientX: 60, clientY: 210 });
+      firePointer("pointermove", 60, 216);
+      firePointer("pointermove", 70, 167);
+      firePointer("pointerup", 70, 167);
+      await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
+      expect(calls("reorder_item")[0]![1]).toEqual({
+        parent: "work",
+        item: "diagram:p2",
+        index: 1,
+      });
+    });
+
+    it("the rows changing under a still pointer (a listing landing) moves the target with them (#260)", () => {
+      renderTree();
+      // Login flow over the lower half of Sequence: after it
+      dragTo(/^Login flow/, 70, rowTop(/^Sequence/) + 20);
+      expect(row(/^Personal/)).not.toHaveClass(...DROP_TARGET.split(" "));
+      // Archive is gone: the same y is now over Personal
+      act(() =>
+        useLibraryStore.setState({
+          folders: ordered().map((f) => ({ ...f, folders: [] })),
+        }),
+      );
+      expect(row(/^Personal/)).toHaveClass(...DROP_TARGET.split(" "));
+      firePointer("pointercancel", 70, 215);
     });
 
     it("the first row is the target when the pointer leaves above a list scrolled to the top — it does not fall into the list's top padding (pt-0.5) (#230)", async () => {
@@ -1022,22 +1064,14 @@ describe("sidebar tree (#217 R3)", () => {
         scrollRange();
         tree().scrollTop = 700;
         dragTo(/^Sequence, diagram/, 70, 396);
-        // every row's box is read when the slot is worked out again
-        let reads = 0;
-        for (const line of tree().querySelectorAll<HTMLElement>("[data-row]")) {
-          const read = line.getBoundingClientRect;
-          line.getBoundingClientRect = () => {
-            reads += 1;
-            return read();
-          };
-        }
+        const worked = dropAtCalls.mock.calls.length;
         act(() => {
           vi.advanceTimersToNextFrame();
           vi.advanceTimersToNextFrame();
           vi.advanceTimersToNextFrame();
         });
         expect(tree().scrollTop).toBe(700);
-        expect(reads).toBe(0);
+        expect(dropAtCalls.mock.calls.length).toBe(worked);
       } finally {
         firePointer("pointerup", 70, 396);
         vi.useRealTimers();
