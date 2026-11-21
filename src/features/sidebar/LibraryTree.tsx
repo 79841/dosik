@@ -45,6 +45,8 @@ import {
 import { besidePointer, Menu, type MenuItem } from "../../shared/ui/Menu";
 import { FoldGroup } from "./FoldGroup";
 import {
+  AUTO_UNFOLD_MS,
+  autoUnfoldKey,
   type DropTarget,
   dragView,
   dropAt,
@@ -52,6 +54,7 @@ import {
   LIST_PAD_TOP,
   placementNotice,
   ROW_PITCH,
+  refoldAfterDrag,
   rowBoxes,
 } from "./treeDrop";
 import { TreeDragLayer } from "./TreeDragLayer";
@@ -334,6 +337,8 @@ const TreeBody = ({
    * the screen stays as it was — and get it back a frame later.
    */
   const [settling, setSettling] = useState(false);
+  /** the folders this drag unfolded by resting on them, first to last (#260 R3) */
+  const autoOpened = useRef<TreeKey[]>([]);
   /** the click after a drag is no pick (#230 D9) */
   const swallowClick = useRef(false);
   /** what the drag reads between renders: the pointer, the rows, the listing */
@@ -559,6 +564,16 @@ const TreeBody = ({
     setDrag((now) => (now ? { ...now, target: targetAt(now.node, at) } : now));
   }, [rows]);
 
+  /**
+   * The drag is over (#260 R3): what it unfolded folds back — but a folder
+   * the drop went into, or under, stays open. `null`: called off.
+   */
+  const refold = (dropParent: string | null) => {
+    const keys = refoldAfterDrag(autoOpened.current, dropParent, live.current.folders);
+    autoOpened.current = [];
+    for (const key of keys) useTreeStore.getState().collapse(key);
+  };
+
   /** the drop (#230 D9, D13): the item goes, the screen first; focus to it, or to the folder it went into */
   const drop = (node: TreeNode, target: DropTarget) => {
     const key = node.key as ItemKey;
@@ -591,6 +606,7 @@ const TreeBody = ({
         swallowClick.current = true;
         setMenu(null);
         live.current.at = at;
+        autoOpened.current = [];
         setDrag({ node, at, target: null });
       },
       onMove: (at) => {
@@ -604,12 +620,14 @@ const TreeBody = ({
         if (target) setSettling(true);
         setDrag(null);
         forgetSwallow();
+        refold(target?.placement.parent ?? null);
         if (target) drop(node, target);
       },
       onCancel: () => {
         live.current.at = null;
         setDrag(null);
         forgetSwallow();
+        refold(null);
       },
     });
   };
@@ -656,6 +674,18 @@ const TreeBody = ({
     const frame = requestAnimationFrame(() => setSettling(false));
     return () => cancelAnimationFrame(frame);
   }, [settling]);
+
+  // resting on a collapsed folder unfolds it (#260 R3); moving off it
+  // before then, or the drag ending, calls the wait off
+  const unfoldKey = drag ? autoUnfoldKey(drag.target, rows) : null;
+  useEffect(() => {
+    if (!unfoldKey) return;
+    const timer = setTimeout(() => {
+      autoOpened.current.push(unfoldKey);
+      useTreeStore.getState().expand([unfoldKey]);
+    }, AUTO_UNFOLD_MS);
+    return () => clearTimeout(timer);
+  }, [unfoldKey]);
 
   /** the rows as the drag shows them: its preview and the rows moved out of its way (#260 R2) */
   const dragTarget = drag?.target ?? null;

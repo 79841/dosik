@@ -1291,6 +1291,159 @@ describe("sidebar tree (#217 R3)", () => {
       expect(calls("move_project")[0]![1]).toEqual({ id: "old", folder: "arc", index: 0 });
     });
 
+    describe("resting on a collapsed folder unfolds it (#260 R3)", () => {
+      const drafts = (): FolderMeta[] => {
+        const [work, personal] = ordered();
+        return [
+          {
+            ...work!,
+            folders: [
+              {
+                id: "arc",
+                name: "Archive",
+                updatedAt: 1,
+                order: ["folder:deep", "diagram:a1"],
+                diagrams: [{ id: "a1", title: "Old", updatedAt: 1, readable: true }],
+                folders: [
+                  {
+                    id: "deep",
+                    name: "Deep",
+                    updatedAt: 1,
+                    diagrams: [{ id: "d1", title: "Deeper", updatedAt: 1, readable: true }],
+                    folders: [],
+                  },
+                ],
+              },
+            ],
+          },
+          personal!,
+        ];
+      };
+      /** row `n`'s top + `dy`, worked out — Work, Archive, Login flow, Sequence, Personal while Archive is collapsed */
+      const at = (n: number, dy: number) => 102 + n * 31 + dy;
+      const unfolded = (id: string) => useTreeStore.getState().expanded.has(folderKey(id));
+      const wait = (ms: number) =>
+        act(() => {
+          vi.advanceTimersByTime(ms);
+        });
+      const pressEscape = () =>
+        act(() => {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+        });
+
+      beforeEach(() => {
+        useLibraryStore.setState({ folders: drafts() });
+        serve(drafts);
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it("600ms on its middle: it unfolds and the preview stands at its top, a level deeper — dropped there, it stays open", async () => {
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        expect(row(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
+        wait(599);
+        expect(item(/^Archive/)).toHaveAttribute("aria-expanded", "false");
+        wait(1);
+        expect(item(/^Archive/)).toHaveAttribute("aria-expanded", "true");
+        expect(row(/^Archive/)).not.toHaveClass("bg-selected");
+        // Work, Archive, [Sequence], Deep, Old
+        expect(preview()).toHaveStyle({ top: `${2 + 2 * 31}px` });
+        expect(previewRow()).toHaveClass("pl-9");
+        firePointer("pointerup", 70, at(1, 15));
+        expect(unfolded("arc")).toBe(true);
+        vi.useRealTimers();
+        await waitFor(() => expect(calls("move_project")).toHaveLength(1));
+        expect(calls("move_project")[0]![1]).toEqual({ id: "p2", folder: "arc", index: 0 });
+      });
+
+      it("moving off it before 600ms calls the wait off", () => {
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(599);
+        firePointer("pointermove", 70, at(2, 3));
+        wait(1000);
+        expect(unfolded("arc")).toBe(false);
+        firePointer("pointercancel", 0, 0);
+      });
+
+      it("a folder inside one it unfolded unfolds the same way — called off, both fold back; one the user unfolded stays", () => {
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(600);
+        // Work, Archive, Deep, Old, Login flow, Sequence, Personal
+        firePointer("pointermove", 70, at(2, 15));
+        expect(row(/^Deep,/)).toHaveClass(...DROP_TARGET.split(" "));
+        wait(600);
+        expect(item(/^Deep,/)).toHaveAttribute("aria-expanded", "true");
+        expect(preview()).toHaveStyle({ top: `${2 + 3 * 31}px` });
+        expect(previewRow()).toHaveClass("pl-13");
+        pressEscape();
+        expect(unfolded("arc")).toBe(false);
+        expect(unfolded("deep")).toBe(false);
+        expect(item(/^Archive/)).toHaveAttribute("aria-expanded", "false");
+        expect(unfolded("work")).toBe(true);
+        expect(calls("move_project")).toHaveLength(0);
+      });
+
+      it("dropped somewhere else: what it unfolded folds back", async () => {
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(600);
+        // Work, Archive, Deep, Old, Login flow (row 4)
+        firePointer("pointermove", 70, at(4, 3));
+        firePointer("pointerup", 70, at(4, 3));
+        expect(unfolded("arc")).toBe(false);
+        vi.useRealTimers();
+        await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
+        expect(calls("reorder_item")[0]![1]).toEqual({
+          parent: "work",
+          item: "diagram:p2",
+          index: 1,
+        });
+      });
+
+      it("dropped anywhere under it: it stays open", async () => {
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(600);
+        // into Deep (collapsed), before it unfolds
+        firePointer("pointermove", 70, at(2, 15));
+        firePointer("pointerup", 70, at(2, 15));
+        expect(unfolded("arc")).toBe(true);
+        expect(unfolded("deep")).toBe(false);
+        vi.useRealTimers();
+        await waitFor(() => expect(calls("move_project")).toHaveLength(1));
+        expect(calls("move_project")[0]![1]).toEqual({ id: "p2", folder: "deep", index: 0 });
+      });
+
+      it("a folder the user unfolded stays open when the drag is called off", () => {
+        act(() => useTreeStore.getState().expand([folderKey("arc")]));
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(1000);
+        pressEscape();
+        expect(unfolded("arc")).toBe(true);
+      });
+
+      it("never the dragged folder itself, nor one with nothing in it", () => {
+        renderTree();
+        dragTo(/^Archive/, 70, at(1, 15));
+        wait(1000);
+        expect(unfolded("arc")).toBe(false);
+        firePointer("pointercancel", 0, 0);
+        // Personal holds nothing
+        dragTo(/^Login flow/, 70, at(4, 15));
+        expect(row(/^Personal/)).toHaveClass(...DROP_TARGET.split(" "));
+        wait(1000);
+        expect(item(/^Personal/)).not.toHaveAttribute("aria-expanded");
+        expect(unfolded("home")).toBe(false);
+        firePointer("pointercancel", 0, 0);
+      });
+    });
+
     it("cancels the drag when the dragged item disappears from the listing", () => {
       renderTree();
       dragTo(/^Sequence, diagram/, 70, rowTop(/^Login flow/) + 3);
