@@ -1,10 +1,12 @@
 # Builds the installers and uploads them to a draft release. Runs when a v* tag
 # arrives — the tag is pushed to this repository together with the release commit.
 # A person publishes the release, after checking the draft's installers on a real machine.
-# macOS only for now (Apple Silicon and Intel). Signed with Developer ID and notarized
-# by Apple with the ticket stapled, so a downloaded dmg opens without being blocked.
-# The certificate and notary key live in repository secrets (APPLE_*). Local builds are
-# ad-hoc signed (tauri.conf.json `signingIdentity: "-"`).
+# macOS (Apple Silicon and Intel): signed with Developer ID and notarized by Apple with
+# the ticket stapled, so a downloaded dmg opens without being blocked. The certificate
+# and notary key live in repository secrets (APPLE_*). Local builds are ad-hoc signed
+# (tauri.conf.json `signingIdentity: "-"`).
+# Windows (x64): an NSIS installer for the current user, not code-signed — SmartScreen
+# asks once before it runs (README, Install).
 name: Release
 
 # Tags only — a manual run would create a tag and release named after the branch
@@ -85,7 +87,6 @@ jobs:
           - name: macOS Intel
             runner: macos-latest
             target: x86_64-apple-darwin
-          # Windows x64 comes back once the Windows build is ready for release
     runs-on: ${{ matrix.runner }}
     # write the release assets, and sign build provenance for them
     permissions:
@@ -234,3 +235,80 @@ jobs:
       - name: Remove the notarization key
         if: always()
         run: rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+  # Windows x64: the NSIS installer, built and checked on a Windows runner. Its own job —
+  # nothing of the macOS signing applies, and a failure here leaves the macOS assets be
+  bundle-windows:
+    name: Bundle (Windows x64)
+    if: github.repository == '79841/dosik'
+    needs: create-release
+    runs-on: windows-latest
+    # write the release assets, and sign build provenance for them
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      # no dependency or build caches here: a cache written by another workflow
+      # must not end up inside the installer
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # build only — nothing goes up until it is checked below
+      - name: Build the installer
+        run: pnpm tauri build --bundles nsis
+
+      # one installer, named for the app's version, and no home folder but the
+      # runner's own in the program — any other is a developer machine's path
+      - name: Check the installer
+        id: check
+        run: |
+          shopt -s nullglob
+          installers=(src-tauri/target/release/bundle/nsis/*-setup.exe)
+          [ "${#installers[@]}" -eq 1 ] || { echo "::error::expected one installer, found ${#installers[@]}"; exit 1; }
+          version="$(node -p "require('./package.json').version")"
+          [ "$(basename "${installers[0]}")" = "Dosik_${version}_x64-setup.exe" ] || { echo "::error::the installer is not Dosik_${version}_x64-setup.exe"; exit 1; }
+          runner_home="${USERPROFILE##*[\\/]}"
+          for exe in src-tauri/target/release/*.exe; do
+            homes="$(grep -aoE '[A-Za-z]:[\\/]+[Uu]sers[\\/]+[A-Za-z0-9._-]+' "$exe" | sed -E 's#.*[\\/]##' | sort -fu | grep -vixF "$runner_home" || true)"
+            [ -z "$homes" ] || { echo "::error::$(basename "$exe") contains local home paths"; exit 1; }
+          done
+          echo "installer=${installers[0]}" >> "$GITHUB_OUTPUT"
+
+      # records which public commit and workflow built this exact file
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: src-tauri/target/release/bundle/nsis/*-setup.exe
+
+      - name: Upload to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
+          INSTALLER: ${{ steps.check.outputs.installer }}
+        run: |
+          name="$(basename "$INSTALLER")"
+          # a re-run replaces what an earlier run put up under the same name
+          ids="$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq ".[] | select(.name == \"$name\") | .id")"
+          for id in $ids; do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$id"
+          done
+          curl --fail --silent --show-error -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" -H "Content-Type: application/octet-stream" \
+            --data-binary @"$INSTALLER" \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$name" > /dev/null
+          echo "uploaded $name"
