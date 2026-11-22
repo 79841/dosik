@@ -119,7 +119,7 @@ embed_plist 1.2.2 (Rust crate) — MIT OR Apache-2.0  https://github.com/nvzqz/e
 equivalent 1.0.2 (Rust crate) — Apache-2.0 OR MIT  https://github.com/indexmap-rs/equivalent
 flate2 1.1.9 (Rust crate) — MIT OR Apache-2.0  https://github.com/rust-lang/flate2-rs
 fnv 1.0.7 (Rust crate) — Apache-2.0 / MIT  https://github.com/servo/rust-fnv
-form_urlencoded 1.2.2 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/rust-url
+form_urlencoded 1.2.3 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/rust-url
 glob 0.3.4 (Rust crate) — MIT OR Apache-2.0  https://github.com/rust-lang/glob
 hashbrown 0.12.3 (Rust crate) — MIT OR Apache-2.0  https://github.com/rust-lang/hashbrown
 hashbrown 0.17.1 (Rust crate) — MIT OR Apache-2.0  https://github.com/rust-lang/hashbrown
@@ -160,7 +160,7 @@ tiny_http 0.12.0 (Rust crate) — MIT OR Apache-2.0  https://github.com/tiny-htt
 tinyvec 1.12.0 (Rust crate) — Zlib OR Apache-2.0 OR MIT  https://github.com/Lokathor/tinyvec
 tray-icon 0.24.2 (Rust crate) — MIT OR Apache-2.0  https://github.com/tauri-apps/tray-icon
 unicode-segmentation 1.13.3 (Rust crate) — MIT OR Apache-2.0  https://github.com/unicode-rs/unicode-segmentation
-url 2.5.8 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/rust-url
+url 2.5.9 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/rust-url
 utf8_iter 1.0.4 (Rust crate) — Apache-2.0 OR MIT  https://github.com/hsivonen/utf8_iter
 uuid 1.24.0 (Rust crate) — Apache-2.0 OR MIT  https://github.com/uuid-rs/uuid
 web_atoms 0.2.5 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/html5ever
@@ -6722,7 +6722,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ================================================================================
-form_urlencoded 1.2.2 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/rust-url
+form_urlencoded 1.2.3 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/rust-url
 --------------------------------------------------------------------------------
 
 Copyright (c) 2013-2016 The rust-url developers
@@ -8033,7 +8033,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 ================================================================================
 idna 1.1.0 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/rust-url/
 percent-encoding 2.3.2 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/rust-url/
-url 2.5.8 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/rust-url
+url 2.5.9 (Rust crate) — MIT OR Apache-2.0  https://github.com/servo/rust-url
 --------------------------------------------------------------------------------
 
 Copyright (c) 2013-2025 The rust-url developers
