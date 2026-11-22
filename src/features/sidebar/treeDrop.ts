@@ -16,7 +16,10 @@ import type { TreeKey, TreeRow } from "./treeModel";
  * table. The tree only draws what these return.
  */
 
-/** ⌥↑/⌥↓: one place up or down among its siblings — the edge it is at, or `null` when it has none (the stray listing) */
+/**
+ * ⌥↑/⌥↓: one place up or down among its siblings — the edge it is at, or
+ * `null` when it does not move (a project not found, #253 R7)
+ */
 type KeyboardStep = (Placement & { count: number }) | { edge: "first" | "last" } | null;
 
 export const keyboardStep = (
@@ -25,7 +28,7 @@ export const keyboardStep = (
   dir: -1 | 1,
 ): KeyboardStep => {
   const at = siblingsOf(folders, item);
-  if (!at || at.index < 0) return null;
+  if (!at || at.index < 0 || !canPlace(folders, item, at.parent)) return null;
   const index = at.index + dir;
   if (index < 0) return { edge: "first" };
   if (index >= at.keys.length) return { edge: "last" };
@@ -119,7 +122,7 @@ const projectTarget = (
       if (block) Object.assign(block, { bottom: box.bottom, last: row });
     }
   }
-  const real = blocks.filter((b) => b.row.node.kind !== "diagram" && !b.row.node.folder.stray);
+  const real = blocks.filter((b) => b.row.node.kind !== "diagram");
   if (real.length === 0) return null;
   let full = real.length;
   for (const [i, block] of real.entries()) {
@@ -148,7 +151,7 @@ const projectTarget = (
  * folder's: the top 7px before, the middle into it (to its top), the bottom
  * 7px after it — or, unfolded, before its first item. A project's row is all
  * "into" for anything but a project, which goes by whole blocks among the
- * projects. The stray listing takes nothing.
+ * projects.
  */
 export const dropAt = ({
   rows,
@@ -166,13 +169,16 @@ export const dropAt = ({
   const item = parseItemKey(dragged);
   if (!item) return null;
   const found = item.kind === "folder" ? findFolder(folders, item.id) : null;
-  if (found && found.path.length === 1) return projectTarget(rows, boxes, y, dragged, folders);
+  if (found && found.path.length === 1) {
+    return canPlace(folders, dragged, null)
+      ? projectTarget(rows, boxes, y, dragged, folders)
+      : null;
+  }
 
   const hit = rowAt(rows, boxes, y);
   if (!hit) return null;
   const { row, box } = hit;
   const { node } = row;
-  if (node.folder.stray) return null;
   const rowId = idOf(row.key)!;
   // never onto itself or anything under it
   if (row.key === dragged || (item.kind === "folder" && isInside(folders, rowId, item.id))) {

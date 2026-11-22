@@ -14,6 +14,7 @@ import { newTab } from "../../library/tabModel";
 import { resetUnsavedGuardForTests } from "../../library/unsavedGuard";
 import { resetAutosaveForTests } from "../../library/useAutosave";
 import { DocumentTabs } from "../DocumentTabs";
+import { likeRust } from "../../../test/rustAnswers";
 
 const mockedAsk = vi.mocked(ask);
 const mockedInvoke = vi.mocked(invoke);
@@ -82,7 +83,7 @@ describe("document tab strip (#218 R1, D13·D14·D22, T38)", () => {
     useLibraryStore.setState({ folders: [], readFailed: false });
     mockedAsk.mockReset();
     mockedAsk.mockResolvedValue(false);
-    mockedInvoke.mockResolvedValue(undefined);
+    mockedInvoke.mockImplementation(likeRust());
   });
   afterEach(() => {
     globalThis.ResizeObserver = RealObserver;
@@ -412,7 +413,7 @@ describe("renaming from the tab (#219 D3, T28)", () => {
     resetUnsavedGuardForTests();
     resetTabsForTests();
     useLibraryStore.setState({ folders: [], readFailed: false });
-    mockedInvoke.mockResolvedValue(undefined);
+    mockedInvoke.mockImplementation(likeRust());
     open("Login flow", "p1");
     open("Checkout", "p2");
   });

@@ -7,6 +7,7 @@ import { takeDocument } from "../../../shared/lib/store/tabs";
 import {
   askDiscard,
   externalBaseline,
+  fileNameOf,
   hasUnsavedExternalChanges,
   isUnsavedSnapshot,
   markExternalSaved,
@@ -127,7 +128,7 @@ describe("per-tab baselines (#218 D8)", () => {
     expect(await askDiscard([])).toBe(true);
     expect(mockedAsk).not.toHaveBeenCalled();
 
-    expect(await askDiscard(["/tmp/orders.dosik.json"])).toBe(false);
+    expect(await askDiscard(["orders.dosik.json"])).toBe(false);
     expect(mockedAsk).toHaveBeenLastCalledWith(
       "“orders.dosik.json” has unsaved changes. Discard them?",
       expect.objectContaining({
@@ -138,11 +139,14 @@ describe("per-tab baselines (#218 D8)", () => {
     );
 
     mockedAsk.mockResolvedValue(true);
-    expect(await askDiscard(["/tmp/a.dosik.json", "C:\\work\\b.dosik.json"])).toBe(true);
+    expect(await askDiscard(["a.dosik.json", "Flow"])).toBe(true);
     expect(mockedAsk).toHaveBeenCalledTimes(2);
     expect(mockedAsk).toHaveBeenLastCalledWith(
-      "2 files have unsaved changes — “a.dosik.json”, “b.dosik.json”. Discard them?",
+      "2 files have unsaved changes — “a.dosik.json”, “Flow”. Discard them?",
       expect.objectContaining({ okLabel: "Discard", cancelLabel: "Cancel" }),
     );
+    // a file is asked about by its name, either separator
+    expect(fileNameOf("/tmp/a.dosik.json")).toBe("a.dosik.json");
+    expect(fileNameOf("C:\\work\\b.dosik.json")).toBe("b.dosik.json");
   });
 });

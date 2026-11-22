@@ -16,8 +16,7 @@ import { NewCard } from "./NewCard";
  * #229 D5, #231 D6): its folders and diagrams as cards in the tree's order
  * (#230 D2), as many to a row as fit at the size picked (#236 D5 — Medium
  * until one is), and the dashed card that opens the New menu (#231 D9). Its name, what it holds and its
- * actions are the header row's (#231 D2). A listing with no folder behind it
- * (stray) has no dashed card.
+ * actions are the header row's (#231 D2).
  *
  * The cards are one grid for the keyboard (#231 D7): one Tab stop — the
  * selected card, else the first — the arrows, Home and End move the focus
@@ -80,7 +79,7 @@ export const FolderView = ({ folder, folders }: { folder: FolderMeta; folders: F
           />
         ),
       )}
-      {folder.stray ? null : <NewCard folder={folder} folders={folders} />}
+      <NewCard folder={folder} folders={folders} />
     </ul>
   );
 };

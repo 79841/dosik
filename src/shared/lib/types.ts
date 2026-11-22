@@ -158,7 +158,7 @@ export interface DiagramEdgeData extends Record<string, unknown> {
 export type DiagramEdge = Edge<DiagramEdgeData, "labeled">;
 
 /**
- * What a `.dosik.json` holds: a diagram is one canvas (#229 D1). A document
+ * What a `.dosik` file holds: a diagram is one canvas (#229 D1). A document
  * with pages (v2, #7) was never shipped and no longer opens (D2).
  */
 export interface DiagramDoc {

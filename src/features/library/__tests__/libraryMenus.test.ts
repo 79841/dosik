@@ -1,22 +1,34 @@
 import { invoke } from "@tauri-apps/api/core";
+import { ask } from "@tauri-apps/plugin-dialog";
 import { describe, expect, it, vi } from "vitest";
 
-import { Copy, FolderPlus, FolderSearch, SquareArrowOutUpRight, SquarePlus } from "lucide-react";
+import {
+  Copy,
+  FolderMinus,
+  FolderPlus,
+  FolderSearch,
+  Locate,
+  SquareArrowOutUpRight,
+  SquarePlus,
+  Trash2,
+} from "lucide-react";
 
+import { useAppStore } from "../appStore";
+import { DASHBOARD } from "../homeView";
 import type { FolderMeta } from "../libraryApi";
 import { diagramMenuItems, folderMenuItems } from "../libraryMenus";
+import { useLibraryStore } from "../libraryStore";
 import { showInLabel } from "../fileManager";
 
 /** "Show in …" as this web view names its file manager (#238 D10) */
 const SHOW_IN = showInLabel();
 
-const folder = (stray = false): FolderMeta => ({
+const folder = (): FolderMeta => ({
   folders: [],
   id: "work",
   name: "Work",
   updatedAt: 1,
   diagrams: [{ id: "p1", title: "Checkout", updatedAt: 1, readable: true }],
-  ...(stray ? { stray: true } : {}),
 });
 /** label, with "—" for a rule before it — the menu as the canvas draws it */
 const shape = (items: ReturnType<typeof diagramMenuItems>) =>
@@ -27,7 +39,7 @@ const item = (items: ReturnType<typeof diagramMenuItems>, label: string) =>
 const FINDER = ["—", SHOW_IN, "Copy Path"];
 
 describe("row menu items — the tree and Home share one list (#217 D10, #220 D11, #229 D11)", () => {
-  it("project/folder = New diagram · New folder · — · Show in Finder · Copy Path · — · Rename · — · Delete, none for stray", () => {
+  it("project/folder = New diagram · New folder · — · Show in Finder · Copy Path · — · Rename · — · Delete", () => {
     const rename = vi.fn();
     const newFolder = vi.fn();
     const items = folderMenuItems(folder(), rename, { newFolder });
@@ -46,7 +58,6 @@ describe("row menu items — the tree and Home share one list (#217 D10, #220 D1
     expect(rename).toHaveBeenCalled();
     expect(item(items, "Rename").takesFocus).toBe(true);
     expect(item(items, "Delete").danger).toBe(true);
-    expect(folderMenuItems(folder(true), rename, { newFolder })).toEqual([]);
   });
 
   it("without New folder that item is absent — the canvas frame menu (#229 D18)", () => {
@@ -61,7 +72,6 @@ describe("row menu items — the tree and Home share one list (#217 D10, #220 D1
       "—",
       "Delete",
     ]);
-    expect(folderMenuItems(folder(true), vi.fn(), { afterRename: [extra] })).toEqual([]);
   });
 
   it("diagram = Open · — · Show in Finder · Copy Path · — · Rename · Move to… · — · Delete — no Move when there is nowhere to move", () => {
@@ -160,5 +170,60 @@ describe("the menu's 'Show in …' follows the webview's operating system (#238 
     } finally {
       agent.mockRestore();
     }
+  });
+});
+
+describe("a project not found, a folder added from elsewhere (#253 R7·R8, Sidebar-Library ②③, Sidebar-States ①)", () => {
+  const mockedInvoke = vi.mocked(invoke);
+  const lost = (): FolderMeta => ({ ...folder(), diagrams: [], missing: true });
+  const added = (): FolderMeta => ({ ...folder(), added: true });
+
+  it("not found: Locate… · — · Remove from Library, whatever else the caller offers", () => {
+    const items = folderMenuItems(lost(), vi.fn(), {
+      newFolder: vi.fn(),
+      move: vi.fn(),
+      afterRename: [{ label: "Collapse", onSelect: vi.fn() }],
+    });
+    expect(shape(items)).toEqual(["Locate…", "—", "Remove from Library"]);
+    expect(item(items, "Locate…").icon).toBe(Locate);
+    expect(item(items, "Remove from Library").icon).toBe(FolderMinus);
+    // it removes a record, not files: no danger tint
+    expect(item(items, "Remove from Library").danger).toBeFalsy();
+  });
+
+  it("added from elsewhere: the menu ends in Remove from Library in place of Delete", () => {
+    const items = folderMenuItems(added(), vi.fn(), { newFolder: vi.fn() });
+    expect(shape(items)).toEqual([
+      "New diagram",
+      "New folder",
+      ...FINDER,
+      "—",
+      "Rename",
+      "—",
+      "Remove from Library",
+    ]);
+    expect(item(items, "Remove from Library").icon).toBe(FolderMinus);
+    // in the default location it keeps Delete, to the Trash
+    const kept = folderMenuItems(folder(), vi.fn());
+    expect(item(kept, "Delete").icon).toBe(Trash2);
+    expect(kept.some((i) => i.label === "Remove from Library")).toBe(false);
+  });
+
+  it("Locate… asks Rust for the picker; Remove from Library removes the record with no question, then the caller hears of it", async () => {
+    mockedInvoke.mockReset();
+    mockedInvoke.mockImplementation(async (cmd) =>
+      cmd === "list_library" ? [] : cmd === "locate_project" ? "cancelled" : undefined,
+    );
+    vi.mocked(ask).mockReset();
+    useLibraryStore.setState({ folders: [added()], readFailed: false });
+    useAppStore.setState({ homeView: DASHBOARD });
+    item(folderMenuItems(lost(), vi.fn()), "Locate…").onSelect();
+    expect(mockedInvoke).toHaveBeenLastCalledWith("locate_project", { id: "work" });
+    const onDeleted = vi.fn();
+    item(folderMenuItems(added(), vi.fn(), { onDeleted }), "Remove from Library").onSelect();
+    await vi.waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1));
+    expect(mockedInvoke).toHaveBeenCalledWith("remove_project", { id: "work" });
+    expect(onDeleted.mock.calls[0]![0]).toMatchObject({ homeView: DASHBOARD });
+    expect(ask).not.toHaveBeenCalled();
   });
 });

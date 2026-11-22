@@ -10,12 +10,18 @@ import {
   deleteProject,
   listLibrary,
   loadProject,
+  loadProjectFile,
+  locateProject,
   moveProject,
   newProjectId,
+  removeProject,
   renameFolder,
-  saveProject,
+  sameContents,
+  createProject,
+  saveProjectContents,
   setFolderBoards,
 } from "../libraryApi";
+import { loadedFile, savedFor } from "../../../test/rustAnswers";
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -72,44 +78,50 @@ describe("libraryApi", () => {
   });
 
   it("loadProject parses the file content and throws if it is not a diagram", async () => {
-    mockedInvoke.mockResolvedValueOnce(JSON.stringify(blankDoc()));
+    mockedInvoke.mockResolvedValueOnce(loadedFile(blankDoc()));
     expect(await loadProject("p1")).toEqual(blankDoc());
     expect(mockedInvoke).toHaveBeenCalledWith("load_project", { id: "p1" });
 
-    mockedInvoke.mockResolvedValueOnce('{"nodes":"nope"}');
+    mockedInvoke.mockResolvedValueOnce(loadedFile('{"nodes":"nope"}'));
     await expect(loadProject("p1")).rejects.toThrow("Not a valid diagram file");
   });
 
   it("loadProject — throws with a reason for multi-page documents (#229 D2, T20)", async () => {
     mockedInvoke.mockResolvedValueOnce(
-      '{"version":2,"title":"Book","pages":[{"id":"p","name":"P","nodes":[],"edges":[]}]}',
+      loadedFile(
+        '{"version":2,"title":"Book","pages":[{"id":"p","name":"P","nodes":[],"edges":[]}]}',
+      ),
     );
     await expect(loadProject("p1")).rejects.toThrow(
       "This diagram has pages — Dosik now opens one-canvas diagrams only",
     );
     // `pages` beside nodes and edges too
     mockedInvoke.mockResolvedValueOnce(
-      '{"version":1,"title":"T","nodes":[],"edges":[],"pages":[]}',
+      loadedFile('{"version":1,"title":"T","nodes":[],"edges":[],"pages":[]}'),
     );
     await expect(loadProject("p1")).rejects.toThrow(
       "This diagram has pages — Dosik now opens one-canvas diagrams only",
     );
   });
 
-  it("saveProject serializes with indentation and sends it to save_project", async () => {
-    await saveProject("p1", blankDoc());
+  it("createProject serializes with indentation and asks save_project to make it — create, said so", async () => {
+    mockedInvoke.mockResolvedValueOnce(savedFor({ contents: "{}" }));
+    await createProject("p1", blankDoc());
     expect(mockedInvoke).toHaveBeenCalledWith("save_project", {
       id: "p1",
       contents: JSON.stringify(blankDoc(), null, 2),
+      create: true,
     });
   });
 
   it("a new diagram is sent with the project it goes into (#161)", async () => {
-    await saveProject("p1", blankDoc(), "f1");
+    mockedInvoke.mockResolvedValueOnce(savedFor({ contents: "{}" }));
+    await createProject("p1", blankDoc(), "f1");
     expect(mockedInvoke).toHaveBeenCalledWith("save_project", {
       id: "p1",
       contents: JSON.stringify(blankDoc(), null, 2),
       folder: "f1",
+      create: true,
     });
   });
 
@@ -241,6 +253,156 @@ describe("libraryApi", () => {
         name: "New folder",
         parent: "chk",
       });
+    });
+  });
+
+  describe("projects in real folders (#253)", () => {
+    it("a project says whether it is missing or added and where it is — only when Rust says so, only on a project", async () => {
+      mockedInvoke.mockResolvedValueOnce([
+        {
+          id: "gone",
+          name: "Client",
+          updatedAt: 0,
+          diagrams: [],
+          folders: [],
+          order: [],
+          missing: true,
+          added: true,
+          path: "/Volumes/Work/Client",
+          shown: "/Volumes/Work/Client",
+          held: ["d1", 7, "d2"],
+        },
+        {
+          id: "here",
+          name: "Payments",
+          updatedAt: 1,
+          diagrams: [],
+          // a folder inside a project carries none of it
+          folders: [
+            {
+              id: "sub",
+              name: "Sub",
+              updatedAt: 1,
+              diagrams: [],
+              missing: true,
+              path: "/x",
+            },
+          ],
+          path: "/Users/a/Dosik/Payments",
+          shown: "~/Dosik/Payments",
+        },
+        // of the wrong type: left out
+        { id: "odd", name: "Odd", updatedAt: 1, diagrams: [], missing: "yes", added: 1, path: 5 },
+      ]);
+      const [gone, here, odd] = await listLibrary();
+      expect(gone).toMatchObject({
+        missing: true,
+        added: true,
+        path: "/Volumes/Work/Client",
+        shown: "/Volumes/Work/Client",
+        // the diagrams it holds out of reach, ids only
+        held: ["d1", "d2"],
+      });
+      expect(here).not.toHaveProperty("missing");
+      expect(here).not.toHaveProperty("added");
+      expect(here?.shown).toBe("~/Dosik/Payments");
+      expect(here?.folders[0]).toEqual({
+        id: "sub",
+        name: "Sub",
+        updatedAt: 1,
+        diagrams: [],
+        folders: [],
+      });
+      expect(here).not.toHaveProperty("held");
+      for (const key of ["missing", "added", "path", "shown"]) expect(odd).not.toHaveProperty(key);
+    });
+
+    it("loadProjectFile titles the diagram after its file and keeps its stamp; loadProject gives the document alone", async () => {
+      const answer = {
+        contents: JSON.stringify({ ...blankDoc(), title: "What the JSON says" }),
+        name: "Login flow",
+        stamp: "1700000000000000000-120-00ff00ff00ff00ff",
+      };
+      mockedInvoke.mockResolvedValueOnce(answer);
+      expect(await loadProjectFile("p1")).toEqual({
+        doc: { ...blankDoc(), title: "Login flow" },
+        stamp: answer.stamp,
+      });
+      expect(mockedInvoke).toHaveBeenLastCalledWith("load_project", { id: "p1" });
+      mockedInvoke.mockResolvedValueOnce(answer);
+      expect(await loadProject("p1")).toEqual({ ...blankDoc(), title: "Login flow" });
+      // an answer of another shape throws: the contents alone, a name or stamp missing
+      for (const odd of [
+        JSON.stringify(blankDoc()),
+        { contents: answer.contents, stamp: answer.stamp },
+        { contents: answer.contents, name: "Login flow" },
+        { ...answer, contents: 5 },
+        null,
+      ]) {
+        mockedInvoke.mockResolvedValueOnce(odd);
+        await expect(loadProjectFile("p1")).rejects.toThrow("Couldn't read the diagram");
+      }
+      // still a diagram, or it throws
+      mockedInvoke.mockResolvedValueOnce({ ...answer, contents: '{"nodes":"nope"}' });
+      await expect(loadProjectFile("p1")).rejects.toThrow("Not a valid diagram file");
+    });
+
+    it("a save brings the stamp its tab last saw and says what it came to", async () => {
+      mockedInvoke.mockResolvedValueOnce({ kind: "saved", name: "Flow 2", stamp: "9-2-ab" });
+      expect(await saveProjectContents("p1", "{}", "1-2-ab")).toEqual({
+        kind: "saved",
+        name: "Flow 2",
+        stamp: "9-2-ab",
+      });
+      // in place: no create, so a diagram the library does not have is never made
+      expect(mockedInvoke).toHaveBeenLastCalledWith("save_project", {
+        id: "p1",
+        contents: "{}",
+        base: "1-2-ab",
+      });
+      mockedInvoke.mockResolvedValueOnce({ kind: "changedOnDisk" });
+      expect(await saveProjectContents("p1", "{}", "1-2-ab")).toEqual({
+        kind: "changedOnDisk",
+      });
+      mockedInvoke.mockResolvedValueOnce({ kind: "gone" });
+      expect(await saveProjectContents("p1", "{}")).toEqual({ kind: "gone" });
+      mockedInvoke.mockResolvedValueOnce({ kind: "unreachable" });
+      expect(await saveProjectContents("p1", "{}")).toEqual({ kind: "unreachable" });
+      // an answer of any other kind throws: whether it was written is not known —
+      // and so does a save without the name and the stamp the next one needs
+      for (const odd of [
+        undefined,
+        null,
+        "saved",
+        {},
+        { kind: "written" },
+        { kind: "saved" },
+        { kind: "saved", name: "Flow" },
+        { kind: "saved", stamp: "1-2-ab" },
+        { kind: "saved", name: 3, stamp: null },
+      ]) {
+        mockedInvoke.mockResolvedValueOnce(odd);
+        await expect(createProject("p1", blankDoc(), "f1")).rejects.toThrow(
+          "Couldn't tell whether the diagram was saved",
+        );
+      }
+    });
+
+    it("two stamps are of the same contents when their length and hash agree, whenever written", () => {
+      expect(sameContents("1-120-abcd", "2-120-abcd")).toBe(true);
+      expect(sameContents("1-120-abcd", "1-121-abcd")).toBe(false);
+      expect(sameContents("1-120-abcd", "1-120-abce")).toBe(false);
+      expect(sameContents(undefined, "1-120-abcd")).toBe(false);
+      expect(sameContents(undefined, undefined)).toBe(false);
+      expect(sameContents("nodash", "nodash")).toBe(false);
+    });
+
+    it("Locate… and Remove from Library go to Rust by id — no path from here (R14)", async () => {
+      mockedInvoke.mockResolvedValueOnce("already");
+      expect(await locateProject("gone")).toBe("already");
+      expect(mockedInvoke).toHaveBeenLastCalledWith("locate_project", { id: "gone" });
+      await removeProject("gone");
+      expect(mockedInvoke).toHaveBeenLastCalledWith("remove_project", { id: "gone" });
     });
   });
 });

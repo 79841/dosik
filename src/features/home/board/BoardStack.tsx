@@ -60,12 +60,10 @@ export const BoardStack = memo(function BoardStack({
     else if (frontFolder) focusFolder(frontFolder.id);
   };
   const expand = () => {
-    if (!folder.stray) void setCollapsed(folder.id, false);
+    void setCollapsed(folder.id, false);
   };
   const menuAt = (at: { x: number; y: number }) => {
-    if (!folder.stray) {
-      useBoardStore.getState().openMenu({ kind: "project", folder: folder.id, at, from: key });
-    }
+    useBoardStore.getState().openMenu({ kind: "project", folder: folder.id, at, from: key });
   };
 
   return (
@@ -133,19 +131,17 @@ export const BoardStack = memo(function BoardStack({
             {`Latest: ${latest}`}
           </p>
         </div>
-        {folder.stray ? null : (
-          <button
-            type="button"
-            tabIndex={-1}
-            aria-expanded={false}
-            aria-label={`Expand ${folder.name}`}
-            onClick={expand}
-            className="flex h-10 flex-none items-center gap-2 rounded-[8px] bg-frame pr-3.5 pl-2.5 text-[16px] font-semibold text-ink transition-colors hover:bg-selected"
-          >
-            <ChevronsUpDown size={18} strokeWidth={1.75} aria-hidden="true" />
-            Expand
-          </button>
-        )}
+        <button
+          type="button"
+          tabIndex={-1}
+          aria-expanded={false}
+          aria-label={`Expand ${folder.name}`}
+          onClick={expand}
+          className="flex h-10 flex-none items-center gap-2 rounded-[8px] bg-frame pr-3.5 pl-2.5 text-[16px] font-semibold text-ink transition-colors hover:bg-selected"
+        >
+          <ChevronsUpDown size={18} strokeWidth={1.75} aria-hidden="true" />
+          Expand
+        </button>
       </div>
     </div>
   );

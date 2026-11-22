@@ -6,6 +6,7 @@ import { useThemeStore } from "../../../shared/lib/theme";
 import { blankDoc } from "../../library/libraryApi";
 import { loadPicture, resetPreviewCacheForTests } from "../diagramPreview";
 import { DiagramThumbnail } from "../DiagramThumbnail";
+import { loadedFile } from "../../../test/rustAnswers";
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -40,7 +41,7 @@ describe("thumbnails load when visible (#161)", () => {
   beforeEach(() => {
     resetPreviewCacheForTests();
     mockedInvoke.mockReset();
-    mockedInvoke.mockResolvedValue(JSON.stringify(blankDoc()));
+    mockedInvoke.mockResolvedValue(loadedFile(blankDoc()));
     observed = 0;
     observedWith = undefined;
     globalThis.IntersectionObserver = ManualObserver as unknown as typeof IntersectionObserver;
@@ -138,7 +139,7 @@ describe("thumbnail — image and size (#220 D14, #229 D17, T13)", () => {
     resetPreviewCacheForTests();
     mockedInvoke.mockReset();
     mockedInvoke.mockImplementation(async (_cmd, args) =>
-      JSON.stringify((args as { id: string }).id === "e1" ? empty : drawn),
+      loadedFile((args as { id: string }).id === "e1" ? empty : drawn),
     );
   });
 
@@ -169,7 +170,7 @@ describe("thumbnail — image and size (#220 D14, #229 D17, T13)", () => {
     const { container, rerender } = render(<DiagramThumbnail id="d1" updatedAt={1} />);
     await waitFor(() => expect(src(container)).toContain("On the canvas"));
 
-    let land: (text: string) => void = () => {};
+    let land: (answer: ReturnType<typeof loadedFile>) => void = () => {};
     mockedInvoke.mockReturnValue(new Promise((resolve) => (land = resolve)));
     rerender(<DiagramThumbnail id="d1" updatedAt={2} />);
     // the last picture stays while the new one is read and drawn
@@ -177,7 +178,7 @@ describe("thumbnail — image and size (#220 D14, #229 D17, T13)", () => {
     expect(src(container)).toContain("On the canvas");
     const edited = structuredClone(drawn);
     edited.nodes[0]!.data.label = "Edited since";
-    await act(async () => land(JSON.stringify(edited)));
+    await act(async () => land(loadedFile(edited)));
     await waitFor(() => expect(src(container)).toContain("Edited since"));
 
     // another diagram's picture is not this one's stand-in
@@ -211,7 +212,7 @@ describe("thumbnail — does not redraw when far away (#221 D19, T32)", () => {
   beforeEach(() => {
     resetPreviewCacheForTests();
     mockedInvoke.mockReset();
-    mockedInvoke.mockResolvedValue(JSON.stringify(shape));
+    mockedInvoke.mockResolvedValue(loadedFile(shape));
   });
 
   it("with defer, does not load and shows only a quiet plate (no pulse) — loads once released", async () => {
@@ -232,7 +233,7 @@ describe("thumbnail — does not redraw when far away (#221 D19, T32)", () => {
   });
 
   it("labelClassName applies to the 'No preview'·'Empty diagram' text", async () => {
-    mockedInvoke.mockResolvedValue(JSON.stringify(blankDoc()));
+    mockedInvoke.mockResolvedValue(loadedFile(blankDoc()));
     render(<DiagramThumbnail id="d2" updatedAt={1} labelClassName="text-[14px]" />);
     expect(await screen.findByText("Empty diagram")).toHaveClass("text-[14px]");
   });
@@ -240,7 +241,7 @@ describe("thumbnail — does not redraw when far away (#221 D19, T32)", () => {
 
 describe("a lazy thumbnail keeps observing even when it starts with a finished image (#221)", () => {
   const drawn = (label: string) =>
-    JSON.stringify({
+    loadedFile({
       version: 1,
       title: "One",
       nodes: [
@@ -342,7 +343,7 @@ describe("board thumbnails request only while currently visible (#221)", () => {
   beforeEach(() => {
     resetPreviewCacheForTests();
     mockedInvoke.mockReset();
-    mockedInvoke.mockResolvedValue(JSON.stringify(blankDoc()));
+    mockedInvoke.mockResolvedValue(loadedFile(blankDoc()));
     watched.clear();
     globalThis.IntersectionObserver = BoxObserver as unknown as typeof IntersectionObserver;
   });

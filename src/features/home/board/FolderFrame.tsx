@@ -131,7 +131,8 @@ export const FolderFrame = memo(function FolderFrame({
               </p>
             );
           case "stack":
-            // a sub-frame folds nothing into a stack
+          case "missing":
+            // a sub-frame folds nothing into a stack, and is never a project not found
             return null;
           default:
             return (

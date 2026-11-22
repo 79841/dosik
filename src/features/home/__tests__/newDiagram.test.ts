@@ -11,6 +11,7 @@ import { resetAutosaveForTests } from "../../library/useAutosave";
 import { MermaidImportError } from "../../mermaid/import/plan";
 import { diagramFromMermaid, startDiagram, useStartingStore } from "../newDiagram";
 import { starterDoc } from "../starters";
+import { likeRust } from "../../../test/rustAnswers";
 
 vi.mock("../starters", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../starters")>();
@@ -37,7 +38,7 @@ describe("new diagram from START (#220 D6·D7, T20)", () => {
       readFailed: false,
     });
     mockedInvoke.mockReset();
-    mockedInvoke.mockResolvedValue(undefined);
+    mockedInvoke.mockImplementation(likeRust());
   });
 
   it("saves the template bytes to the target project, then opens it in a new tab", async () => {
@@ -79,10 +80,12 @@ describe("new diagram from START (#220 D6·D7, T20)", () => {
 
   it("that kind is busy while creating — pressing again makes only one", async () => {
     let land: () => void = () => {};
-    mockedInvoke.mockImplementation((cmd) =>
-      cmd === "save_project"
-        ? new Promise<undefined>((resolve) => (land = () => resolve(undefined)))
-        : Promise.resolve(undefined),
+    mockedInvoke.mockImplementation(
+      likeRust((cmd) =>
+        cmd === "save_project"
+          ? new Promise<undefined>((resolve) => (land = () => resolve(undefined)))
+          : Promise.resolve(undefined),
+      ),
     );
     const first = startDiagram("class");
     expect(useStartingStore.getState().starting).toEqual(["class"]);

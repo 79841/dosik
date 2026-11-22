@@ -30,7 +30,6 @@ const library = (): FolderMeta[] => [
   folder("onb", "Onboarding", 5, [folder("auth", "Auth", 4), folder("mail", "Emails", 3)]),
   folder("inf", "Infrastructure", 1, [folder("net", "Network", 1)]),
   folder("skt", "Sketches", 0),
-  folder("my-diagrams", "My Diagrams", 0, [], { stray: true }),
 ];
 
 const show = (
@@ -70,7 +69,7 @@ describe("Move to… picker (#229 D13)", () => {
     expect(tree()).toHaveAccessibleDescription("Moving Payouts");
   });
 
-  it("destinations only — projects and folders, no diagrams, counts or strays, expanded down to the current parent", () => {
+  it("destinations only — projects and folders, no diagrams or counts, expanded down to the current parent", () => {
     show();
     expect(names()).toEqual([
       "Payments, project, current location",
@@ -86,6 +85,17 @@ describe("Move to… picker (#229 D13)", () => {
     // a row without sub-folders: no chevron, the 14px spacer
     expect(row(/^Archive/)).not.toHaveAttribute("aria-expanded");
     expect(line(/^Archive/).querySelector("[data-spacer]")).toHaveClass("w-3.5");
+  });
+
+  it("a project not found is no destination — left out (#253 R7)", () => {
+    show({
+      folders: [
+        ...library(),
+        { ...folder("lost", "architecture", 0), diagrams: [], missing: true },
+      ],
+    });
+    expect(names()).not.toContain("architecture, project");
+    expect(within(tree()).queryByText("architecture")).toBeNull();
   });
 
   it("the current parent — check, 'Current', disabled (name at 35%), chevron still works", async () => {

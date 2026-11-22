@@ -12,6 +12,7 @@ import { openExternalFile, saveCurrentProjectNow } from "../projectActions";
 import { openDocument, resetTabsForTests, showHomeTab } from "../tabActions";
 import { resetUnsavedGuardForTests } from "../unsavedGuard";
 import { resetAutosaveForTests } from "../useAutosave";
+import { loadedFile } from "../../../test/rustAnswers";
 
 const mockedInvoke = vi.mocked(invoke);
 const calls = (cmd: string) => mockedInvoke.mock.calls.filter(([c]) => c === cmd);
@@ -47,6 +48,31 @@ describe("projectActions (#114)", () => {
     expect(useAppStore.getState().view).toBe("editor");
     expect(useDiagramStore.getState().filePath).toBe("/tmp/ext.dosik.json");
     expect(useDiagramStore.getState().projectId).toBeNull();
+  });
+
+  it("openExternalFile: a file of a project of the library opens as that library diagram (#253 D16)", async () => {
+    vi.mocked(open).mockResolvedValue("/lib/Payments/Flow.dosik");
+    mockedInvoke.mockImplementation(async (cmd, args) => {
+      if (cmd === "library_diagram_at") {
+        expect(args).toEqual({ path: "/lib/Payments/Flow.dosik" });
+        return "d1";
+      }
+      if (cmd === "load_project") return loadedFile({ ...blankDoc(), title: "Flow" });
+      if (cmd === "list_library") return [];
+      return undefined;
+    });
+    expect(await openExternalFile()).toBe("shown");
+    expect(useDiagramStore.getState()).toMatchObject({
+      projectId: "d1",
+      filePath: null,
+      title: "Flow",
+    });
+    expect(calls("read_text_file")).toHaveLength(0);
+    // picked again: its tab comes up
+    showHomeTab();
+    expect(await openExternalFile()).toBe(false);
+    expect(useAppStore.getState().tabs).toHaveLength(1);
+    expect(useDiagramStore.getState().projectId).toBe("d1");
   });
 
   it("Open file… — a multi-page document toasts an error with that reason, the screen stays (#229 D2, T20)", async () => {

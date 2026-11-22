@@ -13,6 +13,7 @@ import { DiagramCard } from "../DiagramCard";
 import { resetPreviewCacheForTests } from "../diagramPreview";
 import { useHomeSelection } from "../homeSelection";
 import { showInLabel } from "../../library/fileManager";
+import { likeRust } from "../../../test/rustAnswers";
 
 /** "Show in …" as this web view names its file manager (#238 D10) */
 const SHOW_IN = showInLabel();
@@ -69,13 +70,15 @@ describe("diagram card (#231 D7·D8, T19)", () => {
     useHomeSelection.getState().clear();
     useLibraryStore.setState({ folders: library(), readFailed: false });
     showHomeTab({ kind: "folder", folder: "pay" });
-    mockedInvoke.mockImplementation(async (cmd, args) => {
-      if (cmd === "list_library") return library();
-      if (cmd === "load_project") {
-        return JSON.stringify({ ...blankDoc(), title: (args as { id: string }).id });
-      }
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd, args) => {
+        if (cmd === "list_library") return library();
+        if (cmd === "load_project") {
+          return JSON.stringify({ ...blankDoc(), title: (args as { id: string }).id });
+        }
+        return undefined;
+      }),
+    );
   });
 
   it("look — inset 10·radius 8·shadow-raised, shadow-lifted on hover or with focus inside", () => {
@@ -264,10 +267,12 @@ describe("diagram card (#231 D7·D8, T19)", () => {
 
   it("Rename — if it cannot open, focus goes to the main button (#219 D3)", async () => {
     const user = userEvent.setup();
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === "load_project") throw new Error("gone");
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd) => {
+        if (cmd === "load_project") throw new Error("gone");
+        return undefined;
+      }),
+    );
     show();
     await user.click(screen.getByRole("button", { name: "More for Checkout service" }));
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));
@@ -276,13 +281,15 @@ describe("diagram card (#231 D7·D8, T19)", () => {
 
   it("if Rename could not open and the user moved to another screen meanwhile, does not take focus (#230, #218 D15)", async () => {
     const user = userEvent.setup();
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === "load_project") {
-        await new Promise((r) => setTimeout(r, 20));
-        throw new Error("gone");
-      }
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd) => {
+        if (cmd === "load_project") {
+          await new Promise((r) => setTimeout(r, 20));
+          throw new Error("gone");
+        }
+        return undefined;
+      }),
+    );
     show();
     await user.click(screen.getByRole("button", { name: "More for Checkout service" }));
     await user.click(screen.getByRole("menuitem", { name: "Rename" }));

@@ -36,6 +36,19 @@ describe("headless CLI (#64)", () => {
     expect(formatFor("OUT.MD")).toBe("md");
   });
 
+  it("Writes the document as .dosik — and still as the older .dosik.json", () => {
+    expect(formatFor("/tmp/a/Flow.dosik")).toBe("dosik");
+    expect(formatFor("FLOW.DOSIK")).toBe("dosik");
+    expect(formatFor("a.b.dosik")).toBe("dosik");
+    expect(HEADLESS_FORMATS).toContain("dosik");
+    expect(HEADLESS_FORMATS).toContain("dosik.json");
+    expect(parseArgs(["--in", "a.dosik", "--out", "b.dosik"])).toEqual({
+      in: "a.dosik",
+      out: "b.dosik",
+    });
+    expect(() => formatFor("a.dosikx")).toThrow(/unknown format: \.dosikx/);
+  });
+
   it("PNG answers 'needs a window', not 'unknown format'", () => {
     // the app exports PNG every day; "unknown format" would be a worse answer
     expect(() => formatFor("a.png")).toThrow(/needs a window/);
@@ -57,7 +70,7 @@ describe("headless CLI (#64)", () => {
   it("Checks that the input document is a diagram, and names the path when it is not", () => {
     const doc = parseDoc('{"version":1,"title":"T","nodes":[],"edges":[]}', "a.json");
     expect(doc.title).toBe("T");
-    expect(() => parseDoc("{}", "a.json")).toThrow(/a\.json: not a \.dosik\.json/);
+    expect(() => parseDoc("{}", "a.json")).toThrow(/a\.json: not a Dosik diagram/);
     // a document with pages: refused, in the CLI's own words (#229 D2, T20)
     expect(() =>
       parseDoc(

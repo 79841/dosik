@@ -39,9 +39,8 @@ export interface LayoutFrame extends FrameRect {
   layout: FrameLayout;
   /** its own collapse setting, if it has one (D6) */
   collapsed: boolean | undefined;
-  /** whether its place is stored (D8) — a stray never is */
+  /** whether its place is stored (D8) */
   pinned: boolean;
-  stray: boolean;
 }
 
 export interface BoardLayout {
@@ -66,7 +65,6 @@ export const effectiveBoards = (
 ): Map<string, BoardEntry> => {
   const out = new Map<string, BoardEntry>();
   for (const folder of folders) {
-    if (folder.stray) continue;
     const base: BoardEntry | undefined = overlay[folder.id] ?? folder.board;
     const over = overrides[folder.id];
     const entry = over ? { ...base, ...over } : base;
@@ -177,7 +175,7 @@ const indexed = (frames: LayoutFrame[]): BoardLayout => ({
 
 /**
  * The board as it is kept (D8, D9): stored places, frames with none placed
- * below them, the stray listing below everything, then settled. What the
+ * below them, then settled. What the
  * commit writes; `hint` says whose place wins. A frame's `folder` is the
  * project as listed: it holds the items right under it (#231 D13).
  */
@@ -187,25 +185,21 @@ export const persistentLayout = (
   hint: SettleHint,
 ): BoardLayout => {
   const sized = folders.map((folder) => {
-    const entry = folder.stray ? undefined : boards.get(folder.id);
+    const entry = boards.get(folder.id);
     const layout = frameLayout(folder, entry?.collapsed);
     return { folder, entry, layout, id: folder.id, w: layout.w, h: layout.h };
   });
   const pinned: FrameRect[] = [];
   for (const s of sized) {
-    if (!s.folder.stray && isPlaced(s.entry)) {
+    if (isPlaced(s.entry)) {
       pinned.push({ id: s.id, x: s.entry.x, y: s.entry.y, w: s.w, h: s.h });
     }
   }
   const fresh = autoPlace(
-    sized.filter((s) => !s.folder.stray && !isPlaced(s.entry)),
+    sized.filter((s) => !isPlaced(s.entry)),
     pinned,
   );
-  const strays = autoPlace(
-    sized.filter((s) => s.folder.stray),
-    [...pinned, ...fresh],
-  );
-  const rects = new Map([...pinned, ...fresh, ...strays].map((r) => [r.id, r]));
+  const rects = new Map([...pinned, ...fresh].map((r) => [r.id, r]));
   const frames: LayoutFrame[] = sized.map((s) => {
     const r = rects.get(s.id) ?? { id: s.id, x: 0, y: 0, w: s.w, h: s.h };
     return {
@@ -213,8 +207,7 @@ export const persistentLayout = (
       folder: s.folder,
       layout: s.layout,
       collapsed: s.entry?.collapsed,
-      pinned: !s.folder.stray && isPlaced(s.entry),
-      stray: s.folder.stray === true,
+      pinned: isPlaced(s.entry),
     };
   });
   return indexed(settleFrames(frames, hint));
@@ -247,8 +240,8 @@ export const renderLayout = (persistent: BoardLayout, viewed: string | null): Bo
 };
 
 /**
- * What to write so the store matches `layout` (D9): every project but a
- * stray or one whose write failed this session, whose place — or collapse
+ * What to write so the store matches `layout` (D9): every project but one
+ * whose write failed this session, whose place — or collapse
  * setting — differs from `stored`. `collapsed` rides along only where
  * `boards` sets it.
  */
@@ -259,7 +252,7 @@ export const planCommit = (
   failed: ReadonlySet<string>,
 ): { id: string; board: BoardSpot }[] =>
   layout.frames.flatMap((frame) => {
-    if (frame.stray || failed.has(frame.id)) return [];
+    if (failed.has(frame.id)) return [];
     const collapsed = boards.get(frame.id)?.collapsed;
     const board: BoardSpot = {
       x: frame.x,
@@ -325,8 +318,8 @@ export const landingFolder = (layout: BoardLayout, p: { x: number; y: number }):
 /**
  * Where a card for `item`, now in folder `from`, lands if let go at board
  * point `p` (#231 D15): the folder of the frame under it, when that is not
- * where it is already and `canPlace` lets it go there — never the stray
- * listing, a folder into itself or under it, nor past the depth limit
+ * where it is already and `canPlace` lets it go there — never a folder into
+ * itself or under it, nor past the depth limit
  * (#230 D7). `null`: nowhere.
  */
 export const dropTarget = (

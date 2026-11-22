@@ -24,7 +24,9 @@ import {
   canMoveFolder,
   findDiagram,
   findFolder,
+  isMissing,
   siblingsOf,
+  takesItems,
 } from "../library/libraryTree";
 import { diagramMovePicker, folderMovePicker } from "../library/MovePicker";
 import { openFromLibrary, viewInHome } from "../library/navigation";
@@ -203,11 +205,14 @@ export const LibraryTree = ({
   return <TreeBody folders={folders} labelledBy={labelledBy} onBackgroundMenu={onBackgroundMenu} />;
 };
 
+/** a project whose folder cannot be found (#253 R7, `Sidebar-Library` ③) */
+const notFound = (node: TreeNode): boolean => node.kind === "project" && isMissing(node.folder);
+
 /** the screen reader's name of a row (D29, #229 D6) */
 const rowName = (node: TreeNode): string =>
   node.kind === "diagram"
     ? `${node.title}, diagram, edited ${relativeTime(node.diagram.updatedAt)}`
-    : `${node.folder.name}, ${node.kind}, ${plural(node.count, "item")}`;
+    : `${node.folder.name}, ${node.kind}, ${notFound(node) ? "not found" : plural(node.count, "item")}`;
 
 const shownName = (node: TreeNode): string =>
   node.kind === "diagram" ? node.title : node.folder.name;
@@ -394,7 +399,7 @@ const TreeBody = ({
 
   /** somewhere to move a diagram to: more than one real folder (#229 D13) */
   const movable = canMoveDiagrams(folders);
-  /** a row's `…` (D10); none for a stray listing with no folder behind it */
+  /** a row's `…` (D10) */
   const menuItems = (node: TreeNode): MenuItem[] | null => {
     if (node.kind !== "diagram") {
       const { folder } = node;
@@ -485,9 +490,8 @@ const TreeBody = ({
 
   /**
    * A right-click on a row (#230 D11): its menu at the pointer. The selection
-   * stays; the row keeps a hover tint while the menu is open. A stray
-   * listing has no menu — and no webview menu either. The name field keeps
-   * the webview's (cut, copy, paste).
+   * stays; the row keeps a hover tint while the menu is open. The name field
+   * keeps the webview's (cut, copy, paste).
    */
   const onRowMenu = (node: TreeNode, e: React.MouseEvent) => {
     if ((e.target as Element).closest("input")) return;
@@ -553,9 +557,11 @@ const TreeBody = ({
     // the primary button only — a ctrl+click is macOS's right-click (#230 D9)
     if (e.button !== 0 || e.ctrlKey) return;
     if ((e.target as Element).closest(ROW_CONTROLS)) return;
-    // the stray listing has no order and no folder to move; a row whose name
-    // is being edited stays put (#230)
-    if (node.kind !== "diagram" && (node.folder.stray || renaming === node.folder.id)) return;
+    // a project not found keeps its place (#253 R7); a row whose name is
+    // being edited stays put (#230)
+    if (node.kind !== "diagram" && (!takesItems(node.folder) || renaming === node.folder.id)) {
+      return;
+    }
     /** the release's click, if any, comes right after it — no later than this */
     const forgetSwallow = () =>
       setTimeout(() => {
@@ -671,7 +677,7 @@ const TreeBody = ({
       openMenu(row.node, li.querySelector("[data-more]") ?? li.querySelector("[data-row]"));
       return;
     }
-    if (e.key === "F2" && row.node.kind !== "diagram" && !row.node.folder.stray) {
+    if (e.key === "F2" && row.node.kind !== "diagram" && takesItems(row.node.folder)) {
       handled();
       useTreeStore.getState().setRenaming(row.node.folder.id);
       return;
@@ -712,8 +718,14 @@ const TreeBody = ({
     const line =
       drag?.target?.kind === "slot" && drag.target.line.row === node.key ? drag.target.line : null;
     const ghost = drag?.node.key === node.key;
-    // a folder counts what is in it — none shows no number (#229 D6); a diagram has no count
-    const count = node.kind !== "diagram" && node.count > 0 ? node.count : null;
+    // a folder counts what is in it — none shows no number (#229 D6); a diagram has no count;
+    // a project not found says so in its place (#253 R7)
+    const missing = notFound(node);
+    const count = missing
+      ? "Not found"
+      : node.kind !== "diagram" && node.count > 0
+        ? node.count
+        : null;
     const chevronTone = isSelected ? "text-ink" : "text-icon";
     const children = node.kind === "diagram" ? [] : node.children;
     return (
@@ -729,8 +741,8 @@ const TreeBody = ({
         aria-expanded={expandable ? open : undefined}
         aria-selected={isSelected}
         aria-label={rowName(node)}
-        // the stray listing has no order to move in (#230 D7, D14)
-        aria-keyshortcuts={node.folder.stray ? undefined : "Alt+ArrowUp Alt+ArrowDown"}
+        // a project not found does not move (#253 R7)
+        aria-keyshortcuts={takesItems(node.folder) ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
         tabIndex={node.key === tabStop ? 0 : -1}
         onFocus={(e) => {
           if (e.target === e.currentTarget) setFocusKey(node.key);
@@ -796,7 +808,7 @@ const TreeBody = ({
           ) : (
             <span aria-hidden="true" className="w-3.5 flex-none" />
           )}
-          {/* a top row (a project, or the stray listing) shows its badge; a folder
+          {/* a top row — a project — shows its badge; a folder
               its Folder, FolderOpen while unfolded (#229 D6) — coloured by kind,
               selected or not (#236 D2·D3) */}
           {node.kind === "diagram" ? (
@@ -804,7 +816,7 @@ const TreeBody = ({
           ) : node.kind === "folder" ? (
             <FolderGlyph open={open} />
           ) : (
-            <ProjectBadge id={node.folder.id} name={node.folder.name} />
+            <ProjectBadge id={node.folder.id} name={node.folder.name} greyed={missing} />
           )}
           {node.kind !== "diagram" && renaming === node.folder.id ? (
             <NameInput
@@ -821,7 +833,11 @@ const TreeBody = ({
               }}
             />
           ) : (
-            <span className="ml-0.5 flex-[1_0_auto] whitespace-nowrap">{shownName(node)}</span>
+            <span
+              className={`ml-0.5 flex-[1_0_auto] whitespace-nowrap ${missing ? "text-muted-strong" : ""}`}
+            >
+              {shownName(node)}
+            </span>
           )}
           {actions || count !== null ? (
             <span
@@ -859,7 +875,7 @@ const TreeBody = ({
                 <span
                   data-count
                   aria-hidden="true"
-                  className={`flex-none text-[12px] font-medium text-muted-strong ${
+                  className={`flex-none font-medium ${missing ? "text-[11px] text-muted" : "text-[12px] text-muted-strong"} ${
                     actions ? (moreOpen ? "hidden" : quiet ? "" : "group-hover/row:hidden") : ""
                   }`}
                 >

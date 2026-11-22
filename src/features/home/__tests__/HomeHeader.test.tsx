@@ -18,6 +18,7 @@ import { HomeHeader, homeHeaderModel, LIBRARY_CRUMB } from "../HomeHeader";
 import { type HomeMode, useHomeMode } from "../homeMode";
 import { useHomeSelection } from "../homeSelection";
 import { showInLabel } from "../../library/fileManager";
+import { likeRust } from "../../../test/rustAnswers";
 
 /** "Show in …" as this web view names its file manager (#238 D10) */
 const SHOW_IN = showInLabel();
@@ -31,7 +32,7 @@ const mockedAsk = vi.mocked(ask);
 const calls = (cmd: string) => mockedInvoke.mock.calls.filter(([c]) => c === cmd);
 const now = Date.now();
 
-/** Payments › Checkout › Flows, an empty project and a stray listing — 4 diagrams in all */
+/** Payments › Checkout › Flows, an empty project and My Diagrams — 4 diagrams in all */
 const library = (): FolderMeta[] => [
   {
     id: "pay",
@@ -65,7 +66,6 @@ const library = (): FolderMeta[] => [
     id: "my-diagrams",
     name: "My Diagrams",
     updatedAt: now - 3 * 60_000,
-    stray: true,
     diagrams: [{ id: "old", title: "Old", updatedAt: now - 3 * 60_000, readable: true }],
     folders: [],
   },
@@ -160,21 +160,40 @@ describe("homeHeaderModel — the nine rows of the slot table (#231 D2·D3, T9)"
     });
   });
 
-  it("⑤ stray list · Cards — its name and caption, no actions, switch", () => {
+  it("⑤ another project · Cards — its name, caption and actions, switch", () => {
     expect(homeHeaderModel({ kind: "folder", folder: "my-diagrams" }, "cards", f)).toEqual({
       path: [],
       current: "My Diagrams",
       project: "my-diagrams",
       currentId: "my-diagrams",
       caption: "1 item · edited 3 min ago",
-      actions: null,
+      actions: { folder: found("my-diagrams"), parent: null },
       switch: true,
       cardSize: true,
-      pathOf: null,
+      pathOf: "my-diagrams",
     });
   });
 
-  it("⑥ dashboard · Canvas — 'Library', 'p projects · d diagrams' (stray included, all depths)", () => {
+  it("a project not found · Cards — its name alone: no caption, no ⋯·New ▾ (#253 R7)", () => {
+    const lost: FolderMeta = {
+      id: "arc",
+      name: "architecture",
+      updatedAt: 0,
+      diagrams: [],
+      folders: [],
+      missing: true,
+    };
+    const model = homeHeaderModel({ kind: "folder", folder: "arc" }, "cards", [lost]);
+    expect(model).toMatchObject({
+      path: [],
+      current: "architecture",
+      caption: null,
+      actions: null,
+      switch: true,
+    });
+  });
+
+  it("⑥ dashboard · Canvas — 'Library', 'p projects · d diagrams' (all depths)", () => {
     expect(homeHeaderModel(DASHBOARD, "canvas", f)).toEqual({
       path: [],
       current: "Library",
@@ -261,7 +280,7 @@ describe("header row — rendering (#231 D2, T9)", () => {
   beforeEach(() => {
     resetTabsForTests();
     useLibraryStore.setState({ folders: library(), readFailed: false });
-    mockedInvoke.mockImplementation(async () => undefined);
+    mockedInvoke.mockImplementation(likeRust(async () => undefined));
   });
 
   type Row = {
@@ -292,10 +311,10 @@ describe("header row — rendering (#231 D2, T9)", () => {
       ),
     ],
     [
-      "⑤ stray · Cards",
+      "⑤ another project · Cards",
       { kind: "folder", folder: "my-diagrams" },
       "cards",
-      row("My Diagrams", "1 item · edited 3 min ago", null, true),
+      row("My Diagrams", "1 item · edited 3 min ago", ["Project actions", "My Diagrams"], true),
     ],
     [
       "⑥ dashboard · Canvas",
@@ -371,7 +390,7 @@ describe("header row — rendering (#231 D2, T9)", () => {
       "Payments",
     ],
     [
-      "⑤ stray · Cards — current step",
+      "⑤ another project · Cards — current step",
       { kind: "folder", folder: "my-diagrams" },
       "cards",
       "My Diagrams",
@@ -414,7 +433,12 @@ describe("header row — rendering (#231 D2, T9)", () => {
       "before switch",
     ],
     ["④ nested folder · Cards", { kind: "folder", folder: "flw" }, "cards", "before switch"],
-    ["⑤ stray · Cards", { kind: "folder", folder: "my-diagrams" }, "cards", "before switch"],
+    [
+      "⑤ another project · Cards",
+      { kind: "folder", folder: "my-diagrams" },
+      "cards",
+      "before switch",
+    ],
     ["⑥ dashboard · Canvas", DASHBOARD, "canvas", null],
     ["⑦ project · Canvas", { kind: "folder", folder: "pay" }, "canvas", null],
   ])("size button placement — %s (#236 R5, T10)", (_, view, mode, place) => {
@@ -429,7 +453,7 @@ describe("header row — rendering (#231 D2, T9)", () => {
     else {
       expect(size!.nextElementSibling).toBe(screen.getByRole("radiogroup", { name: "View" }));
       // after the folder's divider, when it has actions
-      if (view.kind === "folder" && view.folder !== "my-diagrams") {
+      if (view.kind === "folder") {
         expect(size!.previousElementSibling).toHaveClass("bg-dot");
       }
     }
@@ -476,7 +500,7 @@ describe("pressing the header path (#231 D3, T11)", () => {
   beforeEach(() => {
     resetTabsForTests();
     useLibraryStore.setState({ folders: library(), readFailed: false });
-    mockedInvoke.mockImplementation(async () => undefined);
+    mockedInvoke.mockImplementation(likeRust(async () => undefined));
   });
 
   it("Cards ancestor → that folder view, requests focus on the new h1", async () => {
@@ -518,13 +542,15 @@ describe("header ⋯·New ▾ (#231 D8, T21)", () => {
     useHomeSelection.getState().clear();
     mockedAsk.mockReset();
     mockedAsk.mockResolvedValue(false);
-    mockedInvoke.mockImplementation(async (cmd, args) => {
-      if (cmd === "list_library") return structuredClone(listing);
-      if (cmd === "load_project") {
-        return JSON.stringify({ ...blankDoc(), title: (args as { id: string }).id });
-      }
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd, args) => {
+        if (cmd === "list_library") return structuredClone(listing);
+        if (cmd === "load_project") {
+          return JSON.stringify({ ...blankDoc(), title: (args as { id: string }).id });
+        }
+        return undefined;
+      }),
+    );
   });
 
   it("project ⋯ — New diagram · New folder · Rename · Delete (no Move to…)", async () => {
@@ -694,18 +720,20 @@ describe("header ⋯·New ▾ (#231 D8, T21)", () => {
 
   it("⋯ New folder — creates it in this folder and keeps the view, selects the new card and requests its name field (#231 D8)", async () => {
     const user = userEvent.setup();
-    mockedInvoke.mockImplementation(async (cmd, args) => {
-      if (cmd === "create_folder") {
-        const { id } = args as { id: string };
-        const chk = findFolder(listing, "chk")!.folder;
-        chk.folders = [
-          { id, name: "New folder", updatedAt: now, diagrams: [], folders: [] },
-          ...chk.folders,
-        ];
-      }
-      if (cmd === "list_library") return structuredClone(listing);
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd, args) => {
+        if (cmd === "create_folder") {
+          const { id } = args as { id: string };
+          const chk = findFolder(listing, "chk")!.folder;
+          chk.folders = [
+            { id, name: "New folder", updatedAt: now, diagrams: [], folders: [] },
+            ...chk.folders,
+          ];
+        }
+        if (cmd === "list_library") return structuredClone(listing);
+        return undefined;
+      }),
+    );
     show({ kind: "folder", folder: "chk" });
     await user.click(more("Checkout"));
     await user.click(screen.getByRole("menuitem", { name: "New folder" }));
@@ -765,14 +793,6 @@ describe("header ⋯·New ▾ (#231 D8, T21)", () => {
     await waitFor(() => expect(useAppStore.getState().view).toBe("editor"));
     expect(calls("save_project")[0]![1]).toMatchObject({ folder: "chk" });
     expect(useDiagramStore.getState().title).toBe("Flowchart");
-  });
-
-  it("stray list — no ⋯·New ▾", () => {
-    show({ kind: "folder", folder: "my-diagrams" });
-    expect(screen.queryByRole("toolbar")).toBeNull();
-    expect(screen.queryByRole("button", { name: /^More for/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^New in/ })).toBeNull();
-    expect(found("my-diagrams").stray).toBe(true);
   });
 });
 

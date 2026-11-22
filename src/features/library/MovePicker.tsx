@@ -15,14 +15,14 @@ import { DiagramGlyph, FolderGlyph } from "../../shared/ui/KindGlyph";
 import { ProjectBadge } from "../../shared/ui/ProjectBadge";
 import { type FolderMeta, itemKey, type ProjectMeta } from "./libraryApi";
 import { moveDiagram, moveFolderTo } from "./libraryActions";
-import { canPlace, findFolder, folderList } from "./libraryTree";
+import { canPlace, findFolder, folderList, takesItems } from "./libraryTree";
 import { indentClass } from "./libraryParts";
 
 /**
  * Move to… (#229 D13) — the canvas's `#move-picker` (Hybrid-Project-Cards,
  * v33): a popover beside the menu it came from, its title row level with the
  * Move to… item, holding the sidebar tree with destinations only — projects
- * and folders, no diagrams, no counts, no stray listing. The current parent
+ * and folders, no diagrams, no counts, no project not found (`takesItems`, #253 R7). The current parent
  * is ticked and cannot be picked; its chevron still works. It opens with the
  * path to the current parent unfolded. A row's click or Enter moves there and
  * closes; a chevron only folds. ↑↓, → (unfold / first child), ← (fold /
@@ -114,7 +114,7 @@ export const MovePicker = ({
   const tree = useRef<HTMLUListElement>(null);
   const titleId = useId();
   const movingId = useId();
-  const roots = useMemo(() => folders.filter((f) => !f.stray), [folders]);
+  const roots = useMemo(() => folders.filter(takesItems), [folders]);
   // as the sidebar has it, and the path to the current parent (#229)
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(
     () =>

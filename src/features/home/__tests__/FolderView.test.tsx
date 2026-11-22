@@ -17,6 +17,7 @@ import { FolderView } from "../FolderView";
 import { cardGrid } from "../homeGrid";
 import { useHomeMode } from "../homeMode";
 import { useHomeSelection } from "../homeSelection";
+import { likeRust } from "../../../test/rustAnswers";
 
 vi.mock("../../../shared/lib/systemClipboard", () => ({
   readClipboardText: vi.fn(async () => null),
@@ -45,14 +46,6 @@ const library = (): FolderMeta[] => [
     ],
   },
   { folders: [], id: "empty", name: "Sketches", updatedAt: now - 86_400_000, diagrams: [] },
-  {
-    folders: [],
-    id: "my-diagrams",
-    name: "My Diagrams",
-    updatedAt: now - 2 * 86_400_000,
-    stray: true,
-    diagrams: [{ id: "old", title: "Old", updatedAt: now, readable: true }],
-  },
 ];
 
 const folder = (id: string) => findFolder(useLibraryStore.getState().folders!, id)!.folder;
@@ -86,14 +79,16 @@ describe("project view (#220 D11, T27)", () => {
     useLibraryStore.setState({ folders: library(), readFailed: false });
     mockedAsk.mockReset();
     mockedAsk.mockResolvedValue(false);
-    mockedInvoke.mockImplementation(async (cmd, args) => {
-      if (cmd === "list_library") return library();
-      if (cmd === "load_project") {
-        const { id } = args as { id: string };
-        return JSON.stringify({ ...blankDoc(), title: id });
-      }
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd, args) => {
+        if (cmd === "list_library") return library();
+        if (cmd === "load_project") {
+          const { id } = args as { id: string };
+          return JSON.stringify({ ...blankDoc(), title: id });
+        }
+        return undefined;
+      }),
+    );
   });
 
   it("the header row is Home's — the view starts with the grid, no title·menu·switch (#231 D2·D5)", () => {
@@ -256,7 +251,9 @@ describe("project view (#220 D11, T27)", () => {
     mockedAsk.mockResolvedValue(true);
     const gone = library();
     gone[0]!.diagrams = gone[0]!.diagrams.filter((d) => d.id !== "le");
-    mockedInvoke.mockImplementation(async (cmd) => (cmd === "list_library" ? gone : undefined));
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd) => (cmd === "list_library" ? gone : undefined)),
+    );
     const { rerender } = renderProject("pay");
     const focus = useAppStore.getState().homeFocus;
     await user.click(mainOf("Ledger schema"));
@@ -286,16 +283,6 @@ describe("project view (#220 D11, T27)", () => {
     const list = within(screen.getByRole("list", { name: "Items in Sketches" }));
     expect(list.queryAllByRole("article")).toHaveLength(0);
     expect(list.getByRole("button", { name: /^New diagram, Blank/ })).toBeInTheDocument();
-  });
-
-  it("stray project — diagram cards only: no dashed card, no ⋯·New ▾ (T13)", () => {
-    renderProject("my-diagrams");
-    expect(screen.queryByRole("button", { name: /^New diagram, Blank/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^New in / })).toBeNull();
-    expect(screen.queryByRole("button", { name: "More for My Diagrams" })).toBeNull();
-    const list = within(screen.getByRole("list", { name: "Items in My Diagrams" }));
-    expect(list.getAllByRole("listitem")).toHaveLength(1);
-    expect(screen.getByRole("article", { name: "Old" })).toBeInTheDocument();
   });
 
   it("a folder at the deepest level — the dashed card's description has no new folder (#229 D9)", () => {
@@ -362,15 +349,17 @@ describe("nested folder view (#229 D5, T39)", () => {
     useLibraryStore.setState({ folders: nested(), readFailed: false });
     mockedAsk.mockReset();
     mockedAsk.mockResolvedValue(false);
-    mockedInvoke.mockImplementation(async (cmd, args) => {
-      if (cmd === "list_library") return listing;
-      if (cmd === "create_folder") return undefined;
-      if (cmd === "load_project") {
-        const { id } = args as { id: string };
-        return JSON.stringify({ ...blankDoc(), title: id });
-      }
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd, args) => {
+        if (cmd === "list_library") return listing;
+        if (cmd === "create_folder") return undefined;
+        if (cmd === "load_project") {
+          const { id } = args as { id: string };
+          return JSON.stringify({ ...blankDoc(), title: id });
+        }
+        return undefined;
+      }),
+    );
   });
 
   it("without order, cards mix newest first (D8) — folder cards and diagram cards, dashed card at the end", () => {
@@ -420,18 +409,20 @@ describe("nested folder view (#229 D5, T39)", () => {
 
   it("dashed card New folder — view unchanged, the new card is first and selected, its name row is the name field (#231 D8, T20)", async () => {
     const user = userEvent.setup();
-    mockedInvoke.mockImplementation(async (cmd, args) => {
-      if (cmd === "create_folder") {
-        const { id } = args as { id: string };
-        const chk = findFolder(listing, "chk")!.folder;
-        chk.folders = [
-          { id, name: "New folder", updatedAt: now, diagrams: [], folders: [] },
-          ...chk.folders,
-        ];
-      }
-      if (cmd === "list_library") return structuredClone(listing);
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd, args) => {
+        if (cmd === "create_folder") {
+          const { id } = args as { id: string };
+          const chk = findFolder(listing, "chk")!.folder;
+          chk.folders = [
+            { id, name: "New folder", updatedAt: now, diagrams: [], folders: [] },
+            ...chk.folders,
+          ];
+        }
+        if (cmd === "list_library") return structuredClone(listing);
+        return undefined;
+      }),
+    );
     showHomeTab({ kind: "folder", folder: "chk" });
     // in Home's sheet: the dashed card keeps the focus until the new card's field takes it (#231 W1)
     render(

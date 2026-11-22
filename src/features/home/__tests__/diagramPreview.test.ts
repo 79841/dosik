@@ -12,6 +12,7 @@ import {
   previewSrc,
   resetPreviewCacheForTests,
 } from "../diagramPreview";
+import { loadedFile } from "../../../test/rustAnswers";
 
 const mockedInvoke = vi.mocked(invoke);
 
@@ -68,7 +69,7 @@ describe("Home diagram images (#161, #220 D14)", () => {
 
   describe("image cache (T12)", () => {
     it("loads once for the same modified time, reloads after an edit", async () => {
-      mockedInvoke.mockResolvedValue(JSON.stringify(doc));
+      mockedInvoke.mockResolvedValue(loadedFile(doc));
       await loadPicture("d1", 100, "light");
       await loadPicture("d1", 100, "light");
       expect(mockedInvoke).toHaveBeenCalledTimes(1);
@@ -77,7 +78,7 @@ describe("Home diagram images (#161, #220 D14)", () => {
     });
 
     it("an edited diagram's image replaces the old one — they do not pile up (#161)", async () => {
-      mockedInvoke.mockResolvedValue(JSON.stringify(doc));
+      mockedInvoke.mockResolvedValue(loadedFile(doc));
       for (const t of [1, 2, 3, 4]) await loadPicture("d1", t, "light");
       expect(previewCacheSize()).toBe(1);
       await loadPicture("d1", 4, "dark");
@@ -85,16 +86,16 @@ describe("Home diagram images (#161, #220 D14)", () => {
     });
 
     it("two images of the same diagram (two themes) at once — reads the file once, holds nothing after", async () => {
-      const read = deferred<string>();
+      const read = deferred<ReturnType<typeof loadedFile>>();
       mockedInvoke.mockReturnValue(read.promise);
       const pictures = (["light", "dark"] as const).map((theme) => loadPicture("d1", 1, theme));
       expect(mockedInvoke).toHaveBeenCalledTimes(1);
-      read.resolve(JSON.stringify(doc));
+      read.resolve(loadedFile(doc));
       const drawn = await Promise.all(pictures);
       expect(drawn.every((src) => src?.startsWith("data:"))).toBe(true);
       expect(previewCacheSize()).toBe(2);
       // the shared read is gone: an edit later reads the file again
-      mockedInvoke.mockResolvedValue(JSON.stringify(doc));
+      mockedInvoke.mockResolvedValue(loadedFile(doc));
       await loadPicture("d1", 2, "light");
       expect(mockedInvoke).toHaveBeenCalledTimes(2);
     });
@@ -104,7 +105,7 @@ describe("Home diagram images (#161, #220 D14)", () => {
       afterEach(() => vi.useRealTimers());
 
       it("draws in the next task (setTimeout 0) even after loading — no draw unless timers run", async () => {
-        mockedInvoke.mockResolvedValue(JSON.stringify(doc));
+        mockedInvoke.mockResolvedValue(loadedFile(doc));
         const spy = vi.spyOn(globalThis, "setTimeout");
         let drawn = false;
         void loadPicture("d2", 1, "light").then(() => {
@@ -120,7 +121,7 @@ describe("Home diagram images (#161, #220 D14)", () => {
     });
 
     it(`image count cap ${PREVIEW_CACHE_LIMIT} — forgets the least recently viewed first (#161)`, async () => {
-      mockedInvoke.mockResolvedValue(JSON.stringify(doc));
+      mockedInvoke.mockResolvedValue(loadedFile(doc));
       for (let i = 0; i < PREVIEW_CACHE_LIMIT + 5; i++) await loadPicture(`d${i}`, 1, "light");
       expect(previewCacheSize()).toBe(PREVIEW_CACHE_LIMIT);
       const reads = mockedInvoke.mock.calls.length;
@@ -133,7 +134,7 @@ describe("Home diagram images (#161, #220 D14)", () => {
 
     it("a cap on total data URL characters too — on overflow forgets the least recently viewed first", async () => {
       expect(PREVIEW_CACHE_CHARS).toBe(32_000_000);
-      mockedInvoke.mockResolvedValue(JSON.stringify(doc));
+      mockedInvoke.mockResolvedValue(loadedFile(doc));
       const size = (await loadPicture("probe", 1, "light"))!.length;
       // a budget of two and a half pictures: the third pushes the oldest out
       resetPreviewCacheForTests({ chars: Math.floor(size * 2.5) });
@@ -151,7 +152,7 @@ describe("Home diagram images (#161, #220 D14)", () => {
     });
 
     it("an image larger than the budget still shows — the most recent one stays", async () => {
-      mockedInvoke.mockResolvedValue(JSON.stringify(doc));
+      mockedInvoke.mockResolvedValue(loadedFile(doc));
       resetPreviewCacheForTests({ chars: 10 });
       expect(await loadPicture("big", 1, "light")).toMatch(/^data:/);
       expect(previewCacheSize()).toBe(1);
@@ -161,7 +162,7 @@ describe("Home diagram images (#161, #220 D14)", () => {
       mockedInvoke.mockRejectedValueOnce(new Error("gone"));
       await expect(loadPicture("d1", 1, "light")).rejects.toThrow("gone");
       expect(previewCacheSize()).toBe(0);
-      mockedInvoke.mockResolvedValueOnce(JSON.stringify(doc));
+      mockedInvoke.mockResolvedValueOnce(loadedFile(doc));
       expect(await loadPicture("d1", 1, "light")).toMatch(/^data:/);
     });
   });
@@ -174,7 +175,7 @@ describe("Home diagram images (#161, #220 D14)", () => {
 
     it("only finished images synchronously — drawing·missing·other modified time are undefined, an empty diagram is null", async () => {
       expect(peekPicture("d1", 1, "light")).toBeUndefined();
-      mockedInvoke.mockResolvedValue(JSON.stringify(doc));
+      mockedInvoke.mockResolvedValue(loadedFile(doc));
       const picture = loadPicture("d1", 1, "light");
       expect(peekPicture("d1", 1, "light")).toBeUndefined();
       const src = await picture;
@@ -182,7 +183,7 @@ describe("Home diagram images (#161, #220 D14)", () => {
       expect(peekPicture("d1", 2, "light")).toBeUndefined();
       expect(peekPicture("d1", 1, "dark")).toBeUndefined();
       expect(mockedInvoke).toHaveBeenCalledTimes(1);
-      mockedInvoke.mockResolvedValue(JSON.stringify({ ...doc, nodes: [] }));
+      mockedInvoke.mockResolvedValue(loadedFile({ ...doc, nodes: [] }));
       await loadPicture("d2", 1, "light");
       expect(peekPicture("d2", 1, "light")).toBeNull();
     });

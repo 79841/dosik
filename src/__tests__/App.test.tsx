@@ -57,6 +57,7 @@ import { makeDoc } from "../shared/lib/__tests__/testFixtures";
 import { useDiagramStore } from "../shared/lib/store";
 import { useSidebarStore } from "../shared/lib/sidebarLayout";
 import { useToastStore } from "../shared/lib/toastStore";
+import { likeRust } from "../test/rustAnswers";
 
 const band = () => document.querySelector("[data-chrome-band]") as HTMLElement | null;
 /** the document tabs' tabpanel — the editor has the page tabs' one inside it too (#219) */
@@ -84,8 +85,8 @@ describe("App — window (#217)", () => {
     resetTreeForTests();
     // Home lists the library on mount; without this the shell under test
     // crashes on an undefined list instead of rendering
-    vi.mocked(invoke).mockImplementation(async (cmd: string) =>
-      cmd === "list_library" ? [] : undefined,
+    vi.mocked(invoke).mockImplementation(
+      likeRust(async (cmd: string) => (cmd === "list_library" ? [] : undefined)),
     );
     resetTabsForTests();
     useLibraryStore.setState({ folders: null, readFailed: false });
@@ -190,10 +191,12 @@ describe("App — window (#217)", () => {
   });
 
   it("Docked sidebar row menus draw above the edge — only the sheet is isolated (#217)", async () => {
-    vi.mocked(invoke).mockImplementation(async (cmd: string) =>
-      cmd === "list_library"
-        ? [{ id: "work", name: "Work", updatedAt: 1, diagrams: [] }]
-        : undefined,
+    vi.mocked(invoke).mockImplementation(
+      likeRust(async (cmd: string) =>
+        cmd === "list_library"
+          ? [{ id: "work", name: "Work", updatedAt: 1, diagrams: [] }]
+          : undefined,
+      ),
     );
     render(<App />);
     fireEvent.click(await screen.findByRole("button", { name: "Actions for Work" }));

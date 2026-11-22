@@ -67,7 +67,7 @@ const newDiagramError = async (create: NewDiagramOp): Promise<string | null> => 
       .getState()
       .refresh()
       .catch(() => null));
-  // a listed folder at any depth, never the stray listing (#229 D15)
+  // a listed folder at any depth, in a project that is there (#229 D15)
   return folders && !savableFolder(folders, folder) ? `new_diagram: no folder '${folder}'` : null;
 };
 

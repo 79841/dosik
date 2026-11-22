@@ -27,6 +27,7 @@ import {
   resetTabsForTests,
   showHomeTab,
 } from "../tabActions";
+import { newTab } from "../tabModel";
 import { namedTarget } from "../targets";
 import {
   externalBaseline,
@@ -35,10 +36,12 @@ import {
 } from "../unsavedGuard";
 import {
   AUTOSAVE_DEBOUNCE_MS,
+  baseStampOf,
   flushAutosave,
   resetAutosaveForTests,
   useAutosave,
 } from "../useAutosave";
+import { likeRust } from "../../../test/rustAnswers";
 
 const mockedInvoke = vi.mocked(invoke);
 const mockedAsk = vi.mocked(ask);
@@ -63,15 +66,17 @@ const book = (title: string): DiagramDoc => ({
 
 /** load_project and read_text_file answer from `files`; every other command resolves undefined */
 const serve = (files: Record<string, unknown> = {}) =>
-  mockedInvoke.mockImplementation(async (cmd, args) => {
-    if (cmd === "load_project" || cmd === "read_text_file") {
-      const key =
-        cmd === "load_project" ? (args as { id: string }).id : (args as { path: string }).path;
-      if (!(key in files)) throw new Error(`no such diagram: ${key}`);
-      return JSON.stringify(files[key]);
-    }
-    return undefined;
-  });
+  mockedInvoke.mockImplementation(
+    likeRust(async (cmd, args) => {
+      if (cmd === "load_project" || cmd === "read_text_file") {
+        const key =
+          cmd === "load_project" ? (args as { id: string }).id : (args as { path: string }).path;
+        if (!(key in files)) throw new Error(`no such diagram: ${key}`);
+        return JSON.stringify(files[key]);
+      }
+      return undefined;
+    }),
+  );
 
 /**
  * The tab model's promises (D1, D4, D8): at most one active tab, the active
@@ -149,10 +154,12 @@ describe("tab actions (#218)", () => {
       // another path opened it while this one was reading
       let release!: () => void;
       mockedInvoke.mockImplementationOnce(
-        (_cmd, _args) =>
-          new Promise((resolve) => {
-            release = () => resolve(JSON.stringify(book("Ledger")));
-          }),
+        likeRust(
+          (_cmd, _args) =>
+            new Promise((resolve) => {
+              release = () => resolve(JSON.stringify(book("Ledger")));
+            }),
+        ),
       );
       const reading = openLibraryDiagram("p2");
       openDocument(book("Ledger"), { projectId: "p2" });
@@ -257,8 +264,8 @@ describe("tab actions (#218)", () => {
       expect(calls("read_text_file")[0]![1]).toEqual({ path: "/x/a.dosik.json" });
       expect(mockedOpen).not.toHaveBeenCalled();
       const before = app().tabs;
-      mockedInvoke.mockImplementation(async (cmd) =>
-        cmd === "read_text_file" ? '{"hello":1}' : undefined,
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd) => (cmd === "read_text_file" ? '{"hello":1}' : undefined)),
       );
       await expect(openPathInTab("/x/not.dosik.json")).rejects.toThrow(/Not a valid diagram/);
       expect(app().tabs).toBe(before);
@@ -681,6 +688,55 @@ describe("tab actions (#218)", () => {
     it("a blank document is not written as the first no-op change", async () => {
       const { id } = await newDiagramTab();
       expect(store()).toMatchObject({ projectId: id, title: blankDoc().title });
+      expect(calls("save_project")).toHaveLength(1);
+    });
+  });
+
+  describe("a library in real folders (#253 D8, D11)", () => {
+    it("an opened diagram is titled after its file, and its stamp is the base of its next save", async () => {
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd) =>
+          cmd === "load_project"
+            ? { contents: JSON.stringify(book("Old title")), name: "Checkout", stamp: "1-10-aa" }
+            : undefined,
+        ),
+      );
+      await openLibraryDiagram("p1");
+      expect(store().title).toBe("Checkout");
+      expect(tabOf({ projectId: "p1" }).title).toBe("Checkout");
+      expect(baseStampOf("p1")).toBe("1-10-aa");
+    });
+
+    it("a restored tab's read keeps its stamp too", async () => {
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd) =>
+          cmd === "load_project"
+            ? { contents: JSON.stringify(book("Ledger")), name: "Ledger", stamp: "2-20-bb" }
+            : undefined,
+        ),
+      );
+      const restored = { ...newTab({ projectId: "p2", filePath: null, title: "Ledger" }, false) };
+      app().commitTabs({ tabs: [restored], activeTab: null });
+      await activateTab(restored.id);
+      expect(store().projectId).toBe("p2");
+      expect(baseStampOf("p2")).toBe("2-20-bb");
+    });
+
+    it("a new diagram opens under the name its file got, with its stamp", async () => {
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd) =>
+          cmd === "save_project"
+            ? { kind: "saved", name: "Untitled Diagram 2", stamp: "3-30-cc" }
+            : undefined,
+        ),
+      );
+      const { id } = await newDiagramTab("work");
+      expect(store()).toMatchObject({ projectId: id, title: "Untitled Diagram 2" });
+      expect(tabOf({ projectId: id }).title).toBe("Untitled Diagram 2");
+      expect(baseStampOf(id)).toBe("3-30-cc");
+      // what it opened with is not an edit: nothing more is written
+      renderHook(() => useAutosave());
+      await flushAutosave();
       expect(calls("save_project")).toHaveLength(1);
     });
   });

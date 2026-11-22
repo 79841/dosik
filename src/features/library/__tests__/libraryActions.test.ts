@@ -7,17 +7,20 @@ import { useDiagramStore } from "../../../shared/lib/store";
 import { useToastStore } from "../../../shared/lib/toastStore";
 import { useAppStore } from "../appStore";
 import { DASHBOARD, type HomeView } from "../homeView";
+import { savedFor } from "../../../test/rustAnswers";
 import { blankDoc, type FolderMeta } from "../libraryApi";
 import {
   deleteDiagramAsking,
   deleteFolderAsking,
+  locateProjectAsking,
   moveDiagram,
   newFolder,
+  removeFromLibrary,
   renameFolderTo,
 } from "../libraryActions";
 import { useLibraryStore } from "../libraryStore";
 import { openDocument, resetTabsForTests } from "../tabActions";
-import { resetAutosaveForTests, useAutosave } from "../useAutosave";
+import { flushAutosave, resetAutosaveForTests, useAutosave } from "../useAutosave";
 
 const mockedInvoke = vi.mocked(invoke);
 const mockedAsk = vi.mocked(ask);
@@ -43,14 +46,18 @@ const loginFlow = () => work().diagrams[0]!;
 
 /** what the app showed at the moment a command reached Rust */
 const seen: Record<string, { view: string; homeView: HomeView; projectId: string | null }> = {};
+/** how many files besides its diagrams a folder holds, as Rust counts them */
+let others: unknown = 0;
 const serve = () =>
-  mockedInvoke.mockImplementation(async (cmd) => {
+  mockedInvoke.mockImplementation(async (cmd, args) => {
     seen[cmd] = {
       view: useAppStore.getState().view,
       homeView: useAppStore.getState().homeView,
       projectId: useDiagramStore.getState().projectId,
     };
     if (cmd === "list_library") return library();
+    if (cmd === "count_other_files") return others;
+    if (cmd === "save_project") return savedFor(args);
     return undefined;
   });
 
@@ -67,6 +74,7 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
     useToastStore.getState().dismissAll();
     mockedAsk.mockReset();
     mockedAsk.mockResolvedValue(false);
+    others = 0;
     serve();
   });
 
@@ -94,10 +102,30 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
   });
 
   describe("deleting a project", () => {
+    it("says how many files besides its diagrams go with it, as Rust counts them", async () => {
+      others = 3;
+      await deleteFolderAsking(work());
+      expect(calls("count_other_files")[0]![1]).toEqual({ id: "work" });
+      expect(mockedAsk.mock.calls[0]![0]).toBe(
+        "Delete the project “Work” and everything in it (2 diagrams and 3 other files)? It will be moved to the Trash.",
+      );
+      others = 1;
+      await deleteFolderAsking(personal());
+      expect(mockedAsk.mock.calls[1]![0]).toBe(
+        "Delete the project “Personal” and everything in it (1 other file)? It will be moved to the Trash.",
+      );
+      // not counted: it may hold anything
+      others = undefined;
+      await deleteFolderAsking(personal());
+      expect(mockedAsk.mock.calls[2]![0]).toBe(
+        "Delete the project “Personal” and everything in it? It will be moved to the Trash.",
+      );
+    });
+
     it("asks with the diagram count, and leaves it when declined", async () => {
       await deleteFolderAsking(work());
       expect(mockedAsk.mock.calls[0]![0]).toBe(
-        "Delete the project “Work” and everything in it (2 diagrams)? This cannot be undone.",
+        "Delete the project “Work” and everything in it (2 diagrams)? It will be moved to the Trash.",
       );
       expect(mockedAsk.mock.calls[0]![1]).toMatchObject({ title: "Delete project" });
       expect(calls("delete_folder")).toHaveLength(0);
@@ -197,12 +225,157 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
     });
   });
 
+  describe("a project not found, a folder added from elsewhere (#253 R7·R8)", () => {
+    const lost = (): FolderMeta => ({
+      folders: [],
+      id: "arc",
+      name: "architecture",
+      updatedAt: 0,
+      diagrams: [],
+      missing: true,
+    });
+    const answer = (locate: unknown) =>
+      mockedInvoke.mockImplementation(async (cmd) => {
+        seen[cmd] = {
+          view: useAppStore.getState().view,
+          homeView: useAppStore.getState().homeView,
+          projectId: useDiagramStore.getState().projectId,
+        };
+        if (cmd === "list_library") return library();
+        if (cmd === "locate_project") {
+          if (locate instanceof Error) throw locate;
+          return locate;
+        }
+        return undefined;
+      });
+
+    it("Locate… located — the library is listed again, nothing said", async () => {
+      answer("located");
+      expect(await locateProjectAsking(lost())).toBe(true);
+      expect(calls("locate_project")[0]![1]).toEqual({ id: "arc" });
+      expect(calls("list_library")).toHaveLength(1);
+      expect(toasts()).toEqual([]);
+    });
+
+    it("Locate… on a folder already in the library — the toast says so, nothing else", async () => {
+      answer("already");
+      expect(await locateProjectAsking(lost())).toBe(false);
+      expect(toasts()).toEqual(["Already in the library"]);
+      expect(calls("list_library")).toHaveLength(0);
+    });
+
+    it("Locate… cancelled says nothing; one that fails says why", async () => {
+      answer("cancelled");
+      expect(await locateProjectAsking(lost())).toBe(false);
+      expect(toasts()).toEqual([]);
+      answer(new Error("no such project"));
+      expect(await locateProjectAsking(lost())).toBe(false);
+      expect(toasts()).toEqual(["Error: no such project"]);
+    });
+
+    it("Remove from Library — no question: closes its diagrams' tabs, lets every write land, removes the record, lists again", async () => {
+      renderHook(() => useAutosave());
+      openDocument(blankDoc(), { filePath: "/tmp/keep.dosik" });
+      openLoginFlow();
+      useDiagramStore.getState().addNode("rect", { x: 0, y: 0 });
+      expect(await removeFromLibrary(work())).toBe(true);
+      expect(mockedAsk).not.toHaveBeenCalled();
+      expect(calls("remove_project")[0]![1]).toEqual({ id: "work" });
+      expect(calls("delete_folder")).toHaveLength(0);
+      const order = mockedInvoke.mock.calls.map(([c]) => c);
+      expect(order.indexOf("save_project")).toBeGreaterThanOrEqual(0);
+      expect(order.indexOf("save_project")).toBeLessThan(order.indexOf("remove_project"));
+      expect(openTabs()).toEqual(["/tmp/keep.dosik"]);
+      expect(order.at(-1)).toBe("list_library");
+    });
+
+    it("Remove from Library sends Home showing it, or a folder in it, to the dashboard", async () => {
+      useLibraryStore.setState({ folders: [...library(), lost()] });
+      useAppStore.getState().setHomeView({ kind: "folder", folder: "arc" });
+      await removeFromLibrary(lost());
+      expect(useAppStore.getState().homeView).toEqual(DASHBOARD);
+      useAppStore.getState().setHomeView({ kind: "folder", folder: "home" });
+      await removeFromLibrary(work());
+      expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "home" });
+    });
+
+    it("Remove from Library closes the tabs of the diagrams it holds out of reach — asking first for edits not saved", async () => {
+      renderHook(() => useAutosave());
+      const held = (): FolderMeta => ({ ...lost(), held: ["d1", "d2"] });
+      useLibraryStore.setState({ folders: [...library(), held()] });
+      let save: unknown = { kind: "unreachable" };
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "list_library") return library();
+        if (cmd === "save_project") return save;
+        return undefined;
+      });
+      openDocument(blankDoc(), { projectId: "d2" });
+      openDocument(blankDoc(), { projectId: "d1" });
+      useDiagramStore.getState().addNode("rect", { x: 0, y: 0 });
+      await flushAutosave();
+      expect(calls("save_project")).toHaveLength(1);
+      // declined: nothing removed, the tabs and the edits stay
+      expect(await removeFromLibrary(held())).toBe(false);
+      expect(mockedAsk.mock.calls[0]![0]).toBe(
+        "“Untitled Diagram” has unsaved changes. Discard them?",
+      );
+      expect(calls("remove_project")).toHaveLength(0);
+      expect(openTabs()).toEqual(["d2", "d1"]);
+      // discarded: both tabs close, nothing is written, the record goes
+      mockedAsk.mockResolvedValue(true);
+      save = { kind: "saved", name: "Untitled Diagram", stamp: "1-1-a" };
+      expect(await removeFromLibrary(held())).toBe(true);
+      expect(openTabs()).toEqual([]);
+      expect(calls("save_project")).toHaveLength(1);
+      expect(calls("remove_project")[0]![1]).toEqual({ id: "arc" });
+    });
+
+    it("Delete closes the tabs of the diagrams a project holds out of reach — asking first for edits not saved", async () => {
+      renderHook(() => useAutosave());
+      const held = (): FolderMeta => ({ ...work(), held: ["d1"] });
+      useLibraryStore.setState({ folders: [held(), personal()] });
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "list_library") return library();
+        if (cmd === "save_project") return { kind: "unreachable" };
+        if (cmd === "count_other_files") return 0;
+        return undefined;
+      });
+      openDocument(blankDoc(), { projectId: "d1" });
+      useDiagramStore.getState().addNode("rect", { x: 0, y: 0 });
+      await flushAutosave();
+      // Delete said yes to, its edits kept: nothing deleted
+      mockedAsk.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      expect(await deleteFolderAsking(held())).toBe(false);
+      expect(mockedAsk.mock.calls[1]![0]).toBe(
+        "“Untitled Diagram” has unsaved changes. Discard them?",
+      );
+      expect(calls("delete_folder")).toHaveLength(0);
+      expect(openTabs()).toEqual(["d1"]);
+      // and let go: the tab closes with the project
+      mockedAsk.mockResolvedValue(true);
+      expect(await deleteFolderAsking(held())).toBe(true);
+      expect(openTabs()).toEqual([]);
+      expect(calls("delete_folder")[0]![1]).toEqual({ id: "work" });
+    });
+
+    it("Remove from Library that fails — a toast, nothing gone", async () => {
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "remove_project") throw new Error("no such project");
+        return cmd === "list_library" ? library() : undefined;
+      });
+      expect(await removeFromLibrary(work())).toBe(false);
+      expect(toasts()).toEqual(["Error: no such project"]);
+    });
+  });
+
   describe("deleting a diagram", () => {
     it("delete_project after confirmation — returns whether it deleted", async () => {
       expect(await deleteDiagramAsking(loginFlow())).toBe(false);
       mockedAsk.mockResolvedValue(true);
       expect(await deleteDiagramAsking(loginFlow())).toBe(true);
-      expect(mockedAsk.mock.calls[0]![0]).toContain("Login flow");
+      expect(mockedAsk.mock.calls[0]![0]).toBe(
+        "Delete “Login flow”? It will be moved to the Trash.",
+      );
       expect(calls("delete_project")[0]![1]).toEqual({ id: "p1" });
     });
 
@@ -345,6 +518,7 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
           homeView: useAppStore.getState().homeView,
           projectId: useDiagramStore.getState().projectId,
         };
+        if (cmd === "count_other_files") return 0;
         return cmd === "list_library" ? nested() : undefined;
       });
     });
@@ -358,14 +532,16 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
     it("deleting a folder — asks with the folder and diagram counts of everything below, briefly when empty (D12)", async () => {
       await deleteFolderAsking(find("chk"));
       expect(mockedAsk.mock.calls[0]).toEqual([
-        "Delete the folder “Checkout” and everything in it (1 folder, 3 diagrams)? This cannot be undone.",
+        "Delete the folder “Checkout” and everything in it (1 folder, 3 diagrams)? It will be moved to the Trash.",
         expect.objectContaining({ title: "Delete folder" }),
       ]);
       await deleteFolderAsking(find("empty"));
-      expect(mockedAsk.mock.calls[1]![0]).toBe("Delete the folder “Empty”?");
+      expect(mockedAsk.mock.calls[1]![0]).toBe(
+        "Delete the folder “Empty”? It will be moved to the Trash.",
+      );
       await deleteFolderAsking(find("pay"));
       expect(mockedAsk.mock.calls[2]![0]).toBe(
-        "Delete the project “Payments” and everything in it (3 folders, 4 diagrams)? This cannot be undone.",
+        "Delete the project “Payments” and everything in it (3 folders, 4 diagrams)? It will be moved to the Trash.",
       );
       expect(calls("delete_folder")).toHaveLength(0);
     });

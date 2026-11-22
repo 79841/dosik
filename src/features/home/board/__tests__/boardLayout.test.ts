@@ -70,17 +70,12 @@ describe("initial layout (#221 D8, T11)", () => {
     expect(at(placed)).toEqual({ a: [-200, 420], b: [1080, 420], c: [-200, 600] });
   });
 
-  it("persistentLayout: pinned stay in place, new projects on a new row below, stray always at the very bottom", () => {
-    const folders: FolderMeta[] = [
-      folder("stray", 2, { stray: true }),
-      folder("fresh", 3),
-      folder("old", 2, { board: { x: 0, y: 0 } }),
-    ];
+  it("persistentLayout: pinned stay in place, new projects on a new row below", () => {
+    const folders: FolderMeta[] = [folder("fresh", 3), folder("old", 2, { board: { x: 0, y: 0 } })];
     const layout = persistentLayout(folders, effectiveBoards(folders, {}), {});
-    expect(at(layout.frames)).toEqual({ old: [0, 0], fresh: [0, 356], stray: [0, 712] });
+    expect(at(layout.frames)).toEqual({ old: [0, 0], fresh: [0, 356] });
     expect(layout.byId.get("old")?.pinned).toBe(true);
     expect(layout.byId.get("fresh")?.pinned).toBe(false);
-    expect(layout.byId.get("stray")?.stray).toBe(true);
   });
 });
 
@@ -137,7 +132,6 @@ describe("commit plan (#221 D9, T13)", () => {
     folder("a", 3, { board: { x: 0, y: 0 } }),
     folder("b", 3),
     folder("c", 1),
-    folder("s", 1, { stray: true }),
   ];
 
   it("unpinned frames become entries, and recomputing after applying gives an empty plan (idempotent)", () => {
@@ -150,7 +144,7 @@ describe("commit plan (#221 D9, T13)", () => {
     expect(planCommit(persistentLayout(folders, after, {}), after, after, new Set())).toEqual([]);
   });
 
-  it("failed ids and stray are left out", () => {
+  it("failed ids are left out", () => {
     const base = effectiveBoards(folders, {});
     const plan = planCommit(persistentLayout(folders, base, {}), base, base, new Set(["b"]));
     expect(plan.map((e) => e.id)).toEqual(["c"]);
@@ -187,7 +181,6 @@ describe("drop hit-testing and new frames (#221 D13·D15, T15)", () => {
   const folders: FolderMeta[] = [
     folder("a", 3, { board: { x: 0, y: 0 } }),
     folder("b", 1, { board: { x: 0, y: 400 } }),
-    folder("s", 1, { stray: true }),
   ];
   const base = effectiveBoards(folders, {});
   const layout = persistentLayout(folders, base, {});
@@ -224,7 +217,7 @@ describe("drop hit-testing and new frames (#221 D13·D15, T15)", () => {
 });
 
 describe("drop target — another folder's frame, only when canPlace allows (#231 D15, T31)", () => {
-  /** Payments › Checkout › Flows; Onboarding; a stray listing */
+  /** Payments › Checkout › Flows; Onboarding */
   const pay: FolderMeta = {
     ...folder("pay", 2, { board: { x: 0, y: 0 } }),
     folders: [
@@ -234,24 +227,26 @@ describe("drop target — another folder's frame, only when canPlace allows (#23
       },
     ],
   };
-  const folders: FolderMeta[] = [
-    pay,
-    folder("onb", 1, { board: { x: 0, y: 600 } }),
-    folder("s", 1, { stray: true }),
-  ];
+  const folders: FolderMeta[] = [pay, folder("onb", 1, { board: { x: 0, y: 600 } })];
   const layout = persistentLayout(folders, effectiveBoards(folders, {}), {});
   const onOnb = { x: 10, y: 610 };
   const onPay = { x: 10, y: 10 };
-  const onStray = (() => {
-    const s = layout.byId.get("s")!;
-    return { x: s.x + 10, y: s.y + 10 };
-  })();
 
-  it("diagram card → another project frame ○, current frame ✕, stray ✕, empty space ✕", () => {
+  it("diagram card → another project frame ○, current frame ✕, empty space ✕", () => {
     expect(dropTarget(layout, "diagram:pay-0", "pay", onOnb)).toBe("onb");
     expect(dropTarget(layout, "diagram:pay-0", "pay", onPay)).toBeNull();
-    expect(dropTarget(layout, "diagram:pay-0", "pay", onStray)).toBeNull();
     expect(dropTarget(layout, "diagram:pay-0", "pay", { x: 5000, y: 5000 })).toBeNull();
+  });
+
+  it("a project not found takes no card — its frame is in its place, but no way in (#253 R7)", () => {
+    const lost: FolderMeta[] = [
+      pay,
+      folder("arc", 0, { missing: true, board: { x: 0, y: 600 }, diagrams: [] }),
+    ];
+    const lostLayout = persistentLayout(lost, effectiveBoards(lost, {}), {});
+    expect(lostLayout.byId.get("arc")).toMatchObject({ x: 0, y: 600, pinned: true });
+    expect(dropTarget(lostLayout, "diagram:pay-0", "pay", onOnb)).toBeNull();
+    expect(dropTarget(lostLayout, "folder:chk", "pay", onOnb)).toBeNull();
   });
 
   it("folder card → another project frame ○ — with its subfolders", () => {

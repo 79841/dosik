@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useDiagramStore } from "../../../shared/lib/store";
 import { makeDoc, makeNode } from "../../../shared/lib/__tests__/testFixtures";
+import { likeRust } from "../../../test/rustAnswers";
 import { blankDoc } from "../libraryApi";
 import { openDocument, resetTabsForTests } from "../tabActions";
 import { resetUnsavedGuardForTests } from "../unsavedGuard";
@@ -30,7 +31,8 @@ describe("useFlushOnClose (#114)", () => {
     mockedAsk.mockReset();
     mockedAsk.mockResolvedValue(false);
     resetTabsForTests();
-    mockedInvoke.mockResolvedValue(undefined);
+    // saves answered as Rust answers them: written
+    mockedInvoke.mockImplementation(likeRust());
     closeHandler = null;
     unlisten = vi.fn<() => void>();
     mockedWindow.mockReturnValue({
@@ -99,13 +101,19 @@ describe("useFlushOnClose (#114)", () => {
         "2 files have unsaved changes — “a.dosik.json”, “b.dosik.json”. Discard them?",
       );
       expect(cancel.preventDefault).toHaveBeenCalledTimes(1);
-      expect(mockedInvoke.mock.calls.filter(([c]) => c === "save_project")).toHaveLength(0);
+      // the library diagram's waiting autosave is written before the question
+      // — a save that could not reach it would be asked about too
+      const saves = () => mockedInvoke.mock.calls.filter(([c]) => c === "save_project");
+      expect(saves()).toHaveLength(1);
+      expect(JSON.parse((saves()[0]![1] as { contents: string }).contents).title).toBe(
+        "Last words",
+      );
 
       mockedAsk.mockResolvedValue(true);
       const discard = closeEvent();
       await closeHandler!(discard);
       expect(discard.preventDefault).not.toHaveBeenCalled();
-      expect(mockedInvoke.mock.calls.filter(([c]) => c === "save_project")).toHaveLength(1);
+      expect(saves()).toHaveLength(1);
     } finally {
       vi.useRealTimers();
     }

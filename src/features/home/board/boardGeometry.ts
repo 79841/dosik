@@ -1,5 +1,5 @@
 import type { FolderMeta, ItemKey } from "../../library/libraryApi";
-import { childKey, childrenOf } from "../../library/libraryTree";
+import { childKey, childrenOf, isMissing } from "../../library/libraryTree";
 
 /**
  * The library canvas's geometry in board units (#221 D4) — 1 is a CSS pixel
@@ -52,6 +52,13 @@ export const STACK_H = CARD_H + STACK_BEHIND * STACK_STEP.y + STACK_FOOT_GAP + S
  */
 export const EMPTY_W = STACK_W;
 export const EMPTY_H = 80;
+
+/**
+ * A project not found (#253 R7, `Library-Missing`): its frame keeps its
+ * place at the canvas's 240 × 150 — an empty frame's width — its box ("Can't
+ * find this folder", the path, Locate…) 92 ÷ 0.7 high, on the 4 grid.
+ */
+export const MISSING_H = 132;
 
 /**
  * A folder opened in place (#231 D14): a dashed sub-frame of its items as
@@ -138,7 +145,9 @@ export type FrameItem =
     } & Box)
   /** a folder opened in place, in its card's place (#231 D14): its items, inside it */
   | ({ kind: "sub"; id: string; items: FrameItem[] } & Box)
-  | ({ kind: "empty" } & Box);
+  | ({ kind: "empty" } & Box)
+  /** a project not found: the box that says so, with Locate… (#253 R7) */
+  | ({ kind: "missing" } & Box);
 
 export interface FrameLayout {
   w: number;
@@ -270,14 +279,17 @@ export const subFrameLayout = (folder: FolderMeta, chain: readonly string[]): Su
  * the project, outermost first (#231 D14): its first, when it is one of the
  * project's folders, takes its card's place as a sub-frame on a row of its
  * own — a collapsed project keeps the rest stacked after it, or as cards
- * when fewer than two are left (no stack of one). Positions are inside the
- * frame.
+ * when fewer than two are left (no stack of one). A project not found
+ * holds its box alone (#253 R7). Positions are inside the frame.
  */
 export const frameLayout = (
   folder: FolderMeta,
   collapsed: boolean | undefined,
   chain: readonly string[] = [],
 ): FrameLayout => {
+  if (isMissing(folder)) {
+    return frameFlow([{ kind: "missing", w: EMPTY_W, h: MISSING_H }], EMPTY_W);
+  }
   const children = childrenOf(folder);
   if (children.length === 0) {
     return frameFlow([{ kind: "empty", w: EMPTY_W, h: EMPTY_H }], EMPTY_W);

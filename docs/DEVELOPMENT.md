@@ -15,6 +15,8 @@ pnpm test          # vitest unit tests
 
 Requirements: Node 22.13+ (pnpm 11 engines), Rust (stable), macOS/Windows/Linux.
 
+A development run keeps its library apart from the installed app's: in `Documents/Dosik Dev`, or in the folder `DOSIK_LIBRARY_DIR` names (an absolute path).
+
 - The installed app's agent bridge listens on `127.0.0.1:4517`, the same port as a development run — if both run at once, the second cannot take the port. Give development runs another port with `DOSIK_PORT`
 - Subscription connections in AI chat look for an installed Claude Code or Codex CLI. If the app cannot find one, set the path with `CLAUDE_CLI_PATH` / `CODEX_CLI_PATH`
 
@@ -40,21 +42,26 @@ claude mcp add dosik -- node /absolute/path/to/dosik/scripts/mcp/server.mjs
 
 `pnpm build:mcp` builds the packaged server into `src-tauri/mcp/` (release builds run it).
 
-This adds six tools.
+This adds eleven tools: six for diagrams and five for the library.
 
 | Tool | What it does |
 |---|---|
 | `get_diagram` | Reads a document |
 | `apply_ops` | Applies edit ops — in the app, the canvas updates immediately |
 | `describe_ops` | Lists the available ops, shapes, and colors — answers from the spec even without the app |
-| `export_diagram` | Exports to a file (`md`, `mmd`, `dosik.json`, `svg`) |
-| `open_in_dosik` | Opens a `.dosik.json` in the installed app (macOS) |
+| `export_diagram` | Exports to a file (`md`, `mmd`, `dosik`, `svg`) |
+| `open_in_dosik` | Opens a `.dosik` file in the installed app (macOS) |
 | `render_diagram` | Draws a diagram — as an in-conversation app on hosts that render apps, otherwise as SVG |
+| `list_projects` | Lists the library's projects — their names, folders, and whether the app can find them |
+| `add_project` | Adds a folder to the library as a project, making it when it does not exist yet |
+| `list_project` | Lists the folders and diagrams of a project, with their paths |
+| `create_folder` | Makes a folder in a project |
+| `create_diagram` | Makes an empty diagram (`<title>.dosik`) in a project or one of its folders |
 
-**Arguments choose the target.** Read, edit, and export take `file` (an absolute path to a `.dosik.json`).
+**Arguments choose the target.** Read, edit, and export take `file` (an absolute path to a `.dosik` file — a `.dosik` file is JSON, the same document `get_diagram` returns).
 
 - Without `file`, the tools work on **the canvas open in the app**. If the app is not running, they ask you to open it
-- With `file`, they work on **that file without the app**, through the same data layer as the app (the headless CLI). Editing a missing file creates it, and if any op fails the file is left untouched
+- With `file`, they work on **that file without the app**, through the same data layer as the app (the headless CLI). Editing a missing file creates it, and if any op fails the file is left untouched. A tab that has the file open in the app reloads it. An older `.dosik.json` is edited where it is; new files are always `.dosik`
 - They never silently fall back to a file when the app is closed — otherwise an agent would believe it edited the canvas while the screen stays unchanged (the same split draw.io's MCP server makes)
 
 - **No tool per op.** Ops are already one language, and `docs/openapi.yaml` is the source of truth for their schema. `apply_ops`'s input schema is generated from that file, so the tool follows the spec when it changes
@@ -68,6 +75,13 @@ This adds six tools.
   - The app bundle builds itself into `dist-mcp-view/` on first use (or when its sources change).
 - PNG is not available here: it captures the rendered canvas, which needs a window — use the app's Export menu
 - Port: `DOSIK_PORT` (default 4517)
+
+**Library tools.** The five library tools work on folders and need no app. An agent can keep a conversation's diagrams together with `add_project` — on a new folder such as `diagrams` in its working directory, or on the working directory itself — then fill it with `create_folder`, `create_diagram`, and `apply_ops` with `file`.
+
+- Names follow the app's rules: characters that file systems do not allow become `-`, and a folder name already taken gets ` 2`. A diagram name already taken is refused instead, so nothing is drawn into the wrong file
+- Refused as projects: relative paths, a root or home folder, the library folder or a folder holding it, and folders inside a project or holding one
+- What the tools make reaches the app through a small inbox in its data folder: an open app shows it in the sidebar within seconds, a closed one the next time it starts
+- To work with another instance's library: `DOSIK_APP_DATA` (that instance's app data folder), `DOSIK_DEV=1` (a development run's library), `DOSIK_LIBRARY_DIR` (its library folder)
 
 ## Structure
 

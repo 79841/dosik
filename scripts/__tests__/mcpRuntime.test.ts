@@ -216,7 +216,7 @@ describe("MCP server runtime (#2)", () => {
         "--in",
         "/tmp/a.dosik.json",
         "--out",
-        "/tmp/scratch/out.dosik.json",
+        "/tmp/scratch/out.dosik",
       ]);
     });
 
@@ -227,17 +227,34 @@ describe("MCP server runtime (#2)", () => {
         return "";
       });
       const mode = modeWith(headless, files);
-      await expect(mode.apply("/tmp/new.dosik.json", [{ op: "clear" }])).resolves.toMatchObject({
+      await expect(mode.apply("/tmp/new.dosik", [{ op: "clear" }])).resolves.toMatchObject({
         ok: true,
       });
       const args = callsOf(headless)[0]?.[0] as string[];
       expect(args).not.toContain("--in");
       expect(args).toEqual(
-        expect.arrayContaining(["--ops", "/tmp/scratch/ops.json", "--out", "/tmp/new.dosik.json"]),
+        expect.arrayContaining(["--ops", "/tmp/scratch/ops.json", "--out", "/tmp/new.dosik"]),
       );
       expect(JSON.parse(files["/tmp/scratch/ops.json"] as string)).toEqual({
         ops: [{ op: "clear" }],
       });
+    });
+
+    it("makes no new .dosik.json — a new file is a .dosik; an older one is edited where it is", async () => {
+      const files: Record<string, string> = { "/tmp/old.dosik.json": "{}" };
+      const headless = vi.fn(async () => {
+        files["/tmp/scratch/report.json"] = '{"ok":true,"applied":1,"errors":[],"written":true}';
+        return "";
+      });
+      const mode = modeWith(headless, files);
+      await expect(mode.apply("/tmp/new.DOSIK.JSON", [{ op: "clear" }])).rejects.toThrow(
+        /new diagram file is a `\.dosik`.*Use \/tmp\/new\.DOSIK instead/s,
+      );
+      expect(headless).not.toHaveBeenCalled();
+      await mode.apply("/tmp/old.dosik.json", [{ op: "clear" }]);
+      expect(callsOf(headless)[0]?.[0]).toEqual(
+        expect.arrayContaining(["--in", "/tmp/old.dosik.json", "--out", "/tmp/old.dosik.json"]),
+      );
     });
 
     it("reads an existing file and applies on top of it", async () => {
@@ -295,8 +312,8 @@ describe("MCP server runtime (#2)", () => {
         throw new Error("✗ cannot write");
       });
       const mode = modeWith(headless, {});
-      await expect(mode.apply("/tmp/a.dosik.json", [{ op: "clear" }])).rejects.toThrow(
-        /^Could not work on \/tmp\/a\.dosik\.json: ✗ cannot write/,
+      await expect(mode.apply("/tmp/a.dosik", [{ op: "clear" }])).rejects.toThrow(
+        /^Could not work on \/tmp\/a\.dosik: ✗ cannot write/,
       );
     });
 
@@ -430,12 +447,7 @@ describe("MCP server runtime (#2)", () => {
       const { headless, render } = setup({});
       await render({ port: 4517, theme: "light" });
       expect(callsOf(headless)[0]?.[0]).toEqual(
-        expect.arrayContaining([
-          "--in",
-          "/tmp/r/diagram.dosik.json",
-          "--export",
-          "/tmp/r/diagram.svg",
-        ]),
+        expect.arrayContaining(["--in", "/tmp/r/diagram.dosik", "--export", "/tmp/r/diagram.svg"]),
       );
     });
 
@@ -464,10 +476,10 @@ describe("MCP server runtime (#2)", () => {
       });
       const [main, other] = callsOf(headless).map((call) => call[0] as string[]);
       // the open canvas is written once and both pictures are drawn from that copy
-      expect(main?.[1]).toBe("/tmp/r/diagram.dosik.json");
+      expect(main?.[1]).toBe("/tmp/r/diagram.dosik");
       expect(other?.slice(0, 4)).toEqual([
         "--in",
-        "/tmp/r/diagram.dosik.json",
+        "/tmp/r/diagram.dosik",
         "--export",
         "/tmp/r/alternate.svg",
       ]);

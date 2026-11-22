@@ -6,6 +6,7 @@ import { useAppStore } from "./appStore";
 import { DASHBOARD } from "./homeView";
 import {
   type BoardSpot,
+  countOtherFiles,
   createFolder,
   deleteFolder,
   deleteProject,
@@ -14,10 +15,12 @@ import {
   type ItemKind,
   itemKey,
   libraryPath,
+  locateProject,
   moveFolder,
   moveProject,
   type ProjectMeta,
   parseItemKey,
+  removeProject,
   renameFolder,
   reorderItem,
   showInFinder,
@@ -38,7 +41,7 @@ import {
   type Placement,
   siblingsOf,
 } from "./libraryTree";
-import { closeDiagramTabs } from "./tabActions";
+import { closeDiagramTabs, confirmDiscardDiagramTabs } from "./tabActions";
 import { flushAutosave } from "./useAutosave";
 
 const pushToast = (text: string) => useToastStore.getState().pushToast(text);
@@ -92,6 +95,9 @@ export const renameFolderTo = (folder: FolderMeta, name: string): Promise<void> 
 
 const tabIds = () => new Set(useAppStore.getState().tabs.map((t) => t.id));
 
+/** what every delete's question ends with: it goes to the Trash, never for good (#253 D14) */
+const TO_TRASH = "It will be moved to the Trash.";
+
 /**
  * Asks, and resolves whether to go ahead. The dialog is async and the bridge
  * is not: an agent's ops arriving while it was up may have made a diagram and
@@ -116,9 +122,27 @@ const confirmDelete = async (name: string, message: string, title: string): Prom
 };
 
 /**
+ * What a folder's delete takes along, for its question (#229 D12, #253):
+ * its folders and diagrams, and the other files Rust counted in it — every
+ * file goes to the Trash with it. Not counted (`null`), it may hold anything.
+ */
+const weightOf = (folder: FolderMeta, others: number | null): string => {
+  const diagrams = diagramsUnder(folder).length;
+  const subfolders = foldersUnder(folder);
+  const shown = [
+    ...(subfolders > 0 ? [plural(subfolders, "folder")] : []),
+    ...(diagrams > 0 ? [plural(diagrams, "diagram")] : []),
+  ].join(", ");
+  if (others === null) return " and everything in it";
+  const rest = others > 0 ? plural(others, "other file") : "";
+  const all = shown && rest ? `${shown} and ${rest}` : shown || rest;
+  return all ? ` and everything in it (${all})` : "";
+};
+
+/**
  * Asks — with the weight of what goes: every folder and diagram under it
- * (#229 D12) — and resolves whether it was deleted. A project or a folder at
- * any depth.
+ * (#229 D12), and the other files in it (#253) — and resolves whether it
+ * was deleted. A project or a folder at any depth.
  */
 export const deleteFolderAsking = (folder: FolderMeta): Promise<boolean> =>
   guarded(async () => {
@@ -127,38 +151,78 @@ export const deleteFolderAsking = (folder: FolderMeta): Promise<boolean> =>
     const kind = path.length > 1 ? "folder" : "project";
     const parent = path.at(-2) ?? null;
     const diagrams = diagramsUnder(folder);
-    const subfolders = foldersUnder(folder);
-    const counts = [
-      ...(subfolders > 0 ? [plural(subfolders, "folder")] : []),
-      ...(diagrams.length > 0 ? [plural(diagrams.length, "diagram")] : []),
-    ];
+    const others = await countOtherFiles(folder.id).catch(() => null);
     const go = await confirmDelete(
       folder.name,
-      counts.length === 0
-        ? `Delete the ${kind} “${folder.name}”?`
-        : `Delete the ${kind} “${folder.name}” and everything in it (${counts.join(", ")})? This cannot be undone.`,
+      `Delete the ${kind} “${folder.name}”${weightOf(folder, others)}? ${TO_TRASH}`,
       kind === "folder" ? "Delete folder" : "Delete project",
     );
     if (!go) return false;
+    // the diagrams it holds out of reach go too: their edits asked about first
+    const ids = new Set([...diagrams.map((d) => d.id), ...(folder.held ?? [])]);
+    if (!(await confirmDiscardDiagramTabs(ids))) return false;
     // every diagram under it closes its tab, and every write lands, before
     // the folder goes — autosave must not write one of them back into a
     // folder that is gone. Every other tab stays as it is, the active one too
     // (#217)
-    closeDiagramTabs(new Set(diagrams.map((d) => d.id)));
+    closeDiagramTabs(ids);
     await flushAutosave();
     await deleteFolder(folder.id);
-    // Home's view of anything that is gone — the folder, or one inside it —
-    // would be empty and lost: Home goes to the folder it was in, or the
-    // dashboard for a project, whether it is on show or only where the Home
-    // tab goes back to (#220 D1, #229 D5)
-    const app = useAppStore.getState();
-    const { homeView } = app;
-    if (homeView.kind === "folder" && isInside(listed, homeView.folder, folder.id)) {
-      app.setHomeView(parent ? { kind: "folder", folder: parent.id } : DASHBOARD);
-    }
+    leaveGone(listed, folder.id, parent);
     await refresh();
     return true;
   }).then((deleted) => deleted === true);
+
+/**
+ * Home's view of anything gone from the library — folder `id`, or one inside
+ * it — would be empty and lost: Home goes to `parent`, the folder it was in,
+ * or the dashboard for a project, whether it is on show or only where the
+ * Home tab goes back to (#220 D1, #229 D5)
+ */
+const leaveGone = (listed: FolderMeta[], id: string, parent: FolderMeta | null): void => {
+  const app = useAppStore.getState();
+  const { homeView } = app;
+  if (homeView.kind === "folder" && isInside(listed, homeView.folder, id)) {
+    app.setHomeView(parent ? { kind: "folder", folder: parent.id } : DASHBOARD);
+  }
+};
+
+/**
+ * Locate… (#253 D9): Rust shows the system's folder picker, and the folder
+ * picked takes the project's place — its ids, order and frame come back —
+ * so the library is listed again. A folder already in the library, or inside
+ * one, is not taken: the toast says so. Nothing picked is nothing. Resolves
+ * whether it was located.
+ */
+export const locateProjectAsking = (folder: FolderMeta): Promise<boolean> =>
+  guarded(async () => {
+    const answer = await locateProject(folder.id);
+    if (answer === "already") pushToast("Already in the library");
+    if (answer !== "located") return false;
+    await refresh();
+    return true;
+  }).then((located) => located === true);
+
+/**
+ * Remove from Library (#253 D9, D15): the project's record goes and its
+ * folder stays where it is, so no file is lost. As for a delete, its
+ * diagrams' tabs close — the ones it holds out of reach too — and every
+ * write lands first, and Home's view of it goes. A tab holding edits its
+ * project's absence kept from the file asks first, as an external file's
+ * would: Cancel keeps everything. Resolves whether it was removed.
+ */
+export const removeFromLibrary = (folder: FolderMeta): Promise<boolean> =>
+  guarded(async () => {
+    const listed = useLibraryStore.getState().folders ?? [folder];
+    const ids = new Set([...diagramsUnder(folder).map((d) => d.id), ...(folder.held ?? [])]);
+    if (!(await confirmDiscardDiagramTabs(ids))) return false;
+    closeDiagramTabs(ids);
+    await flushAutosave();
+    await removeProject(folder.id);
+    leaveGone(listed, folder.id, null);
+    await refresh();
+    return true;
+  }).then((removed) => removed === true);
 
 /** the writes that place items, one after another (#230 D13) */
 let placing: Promise<unknown> = Promise.resolve();
@@ -176,8 +240,6 @@ export const placeItem = (item: ItemKey, to: Placement): Promise<boolean> => {
   const folders = useLibraryStore.getState().folders;
   const parsed = parseItemKey(item);
   if (!folders || !parsed || !canPlace(folders, item, to.parent)) return Promise.resolve(false);
-  // a diagram of the stray listing has no siblings to move among: it can only
-  // go into a real folder, which is a move (#230)
   const now = siblingsOf(folders, item);
   const same = now !== null && now.parent === to.parent;
   if (same && Math.min(Math.max(to.index, 0), now.keys.length - 1) === now.index) {
@@ -265,7 +327,7 @@ export const deleteDiagramAsking = (diagram: ProjectMeta): Promise<boolean> =>
   guarded(async () => {
     const go = await confirmDelete(
       diagram.title,
-      `Delete “${diagram.title}”? This cannot be undone.`,
+      `Delete “${diagram.title}”? ${TO_TRASH}`,
       "Delete diagram",
     );
     if (!go) return false;

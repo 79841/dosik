@@ -22,6 +22,7 @@ import { Home } from "../Home";
 import { cardGrid } from "../homeGrid";
 import { useHomeMode } from "../homeMode";
 import { useHomeSelection } from "../homeSelection";
+import { likeRust } from "../../../test/rustAnswers";
 
 vi.mock("../../../shared/lib/systemClipboard", () => ({
   readClipboardText: vi.fn(async () => null),
@@ -46,13 +47,15 @@ const library = (): FolderMeta[] => [
 
 /** list_library answers from `listing`; load_project a blank of that id */
 const serve = (listing: () => unknown = library) =>
-  mockedInvoke.mockImplementation(async (cmd, args) => {
-    if (cmd === "list_library") return listing();
-    if (cmd === "load_project") {
-      return JSON.stringify({ ...blankDoc(), title: (args as { id: string }).id });
-    }
-    return undefined;
-  });
+  mockedInvoke.mockImplementation(
+    likeRust(async (cmd, args) => {
+      if (cmd === "list_library") return listing();
+      if (cmd === "load_project") {
+        return JSON.stringify({ ...blankDoc(), title: (args as { id: string }).id });
+      }
+      return undefined;
+    }),
+  );
 
 const show = (view: HomeView) => {
   showHomeTab(view);
@@ -93,17 +96,19 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
     listing[0]!.folders = [
       { id: "chk", name: "Checkout", updatedAt: now, diagrams: [], folders: [] },
     ];
-    mockedInvoke.mockImplementation(async (cmd, args) => {
-      if (cmd === "create_folder") {
-        const { id } = args as { id: string };
-        listing = structuredClone(listing);
-        listing[0]!.folders[0]!.folders = [
-          { id, name: "New folder", updatedAt: now, diagrams: [], folders: [] },
-        ];
-      }
-      if (cmd === "list_library") return structuredClone(listing);
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd, args) => {
+        if (cmd === "create_folder") {
+          const { id } = args as { id: string };
+          listing = structuredClone(listing);
+          listing[0]!.folders[0]!.folders = [
+            { id, name: "New folder", updatedAt: now, diagrams: [], folders: [] },
+          ];
+        }
+        if (cmd === "list_library") return structuredClone(listing);
+        return undefined;
+      }),
+    );
     useLibraryStore.setState({ folders: structuredClone(listing) });
     show({ kind: "folder", folder: "chk" });
     expect(h1()).toHaveTextContent("Checkout");
@@ -155,22 +160,24 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
     beforeEach(() => {
       where = "chk";
       useLibraryStore.setState({ folders: lib() });
-      mockedInvoke.mockImplementation(async (cmd, args) => {
-        if (cmd === "move_project") {
-          await slow();
-          where = "work";
-        }
-        if (cmd === "delete_project") {
-          await slow();
-          where = "gone";
-        }
-        if (cmd === "create_folder") await slow();
-        if (cmd === "list_library") return lib();
-        if (cmd === "load_project") {
-          return JSON.stringify({ ...blankDoc(), title: (args as { id: string }).id });
-        }
-        return undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd, args) => {
+          if (cmd === "move_project") {
+            await slow();
+            where = "work";
+          }
+          if (cmd === "delete_project") {
+            await slow();
+            where = "gone";
+          }
+          if (cmd === "create_folder") await slow();
+          if (cmd === "list_library") return lib();
+          if (cmd === "load_project") {
+            return JSON.stringify({ ...blankDoc(), title: (args as { id: string }).id });
+          }
+          return undefined;
+        }),
+      );
     });
     const moveOrderToWork = async (user: ReturnType<typeof userEvent.setup>) => {
       await user.click(await screen.findByRole("button", { name: "More for Order flow" }));
@@ -240,6 +247,46 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
     });
   });
 
+  it("Cards, a project not found — the board's box centred under the header, no cards (#253 R7, Library-Missing)", async () => {
+    const lost: FolderMeta = {
+      folders: [],
+      id: "arc",
+      name: "architecture",
+      updatedAt: 0,
+      diagrams: [],
+      missing: true,
+      shown: "~/Projects/architecture",
+    };
+    useLibraryStore.setState({ folders: [...library(), lost] });
+    serve(() => [...library(), lost]);
+    show({ kind: "folder", folder: "arc" });
+    // Home lists the library as it comes on show
+    await waitFor(() => expect(calls("list_library")).toHaveLength(1));
+    expect(h1()).toHaveTextContent("architecture");
+    const title = screen.getByText("Can't find this folder");
+    expect(title.parentElement).toHaveClass("w-[212px]", "h-[92px]");
+    expect(title.parentElement!.parentElement).toHaveClass(
+      "flex",
+      "h-full",
+      "items-center",
+      "justify-center",
+    );
+    expect(screen.queryByRole("list", { name: /^Items in/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^New in / })).toBeNull();
+    expect(screen.queryByRole("button", { name: "More for architecture" })).toBeNull();
+    // located: the heading takes the focus, while Home still shows it
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd) => {
+        if (cmd === "locate_project") return "located";
+        if (cmd === "list_library") return [...library(), { ...lost, missing: undefined }];
+        return undefined;
+      }),
+    );
+    await userEvent.setup().click(screen.getByRole("button", { name: "Locate…" }));
+    await waitFor(() => expect(h1()).toHaveFocus());
+    expect(screen.queryByText("Can't find this folder")).toBeNull();
+  });
+
   it("Home showing a vanished project draws the dashboard (D1)", () => {
     show({ kind: "folder", folder: "gone" });
     expect(h1()).toHaveTextContent("Home");
@@ -293,12 +340,14 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
 
   it("when shown, waits for pending writes before reading the list (D14 ⑨)", async () => {
     let landWrite: () => void = () => {};
-    mockedInvoke.mockImplementation((cmd) => {
-      if (cmd === "save_project")
-        return new Promise((resolve) => (landWrite = () => resolve(undefined)));
-      if (cmd === "list_library") return Promise.resolve(library());
-      return Promise.resolve(undefined);
-    });
+    mockedInvoke.mockImplementation(
+      likeRust((cmd) => {
+        if (cmd === "save_project")
+          return new Promise((resolve) => (landWrite = () => resolve(undefined)));
+        if (cmd === "list_library") return Promise.resolve(library());
+        return Promise.resolve(undefined);
+      }),
+    );
     // an edit pending in an open diagram, then Home
     const { unmount } = render(<AutosaveHost />);
     act(() => {
@@ -322,7 +371,7 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
     try {
       useLibraryStore.setState({ folders: null });
       useHomeMode.setState({ mode: "cards", size: "small" });
-      mockedInvoke.mockImplementation(() => new Promise(() => {}));
+      mockedInvoke.mockImplementation(likeRust(() => new Promise(() => {})));
       show({ kind: "folder", folder: "work" });
       await act(async () => {
         vi.advanceTimersByTime(400);
@@ -345,13 +394,15 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
     const user = userEvent.setup();
     useLibraryStore.setState({ folders: null });
     let fail = true;
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === "list_library") {
-        if (fail) throw new Error("no folder");
-        return library();
-      }
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd) => {
+        if (cmd === "list_library") {
+          if (fail) throw new Error("no folder");
+          return library();
+        }
+        return undefined;
+      }),
+    );
     show(DASHBOARD);
     expect(await screen.findByText("Couldn't load your projects")).toBeInTheDocument();
     expect(screen.queryByText("No diagrams yet")).toBeNull();
@@ -605,15 +656,6 @@ describe("Cards/Canvas (#221 D1·D2, T38)", () => {
     show(view);
     expect(screen.getByRole("radiogroup", { name: "View" })).toBeInTheDocument();
     expect(screen.getByRole("radio", { name: "Cards" })).toHaveAttribute("aria-checked", "true");
-  });
-
-  it("the stray project view has the switch too", () => {
-    useLibraryStore.setState({
-      folders: [{ ...library()[0]!, id: "my-diagrams", stray: true }],
-      readFailed: false,
-    });
-    show({ kind: "folder", folder: "my-diagrams" });
-    expect(screen.getByRole("radiogroup", { name: "View" })).toBeInTheDocument();
   });
 
   it("the switch does not change homeView, and the pressed radio keeps focus — the header row does not remount (#231 D4, T12)", async () => {

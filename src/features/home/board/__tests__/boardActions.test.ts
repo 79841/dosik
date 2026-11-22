@@ -266,12 +266,11 @@ describe("moving cards — the single placeItem path (#231 D15, T31)", () => {
       folder("a", 2, { board: { x: 0, y: 0 } }),
       folder("b", 3, { board: { x: 0, y: 400 } }),
       folder("c", 1, { board: { x: 0, y: 800 } }),
-      folder("s", 1, { stray: true }),
     ]);
   });
 
-  it("does nothing when it cannot drop (current folder·stray·missing folder)", async () => {
-    for (const target of ["a", "s", "gone"]) {
+  it("does nothing when it cannot drop (current folder·missing folder)", async () => {
+    for (const target of ["a", "gone"]) {
       expect(await moveCardInto(`diagram:${card().id}`, target)).toBe(false);
     }
     expect(calls("move_project")).toHaveLength(0);

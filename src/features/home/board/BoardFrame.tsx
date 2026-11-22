@@ -7,7 +7,9 @@ import { belowRightOf, besidePointer } from "../../../shared/ui/Menu";
 import { ProjectBadge } from "../../../shared/ui/ProjectBadge";
 import { plural, renameFolderTo } from "../../library/libraryActions";
 import { NameInput } from "../../library/libraryParts";
-import { itemCount } from "../../library/libraryTree";
+import { isMissing, itemCount } from "../../library/libraryTree";
+import { stillOnScreen } from "../../library/screenStamp";
+import { NotFoundBox } from "../NotFoundBox";
 import { dropFrame } from "./boardActions";
 import { useBoardApi } from "./boardApi";
 import { drawsStack } from "./boardGeometry";
@@ -38,8 +40,10 @@ const TOOL =
  * "No folders or diagrams yet". The header is the handle: a click focuses
  * the project, a drag moves the frame (kept on the 20 grid), F2 renames it
  * in place. While a card is dragged over it and it can take it, it shows as
- * the drop target. A stray listing has no folder: no +, no ⋯, no menu, no
- * drag.
+ * the drop target. A project not found (#253 R7, `Library-Missing`) keeps its place
+ * and its drag: a grey badge, its name muted, "Not found" for the count, ⋯
+ * alone (its menu: Locate… · Remove from Library), no rename, and the box
+ * that says so for a body.
  */
 export const BoardFrame = memo(function BoardFrame({ frame }: { frame: LayoutFrame }) {
   const api = useBoardApi();
@@ -59,6 +63,7 @@ export const BoardFrame = memo(function BoardFrame({ frame }: { frame: LayoutFra
   const startDrag = usePointerDrag();
   const dragged = useRef(false);
   const count = itemCount(folder);
+  const missing = isMissing(folder);
   // as drawn: an open folder may leave a collapsed project's last item a card (#231 D13)
   const collapsed = drawsStack(frame.layout);
 
@@ -72,14 +77,12 @@ export const BoardFrame = memo(function BoardFrame({ frame }: { frame: LayoutFra
   ) =>
     toggleMenu({ kind, folder: folder.id, at: belowRightOf(e.currentTarget), from: key, opener });
   const menuAt = (at: { x: number; y: number }) => {
-    if (!folder.stray) {
-      useBoardStore.getState().openMenu({ kind: "project", folder: folder.id, at, from: key });
-    }
+    useBoardStore.getState().openMenu({ kind: "project", folder: folder.id, at, from: key });
   };
 
   const onHeadPointerDown = (e: React.PointerEvent) => {
     dragged.current = false;
-    if (e.button !== 0 || folder.stray || renaming) return;
+    if (e.button !== 0 || renaming) return;
     if ((e.target as Element).closest("[data-frame-tool]")) return;
     const start = api.toBoard({ x: e.clientX, y: e.clientY });
     const board = useBoardStore.getState();
@@ -141,14 +144,14 @@ export const BoardFrame = memo(function BoardFrame({ frame }: { frame: LayoutFra
           e.preventDefault();
           menuAt(besidePointer({ x: e.clientX, y: e.clientY }));
         }}
-        className={`absolute top-0 right-0 left-0 h-16 ${folder.stray ? "" : drag ? "cursor-grabbing" : "cursor-grab"}`}
+        className={`absolute top-0 right-0 left-0 h-16 ${drag ? "cursor-grabbing" : "cursor-grab"}`}
       >
-        <div
-          className={`absolute top-4 left-5 flex h-8 items-center gap-2.5 ${folder.stray ? "right-5" : "right-[100px]"}`}
-        >
+        <div className="absolute top-4 right-[100px] left-5 flex h-8 items-center gap-2.5">
           {/* the project's badge, in board units (#236 D4) */}
-          <ProjectBadge id={folder.id} name={folder.name} size="board" />
-          <h2 className="m-0 flex min-w-0 items-center text-[16px] font-semibold leading-8 text-ink">
+          <ProjectBadge id={folder.id} name={folder.name} size="board" greyed={missing} />
+          <h2
+            className={`m-0 flex min-w-0 items-center text-[16px] font-semibold leading-8 ${missing ? "text-muted-strong" : "text-ink"}`}
+          >
             {renaming ? (
               <>
                 <span id={nameId} className="sr-only">
@@ -170,9 +173,13 @@ export const BoardFrame = memo(function BoardFrame({ frame }: { frame: LayoutFra
                 type="button"
                 data-board-key={key}
                 tabIndex={stop ? 0 : -1}
-                aria-label={`${folder.name}, ${plural(count, "item")}${collapsed ? ", collapsed" : ""}`}
-                // a stray has no rename and no menu — nothing to announce (#221)
-                aria-keyshortcuts={folder.stray ? undefined : "F2 Shift+F10"}
+                aria-label={
+                  missing
+                    ? `${folder.name}, not found`
+                    : `${folder.name}, ${plural(count, "item")}${collapsed ? ", collapsed" : ""}`
+                }
+                // one not found has no rename
+                aria-keyshortcuts={missing ? "Shift+F10" : "F2 Shift+F10"}
                 onFocus={() => useBoardStore.getState().setCurrent(key)}
                 onClick={(e) => {
                   // the click a drag ends with moved the frame; one from the keyboard is the keydown's
@@ -186,7 +193,7 @@ export const BoardFrame = memo(function BoardFrame({ frame }: { frame: LayoutFra
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
                     focusFolder(folder.id);
-                  } else if (e.key === "F2" && !folder.stray) {
+                  } else if (e.key === "F2" && !missing) {
                     e.preventDefault();
                     useBoardStore.getState().setRenaming(folder.id);
                   } else if (isMenuKey(e)) {
@@ -201,11 +208,12 @@ export const BoardFrame = memo(function BoardFrame({ frame }: { frame: LayoutFra
             )}
           </h2>
           <span aria-hidden="true" className="flex-none text-[16px] font-medium text-muted">
-            {count}
+            {missing ? "Not found" : count}
           </span>
         </div>
-        {folder.stray ? null : (
-          <div data-frame-tool="" className="absolute top-3 right-3 flex gap-0.5">
+        <div data-frame-tool="" className="absolute top-3 right-3 flex gap-0.5">
+          {/* nothing can be made in a project not found: its ⋯ alone */}
+          {missing ? null : (
             <button
               ref={plus}
               type="button"
@@ -218,25 +226,42 @@ export const BoardFrame = memo(function BoardFrame({ frame }: { frame: LayoutFra
             >
               <Plus size={18} strokeWidth={1.75} aria-hidden="true" />
             </button>
-            <button
-              ref={more}
-              type="button"
-              tabIndex={-1}
-              aria-label={`More for ${folder.name}`}
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={(e) => toggle(e, "project", more)}
-              className={`${TOOL} aria-expanded:bg-selected`}
-            >
-              <Ellipsis size={18} strokeWidth={1.75} aria-hidden="true" />
-            </button>
-          </div>
-        )}
+          )}
+          <button
+            ref={more}
+            type="button"
+            tabIndex={-1}
+            aria-label={`More for ${folder.name}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={(e) => toggle(e, "project", more)}
+            className={`${TOOL} aria-expanded:bg-selected`}
+          >
+            <Ellipsis size={18} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </div>
       </div>
       {frame.layout.items.map((item) => {
         switch (item.kind) {
           case "stack":
             return <BoardStack key="stack" folder={folder} item={item} />;
+          case "missing":
+            // a project not found: the box that says so, with Locate… (#253 R7) —
+            // found, its frame takes the focus back while the board still holds it
+            return (
+              <NotFoundBox
+                key="missing"
+                folder={folder}
+                size="board"
+                style={{ left: item.x, top: item.y, width: item.w, height: item.h }}
+                tabIndex={-1}
+                onLocated={(asked) => {
+                  if (stillOnScreen(asked, { homeView: null }) && api.holdsFocus()) {
+                    api.focusItem(key);
+                  }
+                }}
+              />
+            );
           case "empty":
             // an empty project: its message, across the frame as a stack is (#231 D13)
             return (

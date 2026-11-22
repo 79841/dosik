@@ -14,8 +14,10 @@
  */
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 
+import { createLibrary } from "./library.mjs";
 import { createMcpServer } from "./mcpServer.mjs";
 import {
+  BUNDLE_ID,
   createExportFile,
   createFileMode,
   createHeadless,
@@ -34,6 +36,8 @@ const deps = {
   ...base,
   exportFile: createExportFile({ readDiagram: base.readInlineDiagram, headless }),
   fileMode: createFileMode({ headless }),
+  // the user's library: its record in the app data of this very app (#253)
+  library: createLibrary({ bundleId: BUNDLE_ID }),
   openInApp: createOpenInApp(),
   renderSvg: createRenderSvg({ headless, readDiagram: base.readInlineDiagram }),
 };

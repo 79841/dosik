@@ -11,6 +11,7 @@ import { newDiagram, openFileAnywhere } from "../navigation";
 import { resetTabsForTests } from "../tabActions";
 import { resetUnsavedGuardForTests } from "../unsavedGuard";
 import { resetAutosaveForTests } from "../useAutosave";
+import { likeRust } from "../../../test/rustAnswers";
 
 /**
  * The viewport is React Flow's, not the store's. Opening leaves a reveal
@@ -44,7 +45,7 @@ const reset = () => {
   resetAutosaveForTests();
   resetUnsavedGuardForTests();
   mockedInvoke.mockReset();
-  mockedInvoke.mockResolvedValue(undefined);
+  mockedInvoke.mockImplementation(likeRust());
 };
 
 const renderReveal = () =>
@@ -68,12 +69,16 @@ const farAwayDoc = () => {
   return body;
 };
 
+/** the file Open… reads holds `text` — and no project of the library has it */
+const fileHolds = (text: string) =>
+  mockedInvoke.mockImplementation(likeRust((cmd) => (cmd === "read_text_file" ? text : undefined)));
+
 describe("fit-on-open (#81)", () => {
   beforeEach(reset);
 
   it("Open: a file with content fits the viewport with fitView — without zooming past 100%", async () => {
     mockedOpen.mockResolvedValue("/tmp/far.dosik.json");
-    mockedInvoke.mockResolvedValue(farAwayDoc());
+    fileHolds(farAwayDoc());
     renderReveal();
     await openFileAnywhere();
     expect(await screen.findByText("Diagram opened")).toBeInTheDocument();
@@ -84,9 +89,7 @@ describe("fit-on-open (#81)", () => {
 
   it("Open: an empty file has nothing to fit, so the viewport returns to the origin", async () => {
     mockedOpen.mockResolvedValue("/tmp/empty.dosik.json");
-    mockedInvoke.mockResolvedValue(
-      JSON.stringify({ version: 1, title: "Empty", nodes: [], edges: [] }),
-    );
+    fileHolds(JSON.stringify({ version: 1, title: "Empty", nodes: [], edges: [] }));
     renderReveal();
     await openFileAnywhere();
     expect(await screen.findByText("Diagram opened")).toBeInTheDocument();
@@ -98,7 +101,7 @@ describe("fit-on-open (#81)", () => {
     mockedOpen.mockResolvedValue("/tmp/ghost.dosik.json");
     // an anchor with no edge is pruned by loadDoc; the file says "one node",
     // the store ends up with none
-    mockedInvoke.mockResolvedValue(
+    fileHolds(
       JSON.stringify({
         version: 1,
         title: "Ghost",
@@ -123,7 +126,7 @@ describe("fit-on-open (#81)", () => {
 
   it("Open: a broken file leaves the document alive, so the viewport is not touched either", async () => {
     mockedOpen.mockResolvedValue("/tmp/broken.dosik.json");
-    mockedInvoke.mockResolvedValue(JSON.stringify({ nodes: [{ bad: true }], edges: [] }));
+    fileHolds(JSON.stringify({ nodes: [{ bad: true }], edges: [] }));
     renderReveal();
     await openFileAnywhere();
     // the "Error: " is read out, not drawn (#231 D18) — the alert says the sentence whole

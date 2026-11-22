@@ -15,6 +15,7 @@ import {
   canHoldFolders,
   canMoveFolder,
   findFolder,
+  isMissing,
   itemCount,
 } from "../library/libraryTree";
 import { folderMovePicker } from "../library/MovePicker";
@@ -57,7 +58,7 @@ export interface HomeHeaderModel {
   switch: boolean;
   /** the card size button, where cards fill the sheet: the Cards dashboard and folder view, Recent (#236 D5) */
   cardSize: boolean;
-  /** the folder whose path card the current step offers — a folder view's, in either mode; none for a stray listing (#238 R3) */
+  /** the folder whose path card the current step offers — a folder view's, in either mode (#238 R3) */
   pathOf: string | null;
 }
 
@@ -99,7 +100,7 @@ export const homeHeaderModel = (
       current: canvas ? "Library" : "Home",
       project: null,
       currentId: null,
-      // every list, the stray one too; every diagram at every depth (#229 D18)
+      // every project; every diagram at every depth (#229 D18)
       caption:
         canvas && listed
           ? `${plural(listed.length, "project")} · ${plural(allDiagrams(listed).length, "diagram")}`
@@ -127,8 +128,7 @@ export const homeHeaderModel = (
     };
   }
   const { folder, path } = found;
-  // a stray listing has no folder on disk to show
-  const pathOf = folder.stray ? null : folder.id;
+  const pathOf = folder.id;
   const above = path.slice(0, -1);
   const place = { project: path[0]!.id, currentId: folder.id };
   if (canvas) {
@@ -144,13 +144,16 @@ export const homeHeaderModel = (
       pathOf,
     };
   }
+  // a project not found holds nothing and takes nothing: its box says the rest (#253 R7)
+  const missing = isMissing(folder);
   return {
     path: above.map(crumbOf),
     current: folder.name,
     ...place,
-    caption: `${plural(itemCount(folder), "item")} · edited ${relativeTime(folder.updatedAt)}`,
-    // a stray listing has no folder on disk to act on
-    actions: folder.stray ? null : { folder, parent: above.at(-1) ?? null },
+    caption: missing
+      ? null
+      : `${plural(itemCount(folder), "item")} · edited ${relativeTime(folder.updatedAt)}`,
+    actions: missing ? null : { folder, parent: above.at(-1) ?? null },
     switch: true,
     cardSize: true,
     pathOf,

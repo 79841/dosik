@@ -18,6 +18,7 @@ import { resetPreviewCacheForTests } from "../diagramPreview";
 import { CARD_SIZES, cardGrid, RECENT_WIDE_AT, recentShowClass } from "../homeGrid";
 import { useHomeMode } from "../homeMode";
 import { useStartingStore } from "../newDiagram";
+import { likeRust } from "../../../test/rustAnswers";
 
 const mockedInvoke = vi.mocked(invoke);
 const calls = (cmd: string) => mockedInvoke.mock.calls.filter(([c]) => c === cmd);
@@ -66,18 +67,20 @@ const chipOf = (card: HTMLElement, first: string) =>
   within(card).getByText(first).parentElement as HTMLElement;
 
 const serve = (folders: () => FolderMeta[] = library) =>
-  mockedInvoke.mockImplementation(async (cmd, args) => {
-    if (cmd === "list_library") return folders();
-    if (cmd === "load_project") {
-      const { id } = args as { id: string };
-      const found = folders()
-        .flatMap((f) => f.diagrams)
-        .find((d) => d.id === id);
-      if (!found) throw new Error(`no such diagram: ${id}`);
-      return JSON.stringify(book(found.title));
-    }
-    return undefined;
-  });
+  mockedInvoke.mockImplementation(
+    likeRust(async (cmd, args) => {
+      if (cmd === "list_library") return folders();
+      if (cmd === "load_project") {
+        const { id } = args as { id: string };
+        const found = folders()
+          .flatMap((f) => f.diagrams)
+          .find((d) => d.id === id);
+        if (!found) throw new Error(`no such diagram: ${id}`);
+        return JSON.stringify(book(found.title));
+      }
+      return undefined;
+    }),
+  );
 
 describe("Home dashboard (#220 D5·D6·D9·D10, T24)", () => {
   beforeEach(() => {
@@ -346,7 +349,7 @@ describe("dashboard states (#220 D20, T25)", () => {
     expect(screen.getByText("No diagrams yet")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Start one above, open a .dosik.json file, or send ops to the bridge — a diagram is created for them.",
+        "Start one above, open a .dosik file, or send ops to the bridge — a diagram is created for them.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/New diagrams go to/)).toBeNull();

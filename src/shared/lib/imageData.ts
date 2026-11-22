@@ -1,6 +1,6 @@
 /**
  * Image nodes keep their picture inside the document as a data URL (#8), so a
- * `.dosik.json` carries its images wherever it goes. These are the rules for
+ * `.dosik` file carries its images wherever it goes. These are the rules for
  * what such a URL may be — shared by the canvas input, the bridge and file
  * loading, so an image one path accepts is never refused by another.
  */

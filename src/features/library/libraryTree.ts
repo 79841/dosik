@@ -66,6 +66,20 @@ export const childrenOf = (folder: FolderMeta): FolderChild[] => {
   return [...unlisted, ...listed];
 };
 
+/**
+ * A project whose folder cannot be found (#253 D9, R7): listed in its place
+ * — its order and its frame on the canvas are kept — but empty, until it is
+ * found again.
+ */
+export const isMissing = (project: FolderMeta): boolean => project.missing === true;
+
+/**
+ * Whether project `project` takes items — the one rule for every place a
+ * diagram or a folder is made in, moved to or dropped on: a folder on disk
+ * that is there. Never a project not found (#253 R7).
+ */
+export const takesItems = (project: FolderMeta): boolean => !isMissing(project);
+
 /** walks every folder, depth first in listing order, with the path to it */
 const walk = function* (
   folders: readonly FolderMeta[],
@@ -101,9 +115,13 @@ export const newestFirst = (a: ProjectMeta, b: ProjectMeta): number =>
 export const diagramsUnder = (folder: FolderMeta): ProjectMeta[] =>
   [...walk([folder])].flatMap(({ folder: f }) => f.diagrams).sort(newestFirst);
 
-/** every diagram in the library, each with its folder and path — in listing order */
+/**
+ * every diagram in the library, each with its folder and path — in listing
+ * order; none of a project not found, which lists nothing until it is found
+ * (#253 R7)
+ */
 export const allDiagrams = (folders: readonly FolderMeta[]): FoundDiagram[] =>
-  [...walk(folders)].flatMap(({ folder, path }) =>
+  [...walk(folders.filter((f) => !isMissing(f)))].flatMap(({ folder, path }) =>
     folder.diagrams.map((diagram) => ({ diagram, folder, path })),
   );
 
@@ -114,25 +132,26 @@ export const foldersUnder = (folder: FolderMeta): number => [...walk(folder.fold
 export const itemCount = (folder: FolderMeta): number =>
   folder.folders.length + folder.diagrams.length;
 
-/** every real folder (no stray listing), depth first, with its depth — a project is 1 */
+/** every folder that takes items (`takesItems`), depth first, with its depth — a project is 1 */
 export const folderList = (
   folders: readonly FolderMeta[],
 ): { folder: FolderMeta; depth: number }[] =>
-  [...walk(folders.filter((f) => !f.stray))].map(({ folder, path }) => ({
+  [...walk(folders.filter(takesItems))].map(({ folder, path }) => ({
     folder,
     depth: path.length,
   }));
 
 /**
  * folder `id` as a place a diagram can be saved in or moved to — at any
- * depth, and a folder on disk (never the stray listing); `null` otherwise
+ * depth, in a project that takes items (never a project not found); `null`
+ * otherwise
  */
 export const savableFolder = (
   folders: readonly FolderMeta[] | null,
   id: string | null,
 ): FolderMeta | null => {
   const found = id && folders ? findFolder(folders, id) : null;
-  return found && !found.path[0]?.stray ? found.folder : null;
+  return found?.path[0] && takesItems(found.path[0]) ? found.folder : null;
 };
 
 /**
@@ -164,18 +183,23 @@ export const projectOf = (folders: readonly FolderMeta[], id: string): FolderMet
   findFolder(folders, id)?.path[0] ?? findDiagram(folders, id)?.path[0] ?? null;
 
 /**
- * The most recently edited real project, by everything in it, ties to the
- * lower id — Rust's `latest_folder`, so a new diagram's default goes where a
- * save with no folder would (#230 D5: the listing is in the user's order now)
+ * The diagrams the projects hold out of reach (#253) — the listing does not
+ * show them, yet their files may be there: no tab of one is closed for it.
+ */
+export const heldDiagramIds = (folders: readonly FolderMeta[]): Set<string> =>
+  new Set(folders.flatMap((f) => f.held ?? []));
+
+/**
+ * The most recently edited project that takes items, by what shows of it
+ * (its listed `updatedAt`), ties to the one listed first — Rust's
+ * `default_target`, so a new diagram's default goes where a save with no
+ * folder would (#230 D5: the listing is in the user's order now)
  */
 export const latestProject = (folders: readonly FolderMeta[] | null): FolderMeta | null =>
   (folders ?? [])
-    .filter((f) => !f.stray)
+    .filter(takesItems)
     .reduce<FolderMeta | null>(
-      (best, f) =>
-        !best || f.updatedAt > best.updatedAt || (f.updatedAt === best.updatedAt && f.id < best.id)
-          ? f
-          : best,
+      (best, f) => (!best || f.updatedAt > best.updatedAt ? f : best),
       null,
     );
 
@@ -185,9 +209,10 @@ export const heightOf = (folder: FolderMeta): number =>
 
 /**
  * Whether `item` can go into folder `parent` — `null`, the projects' level
- * (#230 D7): a project only among the projects; a folder or a diagram only
- * into a real folder — a folder never into itself or under it, nor so deep
- * that something in it passes the limit. Rust refuses the same.
+ * (#230 D7): a project only among the projects — never one not found, which
+ * keeps its place (#253 R7); a folder or a diagram only into a folder that
+ * takes items — a folder never into itself or under it, nor so deep that
+ * something in it passes the limit. Rust refuses the same.
  */
 export const canPlace = (
   folders: readonly FolderMeta[],
@@ -204,7 +229,7 @@ export const canPlace = (
     );
   }
   const found = findFolder(folders, parsed.id);
-  if (!found || found.path[0]?.stray) return false;
+  if (!found?.path[0] || !takesItems(found.path[0])) return false;
   const isProject = found.path.length === 1;
   if (parent === null || isProject) return parent === null && isProject;
   const target = savableFolder(folders, parent) ? findFolder(folders, parent) : null;
@@ -243,7 +268,7 @@ const childFor = (
 /**
  * Where `item` is among its siblings — the folder it is in (`null`: the
  * projects), their keys in order, and its place (#230 D10). `null` for what
- * is not listed and for the stray listing, which has no order.
+ * is not listed.
  */
 export const siblingsOf = (
   folders: readonly FolderMeta[],
@@ -251,12 +276,12 @@ export const siblingsOf = (
 ): { parent: string | null; keys: ItemKey[]; index: number } | null => {
   const parsed = parseItemKey(item);
   const found = parsed && itemPath(folders, parsed);
-  if (!parsed || !found || found[0]?.stray) return null;
+  if (!parsed || !found) return null;
   // a diagram's path ends at the folder it is in, a folder's at itself
   const parent = (parsed.kind === "diagram" ? found : found.slice(0, -1)).at(-1) ?? null;
   const keys = parent
     ? childrenOf(parent).map(childKey)
-    : folders.filter((f) => !f.stray).map((f) => itemKey("folder", f.id));
+    : folders.map((f) => itemKey("folder", f.id));
   return { parent: parent?.id ?? null, keys, index: keys.indexOf(item) };
 };
 
@@ -311,16 +336,15 @@ export const placedInList = (
   const parsed = parseItemKey(item);
   if (!parsed) return folders;
   if (parent === null) {
-    const projects = folders.filter((f) => !f.stray);
-    const moving = projects.find((f) => f.id === parsed.id);
+    const moving = folders.find((f) => f.id === parsed.id);
     if (parsed.kind !== "folder" || !moving) return folders;
     const order = placeKey(
-      projects.map((f) => itemKey("folder", f.id)),
+      folders.map((f) => itemKey("folder", f.id)),
       item,
       index,
     );
-    const byKey = new Map(projects.map((f) => [itemKey("folder", f.id) as string, f]));
-    return [...order.flatMap((k) => byKey.get(k) ?? []), ...folders.filter((f) => f.stray)];
+    const byKey = new Map(folders.map((f) => [itemKey("folder", f.id) as string, f]));
+    return order.flatMap((k) => byKey.get(k) ?? []);
   }
   const child = childFor(folders, parsed);
   if (!child || !findFolder(folders, parent)) return folders;

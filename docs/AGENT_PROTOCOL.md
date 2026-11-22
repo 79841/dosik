@@ -18,7 +18,7 @@ and the image is kept. To get the images themselves, use `?images=inline`.
 To start another diagram, use `new_diagram`. A document with a top-level `pages` key (multiple pages, never released)
 does not open anywhere. `project.path` lists the folders that hold the diagram (top project → containing folder, `[{id, name}]`) —
 folders nest to any depth, so there can be several levels (e.g. Payments → Checkout → Flows). `new_diagram.folder` accepts
-the id of any of these folders (any depth, but not the stray list "My Diagrams").
+the id of any of these folders (any depth).
 ```json
 {
   "version": 1,
@@ -60,22 +60,23 @@ After the turn ends, the token returns `404`. The port is the one the app actual
 
 > **Background shapes (fragment, frame) cannot be edge endpoints.** They have no connection handles; edges that touch them stay in the document but disappear from the canvas. `add_edge` rejects either endpoint, and a node with edges cannot become `shape: "fragment"`. A `frame` can neither change shape nor be made from another shape.
 | `update_node` `set.destroyY` | `number \| null` | Lifeline destroy marker (X). y relative to the node's top, within the line (40..height); the dashed line ends here. `null` removes it |
-| `set_title` | `title` | Change the diagram title |
+| `set_title` | `title` | Change the diagram title. A library diagram is called what its file is called, so saving renames its `<title>.dosik` file — the title made safe for file names, with ` 2` when the folder has one by that name, and then read back as the name the file got |
 | `group` | `ids` (2 or more), `id?` | Group shapes — in the app, clicking one selects all of them and they move together (double-click selects one). No nesting: groups the members already belong to merge into this one. Members record the group id in `data.groupId`. Anchors cannot be grouped |
 | `ungroup` | `id` | Ungroup (shapes stay in place) |
 | `clear` | — | Delete every node and edge. The viewport follows the document as it stands after the batch — the origin if empty, or fit to the content if the same batch added shapes |
 | `set_diagram` | `doc: DiagramDoc` | Replace the whole diagram (title, nodes, edges); one ⌘Z in the app brings the previous document back. Documents with `pages` are rejected. The viewport follows the document after the batch (never zooms past 100%; the origin if empty) |
-| `new_diagram` | `title?`, `folder?` | Create a library diagram, open it in a new tab, and make it active — **later ops in the same batch go to the new diagram**, earlier ones stay on the original. An empty or missing `title` becomes `Untitled Diagram`. Without `folder` (an id from `project.path`): the current diagram's folder, else the folder Home is showing → the project picked on Home → the most recent project. Counts as `applied` 1. If it fails (`title` not a string, unknown folder, save failure), the ops after it are not applied. Only on `POST /api/ops` — in-app chat and MCP `file` mode reject it |
+| `new_diagram` | `title?`, `folder?` | Create a library diagram, open it in a new tab, and make it active — **later ops in the same batch go to the new diagram**, earlier ones stay on the original. An empty or missing `title` becomes `Untitled Diagram`; the title is the new file's name (`<title>.dosik`, made safe for file names, ` 2` when taken). Without `folder` (an id from `project.path`): the current diagram's folder, else the folder Home is showing → the project picked on Home → the most recent project. Counts as `applied` 1. If it fails (`title` not a string, unknown folder, save failure), the ops after it are not applied. Only on `POST /api/ops` — in-app chat and MCP `file` mode reject it |
 
 > **There are no page ops.** `add_page`, `switch_page`, `rename_page`, and `delete_page` are rejected with "pages were removed — a diagram is one canvas.
 > Use new_diagram to start another diagram.", and to avoid drawing in the wrong place **the rest of that batch is not applied**
 > ("…: the N ops after it were not applied").
 
 > **Diagrams and projects.** The app's start screen (Home) shows projects (folders that hold diagrams).
+> A project is a real folder — in `Documents/Dosik`, or added from elsewhere — and a diagram a `<title>.dosik` file in it.
 > Several diagrams open as tabs, and ops and `GET /api/diagram` act on the **active tab**'s document —
 > other tabs are out of the bridge's reach. If `POST /api/ops` arrives while the Home tab is active, the app creates a new diagram,
-> opens it in a new tab, and applies the ops there (other tabs are untouched) — in the folder Home is showing (project or folder view),
-> skipping the stray list that has no folder on disk; otherwise in the project picked on Home (Change on the dashboard); otherwise
+> opens it in a new tab, and applies the ops there (other tabs are untouched) — in the folder Home is showing (project or folder view);
+> otherwise in the project picked on Home (Change on the dashboard); otherwise
 > in the most recently edited project. A batch that starts with `new_diagram` creates only that one.
 > A batch that starts with a removed page op (`add_page` etc.) stops immediately, so **nothing is created** (the response's `project` is `null`).
 > `project: {id, title, path}` in the response and in `GET /api/diagram` is **that diagram's** (`null` for an external file or the Home tab's empty document). Library diagrams autosave.

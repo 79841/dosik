@@ -1,5 +1,10 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
 
+import { createLibrary } from "../mcp/library.mjs";
 import { applyOpsSchema, loadSpec, opNames } from "../mcp/opSchema.mjs";
 import { HEADLESS_FORMATS, WINDOWED_FORMATS } from "../../src/features/headless/cli";
 import { DRAWING_META_KEY as VIEW_DRAWING_KEY } from "../../src/features/mcp-view/diagramView";
@@ -45,10 +50,11 @@ const deps = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe("MCP tools (#2)", () => {
-  it("has six tools — not one per op", () => {
+  it("has six tools for a diagram — not one per op — and five for the library", () => {
     // ops are already one language defined by the spec. Spreading them over 11
     // tools would write that spec in two places. The fifth is an explicit tool
-    // that opens a file in the app (#149)
+    // that opens a file in the app (#149). The library's projects are folders,
+    // and their tools work on folders (#253)
     expect(toolDefinitions().map((t) => t.name)).toEqual([
       "get_diagram",
       "apply_ops",
@@ -56,7 +62,53 @@ describe("MCP tools (#2)", () => {
       "export_diagram",
       "open_in_dosik",
       "render_diagram",
+      "list_projects",
+      "add_project",
+      "list_project",
+      "create_folder",
+      "create_diagram",
     ]);
+  });
+
+  it("runs the library tools on the library it is given — without the app", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "dosik-mcp-tools-")));
+    try {
+      const folder = join(base, "Lib");
+      mkdirSync(join(folder, "P"), { recursive: true });
+      const library = createLibrary({
+        bundleId: "app.test",
+        env: { DOSIK_APP_DATA: join(base, "data"), DOSIK_LIBRARY_DIR: folder },
+        home: join(base, "home"),
+      });
+      const d = deps({ library, probeBridge: vi.fn(async () => ({ state: "down" })) });
+      await expect(runTool("list_projects", {}, d)).resolves.toEqual({
+        libraryFolder: folder,
+        projects: [{ name: "P", path: join(folder, "P"), missing: false }],
+      });
+      await expect(
+        runTool("create_diagram", { path: join(folder, "P"), title: "Flow" }, d),
+      ).resolves.toEqual({ path: join(folder, "P", "Flow.dosik"), name: "Flow" });
+      expect(d.probeBridge).not.toHaveBeenCalled();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("says so when a library tool runs on a server with no library", async () => {
+    await expect(runTool("list_projects", {}, deps())).rejects.toThrow(/no library/);
+  });
+
+  it("says in the library tools' descriptions that they need no app", () => {
+    for (const name of [
+      "list_projects",
+      "add_project",
+      "list_project",
+      "create_folder",
+      "create_diagram",
+    ]) {
+      const tool = toolDefinitions().find((t) => t.name === name);
+      expect(tool?.description, name).toMatch(/without the Dosik app/);
+    }
   });
 
   it("derives the apply_ops schema from openapi.yaml — not written by hand", () => {
@@ -248,16 +300,34 @@ describe("MCP tools (#2)", () => {
 
   it("exports a supported format", async () => {
     for (const format of FILE_FORMATS) {
-      const d = deps();
+      // an older .dosik.json only where one is: written over in place
+      const d = deps({ exists: () => true });
       const path = `/tmp/a.${format}`;
       await expect(runTool("export_diagram", { path }, d)).resolves.toEqual({ written: path });
       expect(d.exportFile).toHaveBeenCalledWith(4517, path);
     }
   });
 
+  it("never makes a new .dosik.json — a new file is a .dosik", async () => {
+    const d = deps({ exists: () => false });
+    for (const args of [
+      { path: "/tmp/new.dosik.json" },
+      { file: "/tmp/a.dosik", path: "/tmp/New.DOSIK.JSON" },
+    ]) {
+      await expect(runTool("export_diagram", args, d)).rejects.toThrow(
+        /A new diagram file is a `\.dosik`/,
+      );
+    }
+    expect(d.exportFile).not.toHaveBeenCalled();
+    expect(d.fileMode.exportTo).not.toHaveBeenCalled();
+    await expect(runTool("export_diagram", { path: "/tmp/new.dosik.json" }, d)).rejects.toThrow(
+      "Use /tmp/new.dosik instead",
+    );
+  });
+
   it("lists the supported formats for an unknown one", async () => {
     await expect(runTool("export_diagram", { path: "/tmp/a.docx" }, deps())).rejects.toThrow(
-      /available: md, mmd, dosik\.json, svg/,
+      /available: md, mmd, dosik, dosik\.json, svg/,
     );
     // PowerPoint export is gone (#192)
     await expect(runTool("export_diagram", { path: "/tmp/a.pptx" }, deps())).rejects.toThrow(
@@ -266,14 +336,18 @@ describe("MCP tools (#2)", () => {
   });
 
   describe("file mode — the target is explicit in the arguments (#149)", () => {
-    const FILE = "/tmp/plan.dosik.json";
+    const FILE = "/tmp/plan.dosik";
 
     it("advertises a file argument on read, edit and export", () => {
       const byName = Object.fromEntries(toolDefinitions().map((t) => [t.name, t.inputSchema]));
-      for (const name of ["get_diagram", "apply_ops", "export_diagram"]) {
+      for (const name of ["get_diagram", "apply_ops", "export_diagram", "render_diagram"]) {
         const props = (byName[name] as { properties: Record<string, { description?: string }> })
           .properties;
-        expect(props.file?.description).toMatch(/\.dosik\.json/);
+        expect(props.file?.description).toMatch(/`\.dosik`/);
+        // a model that has never seen the format learns it is the document it reads
+        expect(props.file?.description).toContain(
+          "A `.dosik` file is JSON (the same document as get_diagram)",
+        );
       }
     });
 
@@ -315,16 +389,43 @@ describe("MCP tools (#2)", () => {
       );
     });
 
-    it("requires file to be an absolute .dosik.json path", async () => {
+    it("requires file to be an absolute .dosik path", async () => {
       const d = deps();
-      await expect(runTool("get_diagram", { file: "plan.dosik.json" }, d)).rejects.toThrow(
-        /absolute/,
-      );
+      await expect(runTool("get_diagram", { file: "plan.dosik" }, d)).rejects.toThrow(/absolute/);
       await expect(runTool("get_diagram", { file: "/tmp/plan.json" }, d)).rejects.toThrow(
-        /\.dosik\.json/,
+        /`\.dosik`/,
+      );
+      await expect(runTool("get_diagram", { file: "/tmp/plan.dosikx" }, d)).rejects.toThrow(
+        /`\.dosik`/,
       );
       await expect(runTool("get_diagram", { file: 3 }, d)).rejects.toThrow(/string/);
       expect(d.fileMode.read).not.toHaveBeenCalled();
+    });
+
+    it("still takes an older .dosik.json — read, edited and exported where it is", async () => {
+      const d = deps();
+      const old = "/tmp/Old Plan.DOSIK.JSON";
+      await runTool("get_diagram", { file: old }, d);
+      await runTool("apply_ops", { file: old, ops: [{ op: "clear" }] }, d);
+      await runTool("export_diagram", { file: old, path: "/tmp/plan.svg" }, d);
+      expect(d.fileMode.read).toHaveBeenCalledWith(old);
+      expect(d.fileMode.apply).toHaveBeenCalledWith(old, [{ op: "clear" }]);
+      expect(d.fileMode.exportTo).toHaveBeenCalledWith(old, "/tmp/plan.svg");
+      await runTool("get_diagram", { file: "/tmp/UPPER.DOSIK" }, d);
+      expect(d.fileMode.read).toHaveBeenCalledWith("/tmp/UPPER.DOSIK");
+    });
+
+    it("says a new file is a .dosik", () => {
+      const tool = toolDefinitions().find((t) => t.name === "apply_ops");
+      expect(tool?.description).toMatch(/a new file is a `\.dosik`/i);
+    });
+
+    it("exports to a .dosik — the document itself", async () => {
+      const d = deps();
+      await runTool("export_diagram", { file: FILE, path: "/tmp/copy.dosik" }, d);
+      expect(d.fileMode.exportTo).toHaveBeenCalledWith(FILE, "/tmp/copy.dosik");
+      const tool = toolDefinitions().find((t) => t.name === "export_diagram");
+      expect(tool?.description).toMatch(/\bdosik\b/);
     });
 
     it("runs file-mode exports through the same format check", async () => {
@@ -345,10 +446,10 @@ describe("MCP tools (#2)", () => {
   describe("open_in_dosik (#149)", () => {
     it("opens the file in the installed app", async () => {
       const d = deps();
-      await expect(
-        runTool("open_in_dosik", { file: "/tmp/plan.dosik.json" }, d),
-      ).resolves.toMatchObject({ opened: "/tmp/plan.dosik.json" });
-      expect(d.openInApp).toHaveBeenCalledWith("/tmp/plan.dosik.json");
+      await expect(runTool("open_in_dosik", { file: "/tmp/plan.dosik" }, d)).resolves.toMatchObject(
+        { opened: "/tmp/plan.dosik" },
+      );
+      expect(d.openInApp).toHaveBeenCalledWith("/tmp/plan.dosik");
       // not through the bridge — the OS opens it
       expect(d.probeBridge).not.toHaveBeenCalled();
     });
@@ -356,15 +457,22 @@ describe("MCP tools (#2)", () => {
     it("requires file and runs the same check", async () => {
       const d = deps();
       await expect(runTool("open_in_dosik", {}, d)).rejects.toThrow(/`file` is required/);
-      await expect(runTool("open_in_dosik", { file: "a.dosik.json" }, d)).rejects.toThrow(
-        /absolute/,
-      );
+      await expect(runTool("open_in_dosik", { file: "a.dosik" }, d)).rejects.toThrow(/absolute/);
       expect(d.openInApp).not.toHaveBeenCalled();
     });
 
     it("says in the description that other tools must not call it as a side effect — only when the user asks", () => {
       const tool = toolDefinitions().find((t) => t.name === "open_in_dosik");
       expect(tool?.description).toMatch(/only when the user asks/);
+    });
+
+    it("takes a .dosik — says so in its description", () => {
+      const tool = toolDefinitions().find((t) => t.name === "open_in_dosik") as {
+        description: string;
+        inputSchema: { properties: { file: { description: string } } };
+      };
+      expect(tool.description).toMatch(/`\.dosik`/);
+      expect(tool.inputSchema.properties.file.description).toMatch(/`\.dosik`/);
     });
 
     it("mentions tabs in the description — opens as a new active tab, and edits without file go to the active tab (#218)", () => {
@@ -406,8 +514,8 @@ describe("MCP tools (#2)", () => {
   });
 
   describe("hardening (#151)", () => {
-    it("says to edit without file after open_in_dosik — the open window does not reread the file", async () => {
-      const out = (await runTool("open_in_dosik", { file: "/tmp/plan.dosik.json" }, deps())) as {
+    it("says to edit without file after open_in_dosik — the edits land on the open tab", async () => {
+      const out = (await runTool("open_in_dosik", { file: "/tmp/plan.dosik" }, deps())) as {
         note: string;
       };
       expect(out.note).toMatch(/without `file`/);
@@ -415,11 +523,23 @@ describe("MCP tools (#2)", () => {
       expect(tool?.description).toMatch(/without `file`/);
     });
 
-    it("lets open_in_dosik pass legacy .json files the app opens — the app decides", async () => {
+    it("no longer says the app does not read the file again — it does now", async () => {
+      const out = (await runTool("open_in_dosik", { file: "/tmp/plan.dosik" }, deps())) as {
+        note: string;
+      };
+      const said = `${JSON.stringify(toolDefinitions())} ${out.note}`;
+      expect(said).not.toMatch(/not reload|does not reread|would not show|overwrite them/i);
+    });
+
+    it("lets open_in_dosik pass .dosik and the legacy .json files the app opens — the app decides", async () => {
       const d = deps();
       await runTool("open_in_dosik", { file: "/tmp/old.mdgram.json" }, d);
       expect(d.openInApp).toHaveBeenCalledWith("/tmp/old.mdgram.json");
-      await expect(runTool("open_in_dosik", { file: "/tmp/a.txt" }, d)).rejects.toThrow(/\.json/);
+      await runTool("open_in_dosik", { file: "/tmp/Flow.DOSIK" }, d);
+      expect(d.openInApp).toHaveBeenCalledWith("/tmp/Flow.DOSIK");
+      await expect(runTool("open_in_dosik", { file: "/tmp/a.txt" }, d)).rejects.toThrow(
+        /`\.dosik`/,
+      );
     });
 
     it("treats file: null as absent — for clients that fill optional arguments with null", async () => {

@@ -66,8 +66,12 @@ jobs:
           pnpm build:headless
           node dist-cli/dosik-headless.mjs \
             --ops src/features/headless/__tests__/fixtures/ops.json \
-            --out "$RUNNER_TEMP/out.dosik.json" --export "$RUNNER_TEMP/out.svg"
-          test -s "$RUNNER_TEMP/out.dosik.json" && test -s "$RUNNER_TEMP/out.svg"
+            --out "$RUNNER_TEMP/out.dosik" --export "$RUNNER_TEMP/out.svg"
+          test -s "$RUNNER_TEMP/out.dosik" && test -s "$RUNNER_TEMP/out.svg"
+          # the older .dosik.json is still read and written
+          node dist-cli/dosik-headless.mjs \
+            --in "$RUNNER_TEMP/out.dosik" --out "$RUNNER_TEMP/out.dosik.json"
+          test -s "$RUNNER_TEMP/out.dosik.json"
 
       - name: Test with coverage
         run: pnpm test:coverage

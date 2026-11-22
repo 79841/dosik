@@ -18,6 +18,7 @@ import { EditBar } from "../../editbar/EditBar";
 import { openDocument, resetTabsForTests } from "../tabActions";
 import { resetUnsavedGuardForTests } from "../unsavedGuard";
 import { resetAutosaveForTests } from "../useAutosave";
+import { likeRust } from "../../../test/rustAnswers";
 
 // the label being edited rides ViewportPortal (#93), whose target only a full
 // canvas has — put it in the page, where an <input> is an HTML one
@@ -63,7 +64,7 @@ describe("⌘S saves the text being typed and editing continues (#219)", () => {
     resetTabsForTests();
     useToastStore.getState().dismissAll();
     mockedInvoke.mockReset();
-    mockedInvoke.mockResolvedValue(undefined);
+    mockedInvoke.mockImplementation(likeRust());
     useCanvasUiStore.getState().setNodeLabelEdit(null);
     useCanvasUiStore.getState().setEdgeLabelEdit(null);
     window.addEventListener("keydown", appKeys, true);

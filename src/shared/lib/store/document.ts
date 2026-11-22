@@ -15,7 +15,7 @@ import type { DiagramState } from "./state";
  */
 
 /**
- * Whether parsed JSON is a `.dosik.json` this app opens: an object whose
+ * Whether parsed JSON is a diagram (`.dosik`) this app opens: an object whose
  * `nodes` and `edges` are arrays, with no `pages` key. The rest is
  * `docErrors`' job. The same test as Rust's `is_one_canvas`.
  */

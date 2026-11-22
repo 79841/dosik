@@ -5,6 +5,7 @@ import { Menu } from "../../shared/ui/Menu";
 import { ProjectBadge } from "../../shared/ui/ProjectBadge";
 import { useAppStore } from "../library/appStore";
 import { useLibraryStore } from "../library/libraryStore";
+import { takesItems } from "../library/libraryTree";
 import { namedTarget } from "../library/targets";
 
 /**
@@ -21,7 +22,7 @@ export const TargetLine = () => {
   const button = useRef<HTMLButtonElement>(null);
   const target = namedTarget(folders, picked);
   if (!target) return null;
-  const choices = (folders ?? []).filter((f) => !f.stray);
+  const choices = (folders ?? []).filter(takesItems);
 
   const close = (returnFocus: boolean) => {
     setMenuAt(null);

@@ -175,6 +175,9 @@ pub fn run() {
         .manage(AgentState::default())
         .manage(open_requests::OpenRequests::default())
         .setup(|app| {
+            // the library before anything asks for it: its older form is
+            // moved into the default location off the main thread
+            library::setup(app.handle());
             bridge::start_agent_server(app.handle().clone());
             // the bundled MCP server into the app data, where the AI apps are
             // pointed (#252) — off the main thread, and never in the way of startup;
@@ -215,17 +218,23 @@ pub fn run() {
             library::rename_folder,
             library::set_folder_boards,
             library::delete_folder,
+            library::count_other_files,
             library::move_project,
             library::move_folder,
             library::reorder_item,
             library::load_project,
-            // sync: `save` relies on it running on the main thread (#230)
+            // sync: a tab's saves land in the order they were sent
             library::save_project,
             library::delete_project,
+            library::locate_project,
+            library::remove_project,
+            library::watch_files,
+            library::library_diagram_at,
             library::library_path,
             library::show_in_finder,
             library::library_root,
             library::show_library_in_finder,
+            library::take_left_behind,
             open_requests::take_open_requests,
             secrets::secret_get,
             secrets::secret_set,
@@ -248,11 +257,13 @@ pub fn run() {
             if matches!(_event, tauri::RunEvent::Reopen { .. }) && !tauri::is_dev() {
                 focus_existing(_app);
             }
-            // Files handed over by macOS — `open -b` from the MCP server's
-            // `open_in_dosik` — arrive as an Apple Event, at launch or while
-            // running, never on the command line (#149). The bundle declares
-            // no document type (a double extension like `.dosik.json` has no
-            // clean UTI), so Finder's Open With does not list Dosik (#183)
+            // Files handed over by macOS — a double-click in Finder, Open
+            // With, `open -b` from the MCP server's `open_in_dosik` — arrive
+            // as an Apple Event, at launch or while running, never on the
+            // command line (#149). The bundle declares `.dosik` as its own
+            // document type (`fileAssociations` in tauri.conf.json); the
+            // older `.dosik.json`, a double extension with no clean type of
+            // its own, still opens this way but is not claimed
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Opened { urls } = &_event {
                 let paths = urls

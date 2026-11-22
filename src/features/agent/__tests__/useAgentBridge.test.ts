@@ -16,6 +16,7 @@ import {
 import { resetAutosaveForTests } from "../../library/useAutosave";
 import { captureChatTarget, closeChatTurn, openChatTurn } from "../../ai/chatTarget";
 import { useAgentBridge } from "../useAgentBridge";
+import { likeRust } from "../../../test/rustAnswers";
 
 type ListenHandler = (event: { payload: unknown }) => void;
 
@@ -44,7 +45,7 @@ describe("useAgentBridge", () => {
       handlers[eventName] = handler as ListenHandler;
       return () => {};
     });
-    mockedInvoke.mockResolvedValue(undefined);
+    mockedInvoke.mockImplementation(likeRust());
   });
 
   it("applies agent:ops events to the store and replies to Rust with the result", async () => {
@@ -73,10 +74,12 @@ describe("useAgentBridge", () => {
 
   it("pushes the snapshot before replying with the ops result", async () => {
     const calls: string[] = [];
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      calls.push(cmd);
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd: string) => {
+        calls.push(cmd);
+        return undefined;
+      }),
+    );
     renderHook(() => useAgentBridge());
     await waitFor(() => expect(handlers["agent:ops"]).toBeDefined());
     calls.length = 0;
@@ -229,10 +232,12 @@ describe("useAgentBridge", () => {
   it("does not overwrite a tab the user switches to while the new diagram is being created (#218 T33)", async () => {
     showHomeTab();
     let saved!: () => void;
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "save_project") await new Promise<void>((resolve) => (saved = resolve));
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd: string) => {
+        if (cmd === "save_project") await new Promise<void>((resolve) => (saved = resolve));
+        return undefined;
+      }),
+    );
     renderHook(() => useAgentBridge());
     await waitFor(() => expect(handlers["agent:ops"]).toBeDefined());
     handlers["agent:ops"]!({
@@ -261,10 +266,12 @@ describe("useAgentBridge", () => {
 
   it("replies with an error and applies no ops when project creation fails from Home", async () => {
     showHomeTab();
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "save_project") throw new Error("disk full");
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd: string) => {
+        if (cmd === "save_project") throw new Error("disk full");
+        return undefined;
+      }),
+    );
     renderHook(() => useAgentBridge());
     await waitFor(() => expect(handlers["agent:ops"]).toBeDefined());
 
@@ -312,12 +319,14 @@ describe("useAgentBridge", () => {
     const land = () => {
       for (const resolve of onTheirWay.splice(0)) resolve();
     };
-    mockedInvoke.mockImplementation((cmd: string) =>
-      cmd === "sync_snapshot"
-        ? new Promise<undefined>((resolve) => {
-            onTheirWay.push(() => resolve(undefined));
-          })
-        : Promise.resolve(undefined),
+    mockedInvoke.mockImplementation(
+      likeRust((cmd: string) =>
+        cmd === "sync_snapshot"
+          ? new Promise<undefined>((resolve) => {
+              onTheirWay.push(() => resolve(undefined));
+            })
+          : Promise.resolve(undefined),
+      ),
     );
     renderHook(() => useAgentBridge());
     await waitFor(() => expect(handlers["agent:ops"]).toBeDefined());
@@ -485,14 +494,6 @@ describe("useAgentBridge", () => {
         folders: [],
       },
       { id: "side", name: "Side", updatedAt: 1, diagrams: [], folders: [] },
-      {
-        id: "my-diagrams",
-        name: "My Diagrams",
-        updatedAt: 0,
-        stray: true,
-        diagrams: [],
-        folders: [],
-      },
     ];
     const result = (requestId: string) =>
       mockedInvoke.mock.calls.find(
@@ -513,8 +514,8 @@ describe("useAgentBridge", () => {
 
     beforeEach(() => {
       useLibraryStore.setState({ folders: LIB(), readFailed: false });
-      mockedInvoke.mockImplementation(async (cmd: string) =>
-        cmd === "list_library" ? LIB() : undefined,
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd: string) => (cmd === "list_library" ? LIB() : undefined)),
       );
       resetTabsForTests();
       openDocument({ ...BLANK, title: "Mine", nodes: [] }, { projectId: "p1" });
@@ -572,8 +573,8 @@ describe("useAgentBridge", () => {
             : f,
         );
       useLibraryStore.setState({ folders: nested() });
-      mockedInvoke.mockImplementation(async (cmd: string) =>
-        cmd === "list_library" ? nested() : undefined,
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd: string) => (cmd === "list_library" ? nested() : undefined)),
       );
       renderHook(() => useAgentBridge());
       await waitFor(() => expect(handlers["agent:ops"]).toBeDefined());
@@ -638,10 +639,12 @@ describe("useAgentBridge", () => {
       );
     const serveNested = () => {
       useLibraryStore.setState({ folders: nestedLib() });
-      mockedInvoke.mockImplementation(async (cmd: string) =>
-        cmd === "list_library"
-          ? new Promise((resolve) => setTimeout(() => resolve(nestedLib()), 20))
-          : undefined,
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd: string) =>
+          cmd === "list_library"
+            ? new Promise((resolve) => setTimeout(() => resolve(nestedLib()), 20))
+            : undefined,
+        ),
       );
     };
 
@@ -679,7 +682,6 @@ describe("useAgentBridge", () => {
     it.each<[string, Record<string, unknown>, string]>([
       ["title type", { title: 3 }, "new_diagram: title must be a string"],
       ["missing folder", { folder: "gone" }, "new_diagram: no folder 'gone'"],
-      ["stray list", { folder: "my-diagrams" }, "new_diagram: no folder 'my-diagrams'"],
       ["non-string folder", { folder: 7 }, "new_diagram: no folder '7'"],
     ])(
       "failure (%s) → error, later ops not applied, no new tab (T28)",
@@ -701,10 +703,12 @@ describe("useAgentBridge", () => {
     );
 
     it("reports the reason when the save is refused and leaves later ops unapplied (T28)", async () => {
-      mockedInvoke.mockImplementation(async (cmd: string) => {
-        if (cmd === "save_project") throw new Error("disk full");
-        return cmd === "list_library" ? LIB() : undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd: string) => {
+          if (cmd === "save_project") throw new Error("disk full");
+          return cmd === "list_library" ? LIB() : undefined;
+        }),
+      );
       renderHook(() => useAgentBridge());
       await waitFor(() => expect(handlers["agent:ops"]).toBeDefined());
       const answer = await send("n6", [{ op: "new_diagram" }, node("x")]);

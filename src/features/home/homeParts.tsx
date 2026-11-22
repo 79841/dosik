@@ -64,8 +64,7 @@ export const LoadFailed = () => {
         </button>
       }
     >
-      Dosik couldn't read its library folder. Try again, or open a .dosik.json file from the
-      sidebar.
+      Dosik couldn't read its library folder. Try again, or open a .dosik file from the sidebar.
     </HomeNotice>
   );
 };

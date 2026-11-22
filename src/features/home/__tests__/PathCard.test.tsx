@@ -35,14 +35,6 @@ const library = (): FolderMeta[] => [
     diagrams: [],
     folders: [{ id: "chk", name: "Checkout", updatedAt: now, diagrams: [], folders: [] }],
   },
-  {
-    id: "my-diagrams",
-    name: "My Diagrams",
-    updatedAt: now,
-    stray: true,
-    diagrams: [{ id: "old", title: "Old", updatedAt: now, readable: true }],
-    folders: [],
-  },
 ];
 
 const show = (view: HomeView, mode: HomeMode = "cards") => {
@@ -133,7 +125,6 @@ describe("header row path card (#238)", () => {
   it.each<[string, HomeView]>([
     ["dashboard", DASHBOARD],
     ["Recent", { kind: "recent" }],
-    ["stray list — no folder on disk", { kind: "folder", folder: "my-diagrams" }],
   ])("no card on %s (T7)", async (_, view) => {
     show(view);
     expect(step()).not.toHaveClass("hover:bg-hover");

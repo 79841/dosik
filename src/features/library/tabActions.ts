@@ -1,14 +1,23 @@
 import { scratchDiagramStore, useDiagramStore } from "../../shared/lib/store";
 import { documentFile } from "../../shared/lib/store/document";
+import { cloneSnapshot, HISTORY_LIMIT } from "../../shared/lib/store/history";
 import { revealRequestFor, revealViewport } from "../../shared/lib/store/reveal";
 import { type DocSnapshot, documentPatch, takeDocument } from "../../shared/lib/store/tabs";
 import { toastError, useToastStore } from "../../shared/lib/toastStore";
 import type { DiagramDoc } from "../../shared/lib/types";
 import { currentViewport } from "../canvas/canvasViewport";
-import { readDiagramFile } from "../export/file";
+import { readDiagramFile, readDiagramText } from "../export/file";
 import { useAppStore } from "./appStore";
 import { DASHBOARD, type HomeView, sameHomeView } from "./homeView";
-import { blankDoc, loadProject, newProjectId, saveProject, serializeProject } from "./libraryApi";
+import {
+  blankDoc,
+  createProject,
+  type FileStamp,
+  loadProjectFile,
+  newProjectId,
+  sameContents,
+  serializeProject,
+} from "./libraryApi";
 import { refreshLibraryQuietly } from "./libraryStore";
 import {
   cycleTarget,
@@ -24,12 +33,31 @@ import { targetFolder } from "./targets";
 import {
   askDiscard,
   externalBaseline,
+  fileNameOf,
   hasUnsavedExternalChanges,
   isUnsavedSnapshot,
   markExternalSaved,
   setExternalBaseline,
 } from "./unsavedGuard";
-import { flushAutosave, noteProjectContents, projectWritesSent } from "./useAutosave";
+import {
+  baseStampOf,
+  flushAutosave,
+  forgetProject,
+  hasUnwrittenEdits,
+  holdSaves,
+  isKeptWhenGone,
+  keepWhenGone,
+  lastSaveFailed,
+  noteProjectContents,
+  onSaveRefused,
+  pausedProjects,
+  projectWritesSent,
+  resumeProject,
+  savesHeldBack,
+  stopWaiting,
+  writeProjectThroughChain,
+  writeSnapshotThroughChain,
+} from "./useAutosave";
 
 /**
  * Every way a document is opened, switched to or closed (#218 D9). The
@@ -229,8 +257,11 @@ const readThenActivate = (tab: DocTab, projectId: string): Promise<void> => {
   const job = (async () => {
     patchTab(tab.id, { loading: true });
     let doc: DocSnapshot;
+    let stamp: FileStamp | undefined;
     try {
-      doc = prepare(await loadProject(projectId), { projectId });
+      const loaded = await loadProjectFile(projectId);
+      doc = prepare(loaded.doc, { projectId });
+      stamp = loaded.stamp;
     } catch {
       if (!isOpen(tab.id)) return;
       dropFromList(tab.id);
@@ -238,7 +269,7 @@ const readThenActivate = (tab: DocTab, projectId: string): Promise<void> => {
       return;
     }
     if (!isOpen(tab.id)) return;
-    noteProjectContents(projectId, documentFile(doc));
+    noteProjectContents(projectId, documentFile(doc), stamp);
     patchTab(tab.id, { doc, loaded: true, loading: false, title: doc.title });
     // outside the read's try: a switch that fails now is not "couldn't reopen",
     // and the tab keeps what was read
@@ -286,11 +317,13 @@ const switchToOpen = (open: DocTab): Promise<void> => activateTab(open.id);
 /**
  * Opens a document already read: its tab if it is open (D9 — switch, no
  * re-read), else a new tab at the end, active. `opened` says which. A broken
- * document throws before anything changes.
+ * document throws before anything changes. `stamp`: a library diagram's
+ * file as it was read or written (#253 D11).
  */
 export const openDocument = (
   doc: DiagramDoc,
   source: DocSource,
+  stamp?: FileStamp,
 ): { tab: string; opened: boolean } => {
   const open = findOpen(source);
   if (open) {
@@ -303,7 +336,7 @@ export const openDocument = (
   const tab = newTab({ projectId, filePath, title });
   useDiagramStore.setState(documentPatch(snapshot, live(), revealRequestFor(snapshot.nodes)));
   // opening is not an edit: what the store holds now is what the file holds
-  if ("projectId" in source) noteProjectContents(source.projectId, documentFile(snapshot));
+  if ("projectId" in source) noteProjectContents(source.projectId, documentFile(snapshot), stamp);
   else markExternalSaved();
   commit([...tabs, tab], tab.id);
   return { tab: tab.id, opened: true };
@@ -319,8 +352,9 @@ const openWhenRead = (
   doc: DiagramDoc,
   source: DocSource,
   seq: number,
+  stamp?: FileStamp,
 ): { tab: string; opened: boolean } => {
-  if (activationSeq === seq) return openDocument(doc, source);
+  if (activationSeq === seq) return openDocument(doc, source, stamp);
   const open = findOpen(source);
   if (open) return { tab: open.id, opened: false };
   const snapshot = prepare(doc, source);
@@ -328,7 +362,7 @@ const openWhenRead = (
   const { projectId, filePath, title } = snapshot;
   const tab: DocTab = { ...newTab({ projectId, filePath, title }), doc: snapshot };
   // opening is not an edit, on screen or not
-  if ("projectId" in source) noteProjectContents(source.projectId, file);
+  if ("projectId" in source) noteProjectContents(source.projectId, file, stamp);
   else tab.baseline = serializeProject(file);
   editList((tabs) => [...tabs, tab]);
   return { tab: tab.id, opened: true };
@@ -352,8 +386,8 @@ export const openLibraryDiagram = async (id: string): Promise<void> => {
   const running = openingLibrary.get(id);
   if (running) return running;
   const job = (async () => {
-    const doc = await loadProject(id);
-    openWhenRead(doc, { projectId: id }, openWanted.get(id) ?? -1);
+    const { doc, stamp } = await loadProjectFile(id);
+    openWhenRead(doc, { projectId: id }, openWanted.get(id) ?? -1, stamp);
   })();
   openingLibrary.set(id, job);
   try {
@@ -383,10 +417,11 @@ export const openPathInTab = async (path: string): Promise<boolean> => {
 /**
  * New diagram (+, ⌘T, ⌘N, the toolbar, the tree — D11; Home's START and
  * From Mermaid… with a first document of their own — #220 D7): saved into the
- * library where `targetFolder` says, then opened in a new tab. It always
- * takes the screen, newer request or not: the bridge's Home path applies its
- * ops to the store right after. Resolves its id and the folder it went to
- * (`undefined`: Rust's choice, an empty library).
+ * library where `targetFolder` says, then opened in a new tab — titled what
+ * its file was called, " 2" and all (#253 D8). It always takes the screen,
+ * newer request or not: the bridge's Home path applies its ops to the store
+ * right after. Resolves its id and the folder it went to (`undefined`:
+ * Rust's choice, an empty library).
  */
 export const newDiagramTab = async (
   folder?: string,
@@ -394,8 +429,11 @@ export const newDiagramTab = async (
 ): Promise<{ id: string; folder: string | undefined }> => {
   const target = targetFolder(folder);
   const id = newProjectId();
-  await saveProject(id, doc, target);
-  openDocument(doc, { projectId: id });
+  const outcome = await createProject(id, doc, target);
+  // a new id names no file yet: nothing on disk can refuse it
+  if (outcome.kind !== "saved") throw new Error("the diagram could not be made");
+  const named = { ...doc, title: outcome.name };
+  openDocument(named, { projectId: id }, outcome.stamp);
   refreshLibraryQuietly();
   // the folder it went to — the listing may not name the new diagram for a
   // while, so a caller making another one next can say where (#229)
@@ -409,19 +447,107 @@ const unsavedPath = (tab: DocTab): string | null => {
 };
 
 /**
+ * Whether a library tab holds edits its save could not reach (#253): its
+ * project out of reach, the saves waiting for it, or its last save failed
+ * — only the tab has them, as an external file's tab has what its file lacks.
+ */
+const holdsUnreachedEdits = (tab: DocTab): boolean => {
+  const { projectId } = sourceOf(tab, app().activeTab, live());
+  if (projectId === null) return false;
+  if (!savesHeldBack(projectId) && !isKeptWhenGone(projectId)) return false;
+  const doc = tab.id === app().activeTab ? live() : tab.doc;
+  return doc !== null && hasUnwrittenEdits(projectId, documentFile(doc));
+};
+
+/**
+ * The library diagrams of a close under way — a tab's, the window's, a
+ * project leaving the library: a save of one found gone meanwhile is asked
+ * about by that close's own question, not by a second one (`gone`). Those
+ * found gone so, by the close that saw it.
+ */
+const closing = new Map<string, boolean>();
+
+/**
+ * Runs the close `ask` for the library diagrams `ids` — their saves flushed
+ * and tried once more inside it — one question in all. After a Cancel, one
+ * found gone meanwhile is kept, as when asked on its own, when its tab
+ * holds edits only it has; else its tab closes as removed.
+ */
+const asClose = async (ids: readonly string[], ask: () => Promise<boolean>): Promise<boolean> => {
+  const mine = ids.filter((id) => !closing.has(id));
+  for (const id of mine) closing.set(id, false);
+  let discard = false;
+  let seen: string[] = [];
+  try {
+    discard = await ask();
+  } finally {
+    seen = mine.filter((id) => closing.get(id));
+    for (const id of mine) closing.delete(id);
+  }
+  if (!discard && seen.length > 0) {
+    const { tabs } = app();
+    const holding = new Set(libraryIdsOf(tabs.filter(holdsUnreachedEdits)));
+    const open = new Set(libraryIdsOf(tabs));
+    for (const id of seen) if (holding.has(id)) keepTab(id);
+    const removed = seen.filter((id) => open.has(id) && !holding.has(id));
+    if (removed.length > 0) await closeRemovedDiagrams(new Set(removed));
+  }
+  return discard;
+};
+
+/** the library diagrams of these tabs */
+const libraryIdsOf = (tabs: readonly DocTab[]): string[] => {
+  const { activeTab } = app();
+  return tabs.flatMap((t) => {
+    const { projectId } = sourceOf(t, activeTab, live());
+    return projectId === null ? [] : [projectId];
+  });
+};
+
+/**
+ * The saves that failed for these tabs, tried once more — before a question
+ * about their edits: a disk back meanwhile leaves nothing to ask about.
+ */
+const retryFailedSaves = async (tabs: readonly DocTab[]): Promise<void> => {
+  const { activeTab } = app();
+  const tries = tabs.flatMap((t) => {
+    const { projectId } = sourceOf(t, activeTab, live());
+    if (projectId === null || !lastSaveFailed(projectId)) return [];
+    if (t.id === activeTab) return [writeProjectThroughChain(projectId)];
+    return t.doc ? [writeSnapshotThroughChain(projectId, documentFile(t.doc))] : [];
+  });
+  await Promise.all(tries);
+};
+
+/**
+ * What a tab would lose on closing, by the name its question shows — an
+ * external file's name (D8), a library diagram's title — if anything.
+ */
+const unsavedName = (tab: DocTab): string | null => {
+  const path = unsavedPath(tab);
+  if (path !== null) return fileNameOf(path);
+  return holdsUnreachedEdits(tab) ? titleOf(tab) : null;
+};
+
+/**
  * Takes tab `id` off the strip without asking. The active one's pending
  * autosave is written first (serialized now), then the right neighbour, the
  * left one or Home takes over (D10).
  */
 const dropTab = (id: string) => {
   const { tabs, activeTab } = app();
-  if (!isOpen(id)) return;
+  const tab = tabs.find((t) => t.id === id);
+  if (!tab) return;
+  // nothing of it is saved from here: its saves wait for nothing any more
+  const { projectId } = sourceOf(tab, activeTab, live());
   if (id !== activeTab) {
     dropFromList(id);
+    if (projectId !== null) stopWaiting(projectId);
     return;
   }
   commitEditing();
   flushLeaving();
+  if (projectId !== null) stopWaiting(projectId);
   const next = nextActiveAfterClose(tabs, activeTab, id);
   const rest = tabs.filter((t) => t.id !== id);
   const target = rest.find((t) => t.id === next);
@@ -437,19 +563,31 @@ const dropTab = (id: string) => {
 
 /**
  * Closes tab `id` (×, ⌘W, middle click — D10). A library diagram goes at
- * once; an external file with unsaved edits asks first. Resolves whether it
- * closed — not after a Cancel, nor when it was closed while the dialog was up.
+ * once; an external file with unsaved edits asks first, and so does a
+ * library diagram holding edits its project's absence kept from its file
+ * (#253). Resolves whether it closed — not after a Cancel, nor when it was
+ * closed while the dialog was up.
  */
 export const closeTab = async (id: string): Promise<boolean> => {
-  const tab = app().tabs.find((t) => t.id === id);
-  if (!tab) return false;
+  const first = app().tabs.find((t) => t.id === id);
+  if (!first) return false;
   // what is typed into the tab on screen counts — and a Cancel keeps it
   if (id === app().activeTab) commitEditing();
-  const unsaved = unsavedPath(tab);
-  if (unsaved !== null) {
-    if (!(await askDiscard([unsaved]))) return false;
-    if (!isOpen(id)) return false;
-  }
+  const go = await asClose(libraryIdsOf([first]), async () => {
+    // an edit waiting for its autosave is sent first: a save that cannot
+    // reach its diagram is found out before the question — and one that
+    // failed is tried once more
+    await flushAutosave();
+    const open = app().tabs.find((t) => t.id === id);
+    if (!open) return false;
+    await retryFailedSaves([open]);
+    const tab = app().tabs.find((t) => t.id === id);
+    if (!tab) return false;
+    const unsaved = unsavedName(tab);
+    if (unsaved === null) return true;
+    return (await askDiscard([unsaved])) && isOpen(id);
+  });
+  if (!go || !isOpen(id)) return false;
   dropTab(id);
   return true;
 };
@@ -524,20 +662,48 @@ export const noteSavedToFile = (from: DocumentOnScreen, path: string, written: s
   });
 };
 
-/** every external file — on screen or not — with edits its file does not have (D8) */
-export const unsavedExternalPaths = (): string[] =>
-  app()
-    .tabs.map(unsavedPath)
-    .filter((p): p is string => p !== null);
+/**
+ * every tab — on screen or not — with edits only it holds, by the name its
+ * question shows: an external file's its file does not have (D8), a library
+ * diagram's its save could not reach (#253)
+ */
+const unsavedTabNames = (tabs: readonly DocTab[] = app().tabs): string[] =>
+  tabs.map(unsavedName).filter((n): n is string => n !== null);
 
 /**
  * Closing the window: one question for all of them; `false` keeps the window
  * (T35). What is being typed is committed first, so it is asked about — and a
  * library diagram's autosave, flushed next, writes it.
  */
-export const confirmDiscardTabs = (): Promise<boolean> => {
+export const confirmDiscardTabs = async (): Promise<boolean> => {
   commitEditing();
-  return askDiscard(unsavedExternalPaths());
+  return asClose(libraryIdsOf(app().tabs), async () => {
+    // a save that cannot reach its diagram is found out before the
+    // question, and one that failed is tried once more
+    await flushAutosave();
+    await retryFailedSaves(app().tabs);
+    return askDiscard(unsavedTabNames());
+  });
+};
+
+/**
+ * Before the tabs of these library diagrams close for good — their project
+ * leaves the library (#253 D9): one question for the ones holding edits
+ * their save could not reach. `false`: keep them.
+ */
+export const confirmDiscardDiagramTabs = async (
+  projectIds: ReadonlySet<string>,
+): Promise<boolean> => {
+  commitEditing();
+  const ofThem = (t: DocTab) => {
+    const { projectId } = sourceOf(t, app().activeTab, live());
+    return projectId !== null && projectIds.has(projectId);
+  };
+  return asClose([...projectIds], async () => {
+    await flushAutosave();
+    await retryFailedSaves(app().tabs.filter(ofThem));
+    return askDiscard(unsavedTabNames(app().tabs.filter(ofThem)));
+  });
 };
 
 /**
@@ -560,9 +726,290 @@ export const pruneUnlisted = (listed: ReadonlySet<string>): void => {
   }
 };
 
+/*
+ * Changes made outside the app (#253 D12, D13). A tab whose file changed is
+ * read again — quietly when it had no edits of its own the file lacks, with
+ * a toast when it had (the file wins). Either way it is one undo step: ⌘Z
+ * brings back what the tab showed. The canvas stays where it was. A tab
+ * whose file went is closed, with a toast.
+ */
+
+/** a tab's document as the file and the bridge carry it */
+const fileBytes = (doc: Pick<DocSnapshot, "title" | "nodes" | "edges">): string =>
+  serializeProject(documentFile(doc));
+
+/** the read tab showing `source` — the active one or one kept as a snapshot */
+const readTab = (source: DocSource): DocTab | undefined => {
+  const { tabs, activeTab } = app();
+  return tabs.find((t) => {
+    if (t.id !== activeTab && !t.doc) return false;
+    const at = sourceOf(t, activeTab, live());
+    return "projectId" in source
+      ? at.projectId === source.projectId
+      : at.filePath === source.filePath;
+  });
+};
+
+/**
+ * Puts `fresh` — the file as it is now — into tab `id`: the store while it
+ * is on screen, its snapshot else. One undo step, the canvas where it was.
+ * Resolves whether the document changed.
+ */
+const takeFromDisk = (id: string, fresh: DocSnapshot): boolean => {
+  if (id === app().activeTab) {
+    const state = live();
+    if (fileBytes(state) === fileBytes(fresh)) return false;
+    state.commit();
+    useDiagramStore.setState({
+      title: fresh.title,
+      nodes: fresh.nodes,
+      edges: fresh.edges,
+      // id-keyed state of the document it replaced, as a load clears it
+      touched: {},
+      editRequestId: null,
+      enteredGroup: null,
+      groupResizing: null,
+      // open editors and menus close; the canvas stays (no reveal)
+      docVersion: state.docVersion + 1,
+    });
+    return true;
+  }
+  const tab = app().tabs.find((t) => t.id === id);
+  if (!tab?.doc || fileBytes(tab.doc) === fileBytes(fresh)) return false;
+  const past = [...tab.doc.past.slice(-HISTORY_LIMIT + 1), cloneSnapshot(tab.doc)];
+  patchTab(id, {
+    title: fresh.title,
+    doc: {
+      ...tab.doc,
+      title: fresh.title,
+      nodes: fresh.nodes,
+      edges: fresh.edges,
+      past,
+      future: [],
+      enteredGroup: null,
+    },
+  });
+  return true;
+};
+
+const toast = (text: string) => useToastStore.getState().pushToast(text);
+const changedToast = (title: string) => toast(`“${title}” changed outside Dosik — reloaded`);
+const removedToast = (title: string) => toast(`“${title}” was removed outside Dosik`);
+
+/** the title a tab shows — the store's while it is on screen */
+const titleOf = (tab: DocTab): string => (tab.id === app().activeTab ? live().title : tab.title);
+
+/**
+ * The library diagrams whose save was refused as changed on disk while their
+ * file could not be read — told once, until a read of it gets through.
+ */
+const unreadableAfterRefusal = new Set<string>();
+
+/**
+ * The library diagram `projectId` read again from disk, in its tab if one
+ * has it read. Nothing when its file is as the tab last saw it — unless a
+ * save of it was just refused (`refused`): its edits are not on disk, and
+ * the file wins. A file that cannot be read now is left to the listing —
+ * unless a save was refused for it: then nothing is saved until it can be,
+ * which a toast says, once while it lasts.
+ */
+export const reloadDiagram = async (projectId: string, refused = false): Promise<void> => {
+  if (!readTab({ projectId })) return;
+  let loaded: Awaited<ReturnType<typeof loadProjectFile>>;
+  try {
+    loaded = await loadProjectFile(projectId);
+  } catch {
+    const tab = readTab({ projectId });
+    if (refused && tab && !unreadableAfterRefusal.has(projectId)) {
+      unreadableAfterRefusal.add(projectId);
+      toastError(`“${titleOf(tab)}” changed outside Dosik and can't be read — not saved`);
+    }
+    return;
+  }
+  unreadableAfterRefusal.delete(projectId);
+  const tab = readTab({ projectId });
+  if (!tab) return;
+  if (!refused && sameContents(loaded.stamp, baseStampOf(projectId))) return;
+  const fresh = prepare(loaded.doc, { projectId });
+  const current = tab.id === app().activeTab ? live() : tab.doc;
+  const unwritten =
+    refused || (current !== null && hasUnwrittenEdits(projectId, documentFile(current)));
+  noteProjectContents(projectId, documentFile(fresh), loaded.stamp);
+  if (takeFromDisk(tab.id, fresh) && unwritten) changedToast(fresh.title);
+};
+
+/**
+ * The tab of the library diagram `id`, gone from disk, kept when asked for
+ * the edits only it holds: not asked about again, and nothing of it saved
+ * on its own — its file is gone — until a listing has it again.
+ */
+const keepTab = (id: string): void => {
+  keepWhenGone(id);
+  holdSaves(id);
+};
+
+/**
+ * Closes the tabs of these library diagrams — gone from disk (#253 D13) —
+ * with a toast each. What was pending for them is dropped, never written:
+ * that would make the file again. A tab holding edits a save could not
+ * reach — only it has them — asks first, as on closing it: kept, it stays,
+ * edits and all, and is not asked about again until a save of it gets
+ * through or it is closed.
+ */
+export const closeRemovedDiagrams = async (projectIds: ReadonlySet<string>): Promise<void> => {
+  const idOf = (t: DocTab) => sourceOf(t, app().activeTab, live()).projectId;
+  const theirs = () =>
+    app().tabs.filter((t) => {
+      const projectId = idOf(t);
+      return projectId !== null && projectIds.has(projectId);
+    });
+  const holding = theirs().filter(holdsUnreachedEdits);
+  // kept when asked before: left be, not asked again
+  const kept = new Set(holding.map(idOf).filter((id) => id !== null && isKeptWhenGone(id)));
+  const asking = holding.filter((t) => !kept.has(idOf(t)));
+  if (asking.length > 0 && !(await askDiscard(asking.map(titleOf)))) {
+    for (const tab of asking) {
+      const id = idOf(tab);
+      if (id === null) continue;
+      keepTab(id);
+      kept.add(id);
+    }
+  }
+  const gone = theirs().filter((t) => !kept.has(idOf(t)));
+  if (gone.length === 0) return;
+  const removed = new Set(gone.map((t) => idOf(t) as string));
+  const titles = gone.map(titleOf);
+  for (const id of removed) {
+    forgetProject(id);
+    unreadableAfterRefusal.delete(id);
+  }
+  closeDiagramTabs(removed);
+  for (const title of titles) removedToast(title);
+};
+
+/**
+ * A save of the library diagram `projectId` could not reach it (#253): its
+ * tab stays, its edits with it, and saving waits for the project to be
+ * listed again — the way an external file's tab keeps what it cannot write.
+ */
+const unreachable = (projectId: string): void => {
+  const tab = app().tabs.find((t) => sourceOf(t, app().activeTab, live()).projectId === projectId);
+  if (tab) toastError(`Can't reach “${titleOf(tab)}” — not saved`);
+};
+
+/**
+ * A save of the library diagram `id` found it gone from disk: its tab
+ * closes as removed — unless it was kept before, when asked, for edits only
+ * it holds: then it stays, and a toast says the save went nowhere.
+ */
+const gone = (id: string): void => {
+  if (closing.has(id)) {
+    // asked about by the close under way
+    closing.set(id, true);
+    return;
+  }
+  if (isKeptWhenGone(id)) {
+    holdSaves(id);
+    const tab = app().tabs.find((t) => sourceOf(t, app().activeTab, live()).projectId === id);
+    if (tab) toastError(`“${titleOf(tab)}” is gone from disk — not saved`);
+    return;
+  }
+  closeRemovedDiagrams(new Set([id])).catch(toastError);
+};
+
+// a save Rust refused: the file changed meanwhile — read it again — is gone,
+// or cannot be reached
+onSaveRefused((id, why) => {
+  if (why === "gone") gone(id);
+  else if (why === "unreachable") unreachable(id);
+  else reloadDiagram(id, true).catch(toastError);
+});
+
+/**
+ * The library diagrams whose saves waited for their project, now `listed`
+ * again (#253): saved — what is on screen, and what a tab beside it holds
+ * that its file does not.
+ */
+export const resumeReachable = (listed: ReadonlySet<string>): void => {
+  for (const id of pausedProjects()) {
+    if (!listed.has(id)) continue;
+    resumeProject(id);
+    const tab = readTab({ projectId: id });
+    if (!tab) continue;
+    if (tab.id === app().activeTab) {
+      void writeProjectThroughChain(id);
+    } else if (tab.doc && hasUnwrittenEdits(id, documentFile(tab.doc))) {
+      void writeSnapshotThroughChain(id, documentFile(tab.doc));
+    }
+  }
+};
+
+/** the library diagrams read into tabs — what a look at the disk checks */
+export const readLibraryIds = (): string[] => {
+  const { tabs, activeTab } = app();
+  return tabs.flatMap((t) => {
+    const { projectId } = sourceOf(t, activeTab, live());
+    return projectId !== null && (t.id === activeTab || t.doc) ? [projectId] : [];
+  });
+};
+
+/** the external files open in tabs, read or not — what the watch covers */
+export const externalPaths = (): string[] => {
+  const { tabs, activeTab } = app();
+  const paths = tabs
+    .map((t) => sourceOf(t, activeTab, live()).filePath)
+    .filter((p): p is string => p !== null);
+  return [...new Set(paths)];
+};
+
+/**
+ * The external file at `path` read again, in its tab (#253 D12) — the same
+ * rule as a library diagram's. Nothing when it holds what the tab last wrote
+ * or read; one that cannot be read now (half written, say) waits for the
+ * next change.
+ */
+export const reloadExternalFile = async (path: string): Promise<void> => {
+  if (!readTab({ filePath: path })) return;
+  let read: Awaited<ReturnType<typeof readDiagramText>>;
+  try {
+    read = await readDiagramText(path);
+  } catch {
+    return;
+  }
+  const tab = readTab({ filePath: path });
+  if (!tab) return;
+  const active = tab.id === app().activeTab;
+  const baseline = active ? externalBaseline() : tab.baseline;
+  if (read.text === baseline) return;
+  const fresh = prepare(read.doc, { filePath: path });
+  const unsaved = active
+    ? hasUnsavedExternalChanges()
+    : tab.doc !== null && isUnsavedSnapshot(tab.doc, tab.baseline);
+  const changed = takeFromDisk(tab.id, fresh);
+  // the file and the tab agree now
+  const bytes = fileBytes(fresh);
+  if (active) setExternalBaseline(bytes);
+  else patchTab(tab.id, { baseline: bytes });
+  if (changed && unsaved) changedToast(fresh.title);
+};
+
+/**
+ * The external file at `path` is gone (#253 D13): its tab closes, with a
+ * toast — unless it holds edits no file has, which only it keeps: then it
+ * stays, and Save writes them back.
+ */
+export const closeRemovedFile = (path: string): void => {
+  const tab = app().tabs.find((t) => sourceOf(t, app().activeTab, live()).filePath === path);
+  if (!tab) return;
+  const title = titleOf(tab);
+  if (unsavedPath(tab) === null) dropTab(tab.id);
+  removedToast(title);
+};
+
 /** test seam: no tabs, Home on screen, nothing being read */
 export const resetTabsForTests = (): void => {
   reading.clear();
+  unreadableAfterRefusal.clear();
   wanted.clear();
   listedAfterWrites = 0;
   openingLibrary.clear();

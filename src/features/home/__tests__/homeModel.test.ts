@@ -31,6 +31,21 @@ const ids = (entries: { diagram: { id: string } }[]) => entries.map((e) => e.dia
 
 describe("Home model (#220)", () => {
   describe("Continue and Recent (D9·D10, T15)", () => {
+    it("a project not found shows nothing in Continue or Recent until it is found (#253 R7)", () => {
+      const lost: FolderMeta = {
+        folders: [],
+        id: "arc",
+        name: "architecture",
+        updatedAt: 99,
+        missing: true,
+        diagrams: [diagram("z", 99)],
+      };
+      const { continued, recent } = continueAndRecent([lost, ...library()]);
+      expect(continued?.diagram.id).toBe("a");
+      expect(ids(recent)).not.toContain("z");
+      expect(ids(allRecent([lost, ...library()]))).not.toContain("z");
+    });
+
     it("Continue = the most recent readable one, Recent = the next 4", () => {
       const { continued, recent } = continueAndRecent(library());
       expect(continued?.diagram.id).toBe("a");

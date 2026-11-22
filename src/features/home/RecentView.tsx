@@ -28,7 +28,7 @@ export const RecentView = () => {
   if (entries.length === 0) {
     return (
       <HomeNotice title="No diagrams yet">
-        Start one from Home, open a .dosik.json file, or send ops to the bridge.
+        Start one from Home, open a .dosik file, or send ops to the bridge.
       </HomeNotice>
     );
   }

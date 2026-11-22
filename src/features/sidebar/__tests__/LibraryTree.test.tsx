@@ -31,6 +31,7 @@ import { folderKey } from "../treeModel";
 import { resetTreeForTests, useTreeStore } from "../treeStore";
 import { badgeIn } from "../../../test/badges";
 import { showInLabel } from "../../library/fileManager";
+import { likeRust } from "../../../test/rustAnswers";
 
 /** "Show in …" as this web view names its file manager (#238 D10) */
 const SHOW_IN = showInLabel();
@@ -59,12 +60,12 @@ const library = (): FolderMeta[] => [
   },
   { folders: [], id: "home", name: "Personal", updatedAt: now - 5 * 86_400_000, diagrams: [] },
 ];
-const stray = (): FolderMeta => ({
+/** a project holding a diagram that cannot be opened */
+const mine = (): FolderMeta => ({
   folders: [],
   id: "my-diagrams",
   name: "My Diagrams",
   updatedAt: now - 10 * 86_400_000,
-  stray: true,
   diagrams: [{ id: "old", title: "Old one", updatedAt: now - 10 * 86_400_000, readable: false }],
 });
 const loginBook = (): DiagramDoc => ({ ...blankDoc(), title: "Login flow" });
@@ -75,15 +76,17 @@ const serve = (
   files: Record<string, unknown> = { p1: loginBook(), p2: blankDoc() },
   extra: Record<string, unknown> = {},
 ) =>
-  mockedInvoke.mockImplementation(async (cmd, args) => {
-    if (cmd === "list_library") return listing();
-    if (cmd === "load_project") {
-      const { id } = args as { id: string };
-      return typeof files[id] === "string" ? files[id] : JSON.stringify(files[id]);
-    }
-    if (cmd in extra) return extra[cmd];
-    return undefined;
-  });
+  mockedInvoke.mockImplementation(
+    likeRust(async (cmd, args) => {
+      if (cmd === "list_library") return listing();
+      if (cmd === "load_project") {
+        const { id } = args as { id: string };
+        return typeof files[id] === "string" ? files[id] : JSON.stringify(files[id]);
+      }
+      if (cmd in extra) return extra[cmd];
+      return undefined;
+    }),
+  );
 
 const renderTree = () => render(<ProjectsSection />);
 const tree = () => screen.getByRole("tree", { name: "Projects" });
@@ -166,7 +169,7 @@ describe("sidebar tree (#217 R3)", () => {
 
     it("an unreadable diagram is a leaf too — only the chevron slot is left empty", async () => {
       const user = userEvent.setup();
-      useLibraryStore.setState({ folders: [...library(), stray()] });
+      useLibraryStore.setState({ folders: [...library(), mine()] });
       renderTree();
       await user.click(chevron(/^My Diagrams/));
       expect(item(/^Old one/)).not.toHaveAttribute("aria-expanded");
@@ -596,22 +599,12 @@ describe("sidebar tree (#217 R3)", () => {
       expect(status()).toHaveTextContent("Moved “Personal” to position 1 of 2 projects");
     });
 
-    it("does nothing with other modifier keys or on a stray row", async () => {
+    it("does nothing with other modifier keys", async () => {
       const user = userEvent.setup();
-      useLibraryStore.setState({ folders: [...library(), stray()] });
       renderTree();
       focusRowOf(/^Personal/);
       await user.keyboard("{Alt>}{Shift>}{ArrowUp}{/Shift}{/Alt}");
-      focusRowOf(/^My Diagrams/);
-      await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
       expect(calls("reorder_item")).toHaveLength(0);
-    });
-
-    it("only movable rows have aria-keyshortcuts", () => {
-      useLibraryStore.setState({ folders: [...library(), stray()] });
-      renderTree();
-      expect(item(/^Work/)).toHaveAttribute("aria-keyshortcuts", "Alt+ArrowUp Alt+ArrowDown");
-      expect(item(/^My Diagrams/)).not.toHaveAttribute("aria-keyshortcuts");
     });
 
     it("⌥↓ does not leak to the canvas", async () => {
@@ -967,20 +960,6 @@ describe("sidebar tree (#217 R3)", () => {
       }
     });
 
-    it("dropping a stray diagram on a real folder row moves it into that folder (#230)", async () => {
-      const withStray = (): FolderMeta[] => [...ordered(), stray()];
-      useLibraryStore.setState({ folders: withStray() });
-      serve(withStray);
-      useTreeStore.getState().expand([folderKey("work"), folderKey("my-diagrams")]);
-      renderTree();
-      const archive = rowTop(/^Archive/);
-      dragTo(/^Old one/, 70, archive + 13);
-      expect(row(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
-      firePointer("pointerup", 70, archive + 13);
-      await waitFor(() => expect(calls("move_project")).toHaveLength(1));
-      expect(calls("move_project")[0]![1]).toEqual({ id: "old", folder: "arc", index: 0 });
-    });
-
     it("cancels the drag when the dragged item disappears from the listing", () => {
       renderTree();
       dragTo(/^Sequence, diagram/, 70, rowTop(/^Login flow/) + 3);
@@ -1028,11 +1007,10 @@ describe("sidebar tree (#217 R3)", () => {
       expect(screen.queryByRole("menu")).toBeNull();
     });
 
-    it("a stray project has no menu, and with only one project there is no Move", async () => {
+    it("with only one project there is no Move", async () => {
       const user = userEvent.setup();
-      useLibraryStore.setState({ folders: [library()[0]!, stray()] });
+      useLibraryStore.setState({ folders: [library()[0]!] });
       renderTree();
-      expect(moreButton(/^My Diagrams/)).toBeNull();
       await user.click(chevron(/^Work/));
       await user.click(moreButton(/^Login flow/)!);
       expect(
@@ -1145,10 +1123,12 @@ describe("sidebar tree (#217 R3)", () => {
       it("only a toast when it cannot be read — no edit request", async () => {
         const user = userEvent.setup();
         serve(library, {});
-        mockedInvoke.mockImplementation(async (cmd) => {
-          if (cmd === "load_project") throw new Error("gone");
-          return undefined;
-        });
+        mockedInvoke.mockImplementation(
+          likeRust(async (cmd) => {
+            if (cmd === "load_project") throw new Error("gone");
+            return undefined;
+          }),
+        );
         renderTree();
         await user.click(chevron(/^Work/));
         await renameFromMenu(user, /^Sequence/);
@@ -1168,9 +1148,8 @@ describe("sidebar tree (#217 R3)", () => {
       await waitFor(() => expect(useDiagramStore.getState().projectId).toBe("p2"));
     });
 
-    it("Move to… — a picker beside the menu, picking another project does move_project, the current project cannot be picked, and there is no stray (#229 D13)", async () => {
+    it("Move to… — a picker beside the menu, picking another project does move_project, the current project cannot be picked (#229 D13)", async () => {
       const user = userEvent.setup();
-      useLibraryStore.setState({ folders: [...library(), stray()] });
       renderTree();
       await user.click(chevron(/^Work/));
       await user.click(moreButton(/^Login flow/)!);
@@ -1181,7 +1160,6 @@ describe("sidebar tree (#217 R3)", () => {
       expect(
         within(picker).getByRole("treeitem", { name: "Work, project, current location" }),
       ).toHaveAttribute("aria-disabled", "true");
-      expect(within(picker).queryByRole("treeitem", { name: /^My Diagrams/ })).toBeNull();
       await user.click(
         within(picker)
           .getByRole("treeitem", { name: "Personal, project" })
@@ -1276,11 +1254,13 @@ describe("sidebar tree (#217 R3)", () => {
       const user = userEvent.setup();
       // the write waits for the test: the field is focused before it lands
       let land: () => void = () => undefined;
-      mockedInvoke.mockImplementation(async (cmd) => {
-        if (cmd === "create_folder") await new Promise<void>((r) => (land = r));
-        if (cmd === "list_library") return library();
-        return undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd) => {
+          if (cmd === "create_folder") await new Promise<void>((r) => (land = r));
+          if (cmd === "list_library") return library();
+          return undefined;
+        }),
+      );
       renderTree();
       rightClick(tree(), 40, 500);
       await user.click(screen.getByRole("menuitem", { name: "New project" }));
@@ -1297,11 +1277,9 @@ describe("sidebar tree (#217 R3)", () => {
       field.remove();
     });
 
-    it("a stray row has no menu but the default menu does not appear either, and the name field is not intercepted", async () => {
-      useLibraryStore.setState({ folders: [library()[0]!, stray()] });
+    it("the name field is not intercepted", async () => {
+      useLibraryStore.setState({ folders: [library()[0]!] });
       renderTree();
-      expect(rightClick(row(/^My Diagrams/))).toBe(false);
-      expect(screen.queryByRole("menu")).toBeNull();
       act(() => useTreeStore.getState().setRenaming("work"));
       const input = await screen.findByRole("textbox", { name: "Project name" });
       expect(rightClick(input)).toBe(true);
@@ -1313,17 +1291,19 @@ describe("sidebar tree (#217 R3)", () => {
     it("creates and renames right in the tree — the screen stays", async () => {
       const user = userEvent.setup();
       let listing = library();
-      mockedInvoke.mockImplementation(async (cmd, args) => {
-        if (cmd === "create_folder") {
-          const { id } = args as { id: string };
-          listing = [
-            { folders: [], id, name: "New project", updatedAt: now, diagrams: [] },
-            ...library(),
-          ];
-        }
-        if (cmd === "list_library") return listing;
-        return undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd, args) => {
+          if (cmd === "create_folder") {
+            const { id } = args as { id: string };
+            listing = [
+              { folders: [], id, name: "New project", updatedAt: now, diagrams: [] },
+              ...library(),
+            ];
+          }
+          if (cmd === "list_library") return listing;
+          return undefined;
+        }),
+      );
       openDocument(loginBook(), { projectId: "p1" });
       renderTree();
       await user.click(screen.getByRole("button", { name: "New project" }));
@@ -1342,18 +1322,20 @@ describe("sidebar tree (#217 R3)", () => {
     it("moving to another tab while creating — does not open the name field even with focus on body (#229, WebKit)", async () => {
       const user = userEvent.setup();
       let listing = library();
-      mockedInvoke.mockImplementation(async (cmd, args) => {
-        if (cmd === "create_folder") {
-          await new Promise((r) => setTimeout(r, 20));
-          const { id } = args as { id: string };
-          listing = [
-            { folders: [], id, name: "New project", updatedAt: now, diagrams: [] },
-            ...library(),
-          ];
-        }
-        if (cmd === "list_library") return listing;
-        return undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd, args) => {
+          if (cmd === "create_folder") {
+            await new Promise((r) => setTimeout(r, 20));
+            const { id } = args as { id: string };
+            listing = [
+              { folders: [], id, name: "New project", updatedAt: now, diagrams: [] },
+              ...library(),
+            ];
+          }
+          if (cmd === "list_library") return listing;
+          return undefined;
+        }),
+      );
       renderTree();
       await user.click(screen.getByRole("button", { name: "New project" }));
       act(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -1368,18 +1350,20 @@ describe("sidebar tree (#217 R3)", () => {
     it("when the user moves to another field while creating — the name field does not steal focus (#229, #218 D15)", async () => {
       const user = userEvent.setup();
       let listing = library();
-      mockedInvoke.mockImplementation(async (cmd, args) => {
-        if (cmd === "create_folder") {
-          await new Promise((r) => setTimeout(r, 20));
-          const { id } = args as { id: string };
-          listing = [
-            { folders: [], id, name: "New project", updatedAt: now, diagrams: [] },
-            ...library(),
-          ];
-        }
-        if (cmd === "list_library") return listing;
-        return undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd, args) => {
+          if (cmd === "create_folder") {
+            await new Promise((r) => setTimeout(r, 20));
+            const { id } = args as { id: string };
+            listing = [
+              { folders: [], id, name: "New project", updatedAt: now, diagrams: [] },
+              ...library(),
+            ];
+          }
+          if (cmd === "list_library") return listing;
+          return undefined;
+        }),
+      );
       renderTree();
       await user.click(screen.getByRole("button", { name: "New project" }));
       const field = document.createElement("input");
@@ -1473,26 +1457,28 @@ describe("sidebar tree (#217 R3)", () => {
     beforeEach(() => {
       listing = nested();
       useLibraryStore.setState({ folders: nested(), readFailed: false });
-      mockedInvoke.mockImplementation(async (cmd, args) => {
-        if (cmd === "create_folder") {
-          const { id, parent } = args as { id: string; parent?: string };
-          const add = (fs: FolderMeta[]): FolderMeta[] =>
-            fs.map((f) =>
-              f.id === parent
-                ? {
-                    ...f,
-                    folders: [
-                      { id, name: "New folder", updatedAt: now + 1, diagrams: [], folders: [] },
-                      ...f.folders,
-                    ],
-                  }
-                : { ...f, folders: add(f.folders) },
-            );
-          listing = add(listing);
-        }
-        if (cmd === "list_library") return listing;
-        return undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd, args) => {
+          if (cmd === "create_folder") {
+            const { id, parent } = args as { id: string; parent?: string };
+            const add = (fs: FolderMeta[]): FolderMeta[] =>
+              fs.map((f) =>
+                f.id === parent
+                  ? {
+                      ...f,
+                      folders: [
+                        { id, name: "New folder", updatedAt: now + 1, diagrams: [], folders: [] },
+                        ...f.folders,
+                      ],
+                    }
+                  : { ...f, folders: add(f.folders) },
+              );
+            listing = add(listing);
+          }
+          if (cmd === "list_library") return listing;
+          return undefined;
+        }),
+      );
     });
 
     it("folder row — chevron + Folder (FolderOpen when expanded) + name + count, indented 16px per level", async () => {
@@ -1705,18 +1691,20 @@ describe("sidebar tree (#217 R3)", () => {
 
     /** move_project moves p1 (Login flow) from Work into `chk` in the listing — a little late, as the disk does */
     const serveMove = () => {
-      mockedInvoke.mockImplementation(async (cmd, args) => {
-        if (cmd === "move_project") {
-          await new Promise((r) => setTimeout(r, 20));
-          const { folder: to } = args as { folder: string };
-          const p1 = listing[0]!.diagrams.find((d) => d.id === "p1")!;
-          listing = structuredClone(listing);
-          listing[0]!.diagrams = listing[0]!.diagrams.filter((d) => d.id !== "p1");
-          if (to === "chk") listing[0]!.folders[0]!.diagrams.push(p1);
-        }
-        if (cmd === "list_library") return structuredClone(listing);
-        return undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd, args) => {
+          if (cmd === "move_project") {
+            await new Promise((r) => setTimeout(r, 20));
+            const { folder: to } = args as { folder: string };
+            const p1 = listing[0]!.diagrams.find((d) => d.id === "p1")!;
+            listing = structuredClone(listing);
+            listing[0]!.diagrams = listing[0]!.diagrams.filter((d) => d.id !== "p1");
+            if (to === "chk") listing[0]!.folders[0]!.diagrams.push(p1);
+          }
+          if (cmd === "list_library") return structuredClone(listing);
+          return undefined;
+        }),
+      );
     };
     /** Login flow's row › Shift+F10 › Move to… › → › ↓ (Checkout) › Enter */
     const moveLoginToCheckout = async (user: ReturnType<typeof userEvent.setup>) => {
@@ -1799,14 +1787,16 @@ describe("sidebar tree (#217 R3)", () => {
       const failed = new Promise<void>((r) => {
         fail = r;
       });
-      mockedInvoke.mockImplementation(async (cmd) => {
-        if (cmd === "load_project") {
-          await failed;
-          throw new Error("gone");
-        }
-        if (cmd === "list_library") return structuredClone(listing);
-        return undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd) => {
+          if (cmd === "load_project") {
+            await failed;
+            throw new Error("gone");
+          }
+          if (cmd === "list_library") return structuredClone(listing);
+          return undefined;
+        }),
+      );
       renderTree();
       await user.click(chevron(/^Work/));
       await user.click(moreButton(/^Login flow/)!);
@@ -1820,10 +1810,12 @@ describe("sidebar tree (#217 R3)", () => {
     it("moving to another tab while New folder is being created — does not open the name field even with focus on body (#229)", async () => {
       const user = userEvent.setup();
       const make = mockedInvoke.getMockImplementation()!;
-      mockedInvoke.mockImplementation(async (cmd, args) => {
-        if (cmd === "create_folder") await new Promise((r) => setTimeout(r, 20));
-        return make(cmd, args);
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd, args) => {
+          if (cmd === "create_folder") await new Promise((r) => setTimeout(r, 20));
+          return make(cmd, args);
+        }),
+      );
       renderTree();
       await user.click(chevron(/^Work/));
       await user.click(moreButton(/^Checkout/)!);
@@ -1838,10 +1830,12 @@ describe("sidebar tree (#217 R3)", () => {
     it("when the user moves to another field while New folder is being created — the name field does not steal focus (#229)", async () => {
       const user = userEvent.setup();
       const make = mockedInvoke.getMockImplementation()!;
-      mockedInvoke.mockImplementation(async (cmd, args) => {
-        if (cmd === "create_folder") await new Promise((r) => setTimeout(r, 20));
-        return make(cmd, args);
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd, args) => {
+          if (cmd === "create_folder") await new Promise((r) => setTimeout(r, 20));
+          return make(cmd, args);
+        }),
+      );
       renderTree();
       await user.click(chevron(/^Work/));
       await user.click(moreButton(/^Checkout/)!);
@@ -1867,18 +1861,20 @@ describe("sidebar tree (#217 R3)", () => {
       const landed = new Promise<void>((r) => {
         land = r;
       });
-      mockedInvoke.mockImplementation(async (cmd, args) => {
-        if (cmd === "move_folder") {
-          await (held ? landed : new Promise((r) => setTimeout(r, 20)));
-          const { parent } = args as { parent: string };
-          const chk = listing[0]!.folders.find((f) => f.id === "chk")!;
-          listing = structuredClone(listing);
-          listing[0]!.folders = listing[0]!.folders.filter((f) => f.id !== "chk");
-          listing.find((f) => f.id === parent)!.folders.unshift(chk);
-        }
-        if (cmd === "list_library") return structuredClone(listing);
-        return undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd, args) => {
+          if (cmd === "move_folder") {
+            await (held ? landed : new Promise((r) => setTimeout(r, 20)));
+            const { parent } = args as { parent: string };
+            const chk = listing[0]!.folders.find((f) => f.id === "chk")!;
+            listing = structuredClone(listing);
+            listing[0]!.folders = listing[0]!.folders.filter((f) => f.id !== "chk");
+            listing.find((f) => f.id === parent)!.folders.unshift(chk);
+          }
+          if (cmd === "list_library") return structuredClone(listing);
+          return undefined;
+        }),
+      );
       return land;
     };
     /** Checkout's row › Shift+F10 › Move to… › Personal */
@@ -1984,7 +1980,7 @@ describe("sidebar tree (#217 R3)", () => {
         ],
       },
       { id: "home", name: "personal", updatedAt: 1, diagrams: [], folders: [] },
-      stray(),
+      mine(),
     ];
     const badgeOf = (name: RegExp) => badgeIn(row(name));
 
@@ -2020,7 +2016,7 @@ describe("sidebar tree (#217 R3)", () => {
       expect(item(/^Work/)).toHaveAttribute("aria-label", "Work, project, 2 items");
     });
 
-    it("the stray list (My Diagrams) is a top-level row too, so it gets a badge", () => {
+    it("every top-level row gets a badge in its id's colour", () => {
       renderTree();
       const mine = badgeOf(/^My Diagrams/)!;
       expect(mine).toHaveTextContent("M");
@@ -2072,6 +2068,152 @@ describe("sidebar tree (#217 R3)", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe("a project not found, a folder added from elsewhere (#253 R7·R8, Sidebar-Library ②③)", () => {
+    /** Work · architecture (not found) · client-diagrams (added from ~/Work) */
+    const places = (): FolderMeta[] => [
+      library()[0]!,
+      {
+        id: "arc",
+        name: "architecture",
+        updatedAt: 0,
+        diagrams: [],
+        folders: [],
+        missing: true,
+        path: "/Users/someone/Projects/architecture",
+        shown: "~/Projects/architecture",
+      },
+      {
+        id: "cli",
+        name: "client-diagrams",
+        updatedAt: now - 60_000,
+        diagrams: [{ id: "c1", title: "Overview", updatedAt: now - 60_000, readable: true }],
+        folders: [],
+        added: true,
+        path: "/Users/someone/Work/client-diagrams",
+        shown: "~/Work/client-diagrams",
+      },
+    ];
+    const menuItems = (name: string) =>
+      within(screen.getByRole("menu", { name }))
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent);
+
+    beforeEach(() => {
+      useLibraryStore.setState({ folders: places(), readFailed: false });
+      serve(places);
+    });
+
+    it("keeps its place, no chevron — a grey badge, its name muted, “Not found” where the count goes", () => {
+      renderTree();
+      const items = within(tree()).getAllByRole("treeitem");
+      expect(items.map((i) => i.getAttribute("aria-label"))).toEqual([
+        "Work, project, 2 items",
+        "architecture, project, not found",
+        "client-diagrams, project, 1 item",
+      ]);
+      expect(item(/^architecture/)).not.toHaveAttribute("aria-expanded");
+      expect(chevron(/^architecture/)).toBeNull();
+      const badge = row(/^architecture/).querySelector("[aria-hidden='true'].bg-fill-subtle");
+      expect(badge).toHaveClass("text-muted", "h-4", "w-4");
+      expect(badge).toHaveTextContent("A");
+      expect(badge?.previousElementSibling).toHaveClass("w-3.5");
+      expect(within(row(/^architecture/)).getByText("architecture")).toHaveClass(
+        "text-muted-strong",
+      );
+      const status = row(/^architecture/).querySelector("[data-count]");
+      expect(status).toHaveTextContent("Not found");
+      expect(status).toHaveClass("text-[11px]", "font-medium", "text-muted");
+      expect(status).toHaveAttribute("aria-hidden", "true");
+      // a project that is there looks like any other — added from elsewhere or not
+      expect(badgeIn(row(/^client-diagrams/))).toHaveClass(`bg-badge-${badgeColour("cli")}-soft`);
+      expect(within(row(/^client-diagrams/)).getByText("client-diagrams")).not.toHaveClass(
+        "text-muted-strong",
+      );
+    });
+
+    it("its menu is Locate… · Remove from Library — from the … and from a right-click", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.click(moreButton(/^architecture/)!);
+      expect(menuItems("architecture")).toEqual(["Locate…", "Remove from Library"]);
+      await user.keyboard("{Escape}");
+      fireEvent.contextMenu(row(/^architecture/), { clientX: 120, clientY: 160 });
+      expect(menuItems("architecture")).toEqual(["Locate…", "Remove from Library"]);
+    });
+
+    it("a folder added from elsewhere ends its menu with Remove from Library; one in the default location keeps Delete", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.click(moreButton(/^client-diagrams/)!);
+      expect(menuItems("client-diagrams")).toEqual([
+        "New diagram",
+        "New folder",
+        SHOW_IN,
+        "Copy Path",
+        "Rename",
+        "Remove from Library",
+      ]);
+      await user.keyboard("{Escape}");
+      await user.click(moreButton(/^Work/)!);
+      expect(menuItems("Work").at(-1)).toBe("Delete");
+    });
+
+    it("Locate… asks Rust, which shows the folder picker — located lists again; already says so", async () => {
+      const user = userEvent.setup();
+      serve(places, {}, { locate_project: "located" });
+      renderTree();
+      await user.click(moreButton(/^architecture/)!);
+      const before = calls("list_library").length;
+      await user.click(screen.getByRole("menuitem", { name: "Locate…" }));
+      await waitFor(() => expect(calls("list_library").length).toBe(before + 1));
+      expect(calls("locate_project")[0]![1]).toEqual({ id: "arc" });
+      serve(places, {}, { locate_project: "already" });
+      await user.click(moreButton(/^architecture/)!);
+      await user.click(screen.getByRole("menuitem", { name: "Locate…" }));
+      await waitFor(() => expect(toasts()).toEqual(["Already in the library"]));
+    });
+
+    it("Remove from Library goes at once — no question — and lists again", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.click(moreButton(/^client-diagrams/)!);
+      await user.click(screen.getByRole("menuitem", { name: "Remove from Library" }));
+      await waitFor(() => expect(calls("remove_project")[0]![1]).toEqual({ id: "cli" }));
+      expect(mockedAsk).not.toHaveBeenCalled();
+      expect(calls("delete_folder")).toHaveLength(0);
+    });
+
+    it("does not drag, rename or step — no ⌥↑/⌥↓ announced", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      const line = row(/^architecture/);
+      line.getBoundingClientRect = () =>
+        ({ top: 133, bottom: 163, left: 8, right: 240 }) as DOMRect;
+      fireEvent.pointerDown(line, { button: 0, clientX: 60, clientY: 140 });
+      const move = new Event("pointermove") as PointerEvent;
+      Object.assign(move, { clientX: 60, clientY: 190 });
+      act(() => {
+        window.dispatchEvent(move);
+      });
+      expect(document.body.querySelector("[data-drag-row]")).toBeNull();
+      expect(item(/^architecture/)).not.toHaveClass("opacity-40");
+      act(() => item(/^architecture/).focus());
+      await user.keyboard("{F2}");
+      expect(within(tree()).queryByRole("textbox")).toBeNull();
+      await user.keyboard("{Alt>}{ArrowUp}{/Alt}");
+      expect(calls("reorder_item")).toHaveLength(0);
+      expect(screen.getByRole("status").textContent).toBe("");
+      expect(item(/^architecture/)).not.toHaveAttribute("aria-keyshortcuts");
+    });
+
+    it("a double click opens it in Home, which says it cannot be found", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.dblClick(row(/^architecture/));
+      expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "arc" });
     });
   });
 });

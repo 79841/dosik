@@ -37,6 +37,20 @@
     "longDescription": "A modern diagram app: flowcharts, sequence, class and ER diagrams, exported to Markdown (Mermaid), PNG and SVG. A local bridge lets AI agents read and edit the canvas.",
     "copyright": "© 2026 Dosik",
     "publisher": "Dosik",
+    "fileAssociations": [
+      {
+        "ext": ["dosik"],
+        "name": "Dosik Diagram",
+        "description": "Dosik Diagram",
+        "role": "Editor",
+        "rank": "Owner",
+        "mimeType": "application/vnd.dosik+json",
+        "exportedType": {
+          "identifier": "app.dosik.desktop.diagram",
+          "conformsTo": ["public.json"]
+        }
+      }
+    ],
     "resources": {
       "../LICENSE": "LICENSE",
       "../THIRD_PARTY_NOTICES.txt": "THIRD_PARTY_NOTICES.txt",

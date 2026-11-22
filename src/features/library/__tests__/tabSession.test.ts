@@ -24,6 +24,7 @@ import { type DocTab, newTab, SESSION_KEY } from "../tabModel";
 import { useTabSession } from "../tabSession";
 import { hasUnsavedExternalChanges, resetUnsavedGuardForTests } from "../unsavedGuard";
 import { resetAutosaveForTests } from "../useAutosave";
+import { likeRust } from "../../../test/rustAnswers";
 
 const mockedInvoke = vi.mocked(invoke);
 const calls = (cmd: string) => mockedInvoke.mock.calls.filter(([c]) => c === cmd);
@@ -35,19 +36,21 @@ const doc = (title: string) => ({ ...blankDoc(), title });
 
 /** load_project answers from `files`; `pending` ids wait for `release` */
 const serve = (files: Record<string, string>, pending: Record<string, () => void> = {}) =>
-  mockedInvoke.mockImplementation(async (cmd, args) => {
-    if (cmd === "load_project") {
-      const { id } = args as { id: string };
-      if (id in pending) await new Promise<void>((resolve) => (pending[id] = resolve));
-      if (!(id in files)) throw new Error(`no such diagram: ${id}`);
-      // a document with pages: never shipped, never opened (#229 D2)
-      if (files[id] === "BOOK")
-        return '{"version":2,"title":"Book","pages":[{"id":"p","name":"P","nodes":[],"edges":[]}]}';
-      return JSON.stringify(doc(files[id]!));
-    }
-    if (cmd === "read_text_file") return JSON.stringify(doc("External"));
-    return undefined;
-  });
+  mockedInvoke.mockImplementation(
+    likeRust(async (cmd, args) => {
+      if (cmd === "load_project") {
+        const { id } = args as { id: string };
+        if (id in pending) await new Promise<void>((resolve) => (pending[id] = resolve));
+        if (!(id in files)) throw new Error(`no such diagram: ${id}`);
+        // a document with pages: never shipped, never opened (#229 D2)
+        if (files[id] === "BOOK")
+          return '{"version":2,"title":"Book","pages":[{"id":"p","name":"P","nodes":[],"edges":[]}]}';
+        return JSON.stringify(doc(files[id]!));
+      }
+      if (cmd === "read_text_file") return JSON.stringify(doc("External"));
+      return undefined;
+    }),
+  );
 
 /** tabs as the app starts with them: from the session, none read yet */
 const restored = (...ids: string[]): DocTab[] =>
@@ -318,18 +321,20 @@ describe("session restore (#218 D15, T31)", () => {
         let fileRead!: () => void;
         const files: Record<string, string> = { p2: "Two" };
         pending.p2 = () => {};
-        mockedInvoke.mockImplementation(async (cmd, args) => {
-          if (cmd === "read_text_file") {
-            await new Promise<void>((resolve) => (fileRead = resolve));
-            return JSON.stringify(doc("External"));
-          }
-          if (cmd === "load_project") {
-            const { id } = args as { id: string };
-            await new Promise<void>((resolve) => (pending[id] = resolve));
-            return JSON.stringify(doc(files[id]!));
-          }
-          return undefined;
-        });
+        mockedInvoke.mockImplementation(
+          likeRust(async (cmd, args) => {
+            if (cmd === "read_text_file") {
+              await new Promise<void>((resolve) => (fileRead = resolve));
+              return JSON.stringify(doc("External"));
+            }
+            if (cmd === "load_project") {
+              const { id } = args as { id: string };
+              await new Promise<void>((resolve) => (pending[id] = resolve));
+              return JSON.stringify(doc(files[id]!));
+            }
+            return undefined;
+          }),
+        );
         startWith("p2");
         const opening = openPathInTab("/x/ext.dosik.json");
         const reading = activateTab(tabFor("p2").id);
@@ -391,6 +396,28 @@ describe("session restore (#218 D15, T31)", () => {
     expect(app().tabs.map((t) => t.projectId)).toEqual(["p2"]);
   });
 
+  it("an unloaded tab whose diagram a project holds out of reach stays (#253)", () => {
+    startWith("p1", "p2");
+    renderHook(() => useTabSession());
+    act(() =>
+      useLibraryStore.setState({
+        folders: [
+          {
+            id: "f",
+            name: "F",
+            updatedAt: 0,
+            diagrams: [],
+            folders: [],
+            missing: true,
+            held: ["p1"],
+          },
+        ],
+        readFailed: false,
+      }),
+    );
+    expect(app().tabs.map((t) => t.projectId)).toEqual(["p1"]);
+  });
+
   it("a diagram in nested folders is in the listing too — its tab stays (#229 D8)", () => {
     startWith("p1", "p2");
     renderHook(() => useTabSession());
@@ -445,10 +472,12 @@ describe("starting from the saved session (#218 D15)", () => {
     const store = await import("../../../shared/lib/store");
     // the fresh module graph has its own Tauri mock
     const core = await import("@tauri-apps/api/core");
-    vi.mocked(core.invoke).mockImplementation(async (cmd, args) =>
-      cmd === "load_project"
-        ? JSON.stringify(doc((args as { id: string }).id === "p2" ? "Two" : "One"))
-        : undefined,
+    vi.mocked(core.invoke).mockImplementation(
+      likeRust(async (cmd, args) =>
+        cmd === "load_project"
+          ? JSON.stringify(doc((args as { id: string }).id === "p2" ? "Two" : "One"))
+          : undefined,
+      ),
     );
     expect(appStore.useAppStore.getState()).toMatchObject({ view: "home", activeTab: null });
     expect(

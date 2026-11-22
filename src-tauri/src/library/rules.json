@@ -1,0 +1,514 @@
+{
+  "about": "Naming and walking rules of the folder-backed library, shared by the app (Rust) and the MCP server (Node) so both name and skip the same things. Each section is a list of cases: what goes in and what must come out.",
+  "limits": {
+    "chars": 80,
+    "bytes": 240
+  },
+  "clean": [
+    {
+      "in": "Payments",
+      "default": "Untitled Diagram",
+      "out": "Payments"
+    },
+    {
+      "in": "  Payments  ",
+      "default": "Untitled Diagram",
+      "out": "Payments"
+    },
+    {
+      "in": "a/b\\c:d*e?f\"g<h>i|j",
+      "default": "Untitled Diagram",
+      "out": "a-b-c-d-e-f-g-h-i-j"
+    },
+    {
+      "in": "tab\there\nline",
+      "default": "Untitled Diagram",
+      "out": "tab-here-line"
+    },
+    {
+      "in": "bell\u0007\u007f\u0085",
+      "default": "Untitled Diagram",
+      "out": "bell---"
+    },
+    {
+      "in": "Flow\n",
+      "default": "Untitled Diagram",
+      "out": "Flow-"
+    },
+    {
+      "in": "///",
+      "default": "Untitled Folder",
+      "out": "---"
+    },
+    {
+      "in": ".hidden",
+      "default": "Untitled Folder",
+      "out": "hidden"
+    },
+    {
+      "in": " .. dots .. ",
+      "default": "Untitled Folder",
+      "out": "dots"
+    },
+    {
+      "in": "v1.2",
+      "default": "Untitled Folder",
+      "out": "v1.2"
+    },
+    {
+      "in": "...",
+      "default": "Untitled Project",
+      "out": "Untitled Project"
+    },
+    {
+      "in": "",
+      "default": "Untitled Diagram",
+      "out": "Untitled Diagram"
+    },
+    {
+      "in": "   ",
+      "default": "Untitled Diagram",
+      "out": "Untitled Diagram"
+    },
+    {
+      "in": "con",
+      "default": "Untitled Diagram",
+      "out": "con-"
+    },
+    {
+      "in": "CON",
+      "default": "Untitled Diagram",
+      "out": "CON-"
+    },
+    {
+      "in": "nul.backup",
+      "default": "Untitled Diagram",
+      "out": "nul-.backup"
+    },
+    {
+      "in": "Com7",
+      "default": "Untitled Diagram",
+      "out": "Com7-"
+    },
+    {
+      "in": "lpt9.x",
+      "default": "Untitled Diagram",
+      "out": "lpt9-.x"
+    },
+    {
+      "in": "console",
+      "default": "Untitled Diagram",
+      "out": "console"
+    },
+    {
+      "in": "com10",
+      "default": "Untitled Diagram",
+      "out": "com10"
+    },
+    {
+      "in": "CONIN$",
+      "default": "Untitled Diagram",
+      "out": "CONIN$-"
+    },
+    {
+      "in": "conout$.txt",
+      "default": "Untitled Diagram",
+      "out": "conout$-.txt"
+    },
+    {
+      "in": "COM0",
+      "default": "Untitled Diagram",
+      "out": "COM0-"
+    },
+    {
+      "in": "lpt0",
+      "default": "Untitled Diagram",
+      "out": "lpt0-"
+    },
+    {
+      "in": "COM\u00b9",
+      "default": "Untitled Diagram",
+      "out": "COM\u00b9-"
+    },
+    {
+      "in": "lpt\u00b3.x",
+      "default": "Untitled Diagram",
+      "out": "lpt\u00b3-.x"
+    },
+    {
+      "in": "com\u2074",
+      "default": "Untitled Diagram",
+      "out": "com\u2074"
+    },
+    {
+      "in": "aux                                                                                          x",
+      "default": "Untitled Diagram",
+      "out": "aux-"
+    },
+    {
+      "in": "con.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "default": "Untitled Diagram",
+      "out": "con-.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "in": "\uac00\ub098\ub2e4",
+      "default": "Untitled Diagram",
+      "out": "\uac00\ub098\ub2e4"
+    },
+    {
+      "in": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghij",
+      "default": "Untitled Diagram",
+      "out": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab"
+    },
+    {
+      "in": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwx.....z",
+      "default": "Untitled Diagram",
+      "out": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwx"
+    },
+    {
+      "in": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00",
+      "default": "Untitled Diagram",
+      "out": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+    },
+    {
+      "in": "\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00",
+      "default": "Untitled Diagram",
+      "out": "\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00"
+    }
+  ],
+  "cleanFolder": [
+    {
+      "in": "build.tmp",
+      "default": "Untitled Folder",
+      "out": "build.tmp-"
+    },
+    {
+      "in": "BUILD.TMP",
+      "default": "Untitled Folder",
+      "out": "BUILD.TMP-"
+    },
+    {
+      "in": "x.tmp.",
+      "default": "Untitled Folder",
+      "out": "x.tmp-"
+    },
+    {
+      "in": "Archive.dosik",
+      "default": "Untitled Folder",
+      "out": "Archive.dosik-"
+    },
+    {
+      "in": "Old.Dosik.Json",
+      "default": "Untitled Folder",
+      "out": "Old.Dosik.Json-"
+    },
+    {
+      "in": "notes.json",
+      "default": "Untitled Folder",
+      "out": "notes.json"
+    },
+    {
+      "in": "tmp",
+      "default": "Untitled Folder",
+      "out": "tmp"
+    },
+    {
+      "in": "v1.2",
+      "default": "Untitled Folder",
+      "out": "v1.2"
+    },
+    {
+      "in": "a/b.dosik",
+      "default": "Untitled Folder",
+      "out": "a-b.dosik-"
+    },
+    {
+      "in": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tmp",
+      "default": "Untitled Folder",
+      "out": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tm"
+    },
+    {
+      "in": "",
+      "default": "Untitled Project",
+      "out": "Untitled Project"
+    }
+  ],
+  "same": [
+    {
+      "a": "Payments",
+      "b": "payments",
+      "same": true
+    },
+    {
+      "a": "PAYMENTS",
+      "b": "payments",
+      "same": true
+    },
+    {
+      "a": "Payments",
+      "b": "Payments 2",
+      "same": false
+    },
+    {
+      "a": "\ud55c\uae00",
+      "b": "\u1112\u1161\u11ab\u1100\u1173\u11af",
+      "same": true
+    },
+    {
+      "a": "\uac00",
+      "b": "\u1100\u1161",
+      "same": true
+    },
+    {
+      "a": "\uac00",
+      "b": "\u1100",
+      "same": false
+    },
+    {
+      "a": "Caf\u00e9",
+      "b": "Cafe\u0301",
+      "same": true
+    },
+    {
+      "a": "CAF\u00c9",
+      "b": "cafe\u0301",
+      "same": true
+    },
+    {
+      "a": "\u304c",
+      "b": "\u304b\u3099",
+      "same": true
+    },
+    {
+      "a": "e\u0301",
+      "b": "e",
+      "same": false
+    }
+  ],
+  "unique": [
+    {
+      "wanted": "Payments",
+      "taken": [],
+      "out": "Payments"
+    },
+    {
+      "wanted": "Payments",
+      "taken": [
+        "payments"
+      ],
+      "out": "Payments 2"
+    },
+    {
+      "wanted": "Payments",
+      "taken": [
+        "Payments",
+        "payments 2",
+        "PAYMENTS 3"
+      ],
+      "out": "Payments 4"
+    },
+    {
+      "wanted": "Payments",
+      "taken": [
+        "Payments 2"
+      ],
+      "out": "Payments"
+    },
+    {
+      "wanted": "Payments",
+      "taken": [
+        "payments"
+      ],
+      "except": "payments",
+      "out": "Payments"
+    },
+    {
+      "wanted": "\ud55c\uae00",
+      "taken": [
+        "\u1112\u1161\u11ab\u1100\u1173\u11af"
+      ],
+      "out": "\ud55c\uae00 2"
+    },
+    {
+      "wanted": "Caf\u00e9",
+      "taken": [
+        "Cafe\u0301"
+      ],
+      "out": "Caf\u00e9 2"
+    },
+    {
+      "wanted": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab",
+      "taken": [
+        "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzab"
+      ],
+      "out": "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz 2"
+    },
+    {
+      "wanted": "\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00",
+      "taken": [
+        "\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00"
+      ],
+      "out": "\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00\uac00 2"
+    }
+  ],
+  "natural": [
+    [
+      "a",
+      "B",
+      "c"
+    ],
+    [
+      "Flow",
+      "Flow 2",
+      "Flow 3",
+      "Flow 10"
+    ],
+    [
+      "v1.2",
+      "v1.10",
+      "v2"
+    ],
+    [
+      "item 007",
+      "item 7",
+      "item 08"
+    ],
+    [
+      "Alpha",
+      "alpha",
+      "alpha 1"
+    ],
+    [
+      "1",
+      "2",
+      "10",
+      "a"
+    ]
+  ],
+  "maxDepth": 10,
+  "entries": [
+    {
+      "name": "Flow.dosik",
+      "dir": false,
+      "kind": "diagram",
+      "stem": "Flow"
+    },
+    {
+      "name": "Flow.dosik.json",
+      "dir": false,
+      "kind": "diagram",
+      "stem": "Flow"
+    },
+    {
+      "name": "Flow.DOSIK",
+      "dir": false,
+      "kind": "diagram",
+      "stem": "Flow"
+    },
+    {
+      "name": "Old.Dosik.Json",
+      "dir": false,
+      "kind": "diagram",
+      "stem": "Old"
+    },
+    {
+      "name": "a.b.dosik",
+      "dir": false,
+      "kind": "diagram",
+      "stem": "a.b"
+    },
+    {
+      "name": ".dosik",
+      "dir": false,
+      "kind": "skip"
+    },
+    {
+      "name": ".Flow.dosik",
+      "dir": false,
+      "kind": "skip"
+    },
+    {
+      "name": "Flow.dosik.tmp",
+      "dir": false,
+      "kind": "skip"
+    },
+    {
+      "name": "Flow.dosik.TMP",
+      "dir": false,
+      "kind": "skip"
+    },
+    {
+      "name": ".dosik-41-7.tmp",
+      "dir": false,
+      "kind": "skip"
+    },
+    {
+      "name": "notes.json",
+      "dir": false,
+      "kind": "other"
+    },
+    {
+      "name": "Flow.dosikx",
+      "dir": false,
+      "kind": "other"
+    },
+    {
+      "name": "Flow.json",
+      "dir": false,
+      "kind": "other"
+    },
+    {
+      "name": "Sub",
+      "dir": true,
+      "kind": "folder"
+    },
+    {
+      "name": "Archive.dosik",
+      "dir": true,
+      "kind": "folder"
+    },
+    {
+      "name": ".git",
+      "dir": true,
+      "kind": "skip"
+    },
+    {
+      "name": "build.tmp",
+      "dir": true,
+      "kind": "skip"
+    }
+  ],
+  "broad": {
+    "home": "/Users/a",
+    "cases": [
+      {
+        "path": "/",
+        "broad": true
+      },
+      {
+        "path": "/Users",
+        "broad": true
+      },
+      {
+        "path": "/Users/a",
+        "broad": true
+      },
+      {
+        "path": "/Users/a/Documents",
+        "broad": false
+      },
+      {
+        "path": "/Users/a/work/Repo",
+        "broad": false
+      },
+      {
+        "path": "/Users/a2",
+        "broad": false
+      },
+      {
+        "path": "/opt/diagrams",
+        "broad": false
+      }
+    ]
+  }
+}

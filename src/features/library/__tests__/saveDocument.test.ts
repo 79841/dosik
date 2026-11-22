@@ -12,6 +12,7 @@ import { saveActiveDocument } from "../saveDocument";
 import { activateTab, closeActiveTab, openDocument, resetTabsForTests } from "../tabActions";
 import { hasUnsavedExternalChanges, resetUnsavedGuardForTests } from "../unsavedGuard";
 import { resetAutosaveForTests } from "../useAutosave";
+import { likeRust } from "../../../test/rustAnswers";
 
 const mockedInvoke = vi.mocked(invoke);
 const mockedSave = vi.mocked(save);
@@ -46,7 +47,7 @@ describe("saveActiveDocument (#219 D5, T20)", () => {
     resetUnsavedGuardForTests();
     useToastStore.getState().dismissAll();
     mockedInvoke.mockReset();
-    mockedInvoke.mockResolvedValue(undefined);
+    mockedInvoke.mockImplementation(likeRust());
     mockedSave.mockReset();
     mockedAsk.mockReset();
     mockedAsk.mockResolvedValue(false);
@@ -73,15 +74,16 @@ describe("saveActiveDocument (#219 D5, T20)", () => {
     expect(mockedAsk).not.toHaveBeenCalled();
   });
 
-  it("without a path, a dialog picks one and that path becomes the document's", async () => {
+  it("without a path, a dialog picks one — a .dosik by default (#253 R11) — and that path becomes the document's", async () => {
     openExternalAndEdit(null);
-    mockedSave.mockResolvedValue("/tmp/picked.dosik.json");
+    mockedSave.mockResolvedValue("/tmp/picked.dosik");
     await saveActiveDocument();
-    expect(mockedSave).toHaveBeenCalledWith(
-      expect.objectContaining({ defaultPath: "Ext.dosik.json" }),
-    );
-    expect(written()?.path).toBe("/tmp/picked.dosik.json");
-    expect(useDiagramStore.getState().filePath).toBe("/tmp/picked.dosik.json");
+    expect(mockedSave).toHaveBeenCalledWith({
+      defaultPath: "Ext.dosik",
+      filters: [{ name: "Dosik Diagram", extensions: ["dosik"] }],
+    });
+    expect(written()?.path).toBe("/tmp/picked.dosik");
+    expect(useDiagramStore.getState().filePath).toBe("/tmp/picked.dosik");
     expect(toasts()).toEqual(["Saved"]);
   });
 
@@ -95,10 +97,12 @@ describe("saveActiveDocument (#219 D5, T20)", () => {
 
   it("a failed write only toasts an error — the baseline remains, so closing asks", async () => {
     openExternalAndEdit();
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === "write_text_file") throw new Error("disk full");
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd: string) => {
+        if (cmd === "write_text_file") throw new Error("disk full");
+        return undefined;
+      }),
+    );
     await saveActiveDocument();
     expect(toasts()).toEqual(["Error: disk full"]);
     expect(await closeActiveTab()).toBe(false);
@@ -108,12 +112,14 @@ describe("saveActiveDocument (#219 D5, T20)", () => {
   it("bridge edits that arrive during the write are not saved", async () => {
     openExternalAndEdit();
     let release: () => void = () => {};
-    mockedInvoke.mockImplementation((cmd: string) =>
-      cmd === "write_text_file"
-        ? new Promise<void>((resolve) => {
-            release = resolve;
-          })
-        : Promise.resolve(undefined),
+    mockedInvoke.mockImplementation(
+      likeRust((cmd: string) =>
+        cmd === "write_text_file"
+          ? new Promise<void>((resolve) => {
+              release = resolve;
+            })
+          : Promise.resolve(undefined),
+      ),
     );
     const saving = saveActiveDocument();
     await waitFor(() => expect(written()).toBeDefined());
@@ -137,12 +143,14 @@ describe("saveActiveDocument (#219 D5, T20)", () => {
     openExternalAndEdit();
     const fileTab = useAppStore.getState().activeTab as string;
     let release: () => void = () => {};
-    mockedInvoke.mockImplementation((cmd: string) =>
-      cmd === "write_text_file"
-        ? new Promise<void>((resolve) => {
-            release = resolve;
-          })
-        : Promise.resolve(undefined),
+    mockedInvoke.mockImplementation(
+      likeRust((cmd: string) =>
+        cmd === "write_text_file"
+          ? new Promise<void>((resolve) => {
+              release = resolve;
+            })
+          : Promise.resolve(undefined),
+      ),
     );
     const saving = saveActiveDocument();
     await waitFor(() => expect(written()).toBeDefined());

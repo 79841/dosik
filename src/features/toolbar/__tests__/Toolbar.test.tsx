@@ -126,7 +126,6 @@ const listed = (): FolderMeta[] => [
     name: "My Diagrams",
     updatedAt: 1,
     diagrams: [{ id: "lost", title: "Lost", updatedAt: 1, readable: true }],
-    stray: true,
   },
 ];
 const crumbs = () => screen.getByRole("navigation", { name: "Breadcrumb" });
@@ -162,7 +161,7 @@ describe("path (#229 D3, T42)", () => {
     expect(crumbs().textContent).toBe("Billing/Untitled Diagram");
   });
 
-  it("a diagram in the stray list — My Diagrams / title", () => {
+  it("a diagram of another project — My Diagrams / title", () => {
     useLibraryStore.setState({ folders: listed() });
     openDocument(makeDoc([], [], "Lost"), { projectId: "lost" });
     renderToolbar();

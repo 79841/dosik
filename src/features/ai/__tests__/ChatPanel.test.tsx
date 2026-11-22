@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { act } from "react";
 import userEvent from "@testing-library/user-event";
@@ -7,6 +8,7 @@ import { makeDoc, makeEdge, makeNode } from "../../../shared/lib/__tests__/testF
 import { useSidebarStore } from "../../../shared/lib/sidebarLayout";
 import { useDiagramStore } from "../../../shared/lib/store";
 import { useToastStore } from "../../../shared/lib/toastStore";
+import { likeRust } from "../../../test/rustAnswers";
 import { handleAppKeyDown } from "../../chrome/appKeymap";
 import { openDocument, resetTabsForTests } from "../../library/tabActions";
 import { clampChatWidth, MAX_CHAT_WIDTH, MIN_CHAT_WIDTH } from "../panelWidth";
@@ -537,6 +539,7 @@ describe("messages and composer (#219 D15, T26)", () => {
 describe("⌘S leaves the chat input alone (#219)", () => {
   const appKeys = (e: KeyboardEvent) => handleAppKeyDown(e, true);
   beforeEach(() => {
+    vi.mocked(invoke).mockImplementation(likeRust());
     resetTabsForTests();
     useToastStore.getState().dismissAll();
     useChatStore.setState({ open: true, busy: false, messages: [] });

@@ -14,8 +14,8 @@ import { latestProject, savableFolder } from "./libraryTree";
  */
 
 /**
- * ⑤ The most recently edited real project, ties to the lower id — the one
- * Rust's `latest_folder` picks, so the project a save with no folder would
+ * ⑤ The most recently edited real project, ties to the one listed first — the one
+ * Rust's `default_target` picks, so the project a save with no folder would
  * have landed in anyway. Worked out, not read off the listing, which is in
  * the user's order since #230 (D5).
  */
@@ -32,7 +32,7 @@ export const namedTarget = (
  * ① the caller's folder → ② the folder the active document tab's diagram is
  * in → ③ while Home is on screen, the folder it shows — a card selected
  * there is not a place (#231 D7) → ④ the project picked with Change → ⑤ the
- * most recently edited project → ⑥ none (#229 D14: any depth, never a stray).
+ * most recently edited project → ⑥ none (#229 D14: any depth).
  */
 export const targetFolder = (folder?: string): string | undefined => {
   if (folder) return folder;

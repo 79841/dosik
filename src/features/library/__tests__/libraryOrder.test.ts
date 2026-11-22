@@ -46,7 +46,7 @@ const folder = (
 /**
  * The spec's example: Payments holds Checkout (with Order flow), Ledger,
  * Payouts and Archive in the user's order; Onboarding first among the
- * projects; a stray listing last.
+ * projects.
  */
 const library = (): FolderMeta[] => [
   folder("onb", 1, [diagram("wel", 1)], [], { order: ["diagram:wel"] }),
@@ -60,7 +60,6 @@ const library = (): FolderMeta[] => [
     ],
     { order: ["folder:chk", "diagram:led", "diagram:pyt", "folder:arc"] },
   ),
-  folder("my-diagrams", 0, [diagram("lost", 0)], [], { stray: true, order: ["diagram:lost"] }),
 ];
 
 const keysOf = (f: FolderMeta) => childrenOf(f).map(childKey);
@@ -159,10 +158,10 @@ describe("childrenOf — manual order (#230 D5, T11)", () => {
 });
 
 describe("latestProject — independent of array order (#230 D5, T12)", () => {
-  it("the real project with the most recent descendant, ties go to the smaller id", () => {
+  it("the project with the most recent descendant, ties to the one listed first — as Rust picks", () => {
     expect(latestProject(library())?.id).toBe("pay");
-    const tie = [folder("b", 5), folder("a", 5), folder("z", 9, [], [], { stray: true })];
-    expect(latestProject(tie)?.id).toBe("a");
+    const tie = [folder("b", 5), folder("a", 5)];
+    expect(latestProject(tie)?.id).toBe("b");
     expect(latestProject([])).toBeNull();
     expect(latestProject(null)).toBeNull();
   });
@@ -186,12 +185,9 @@ describe("where things can go (#230 D7)", () => {
     expect(canPlace(lib, "diagram:led", null)).toBe(false);
     expect(canPlace(lib, "folder:chk", null)).toBe(false);
     expect(canPlace(lib, "diagram:led", "chk")).toBe(true);
-    expect(canPlace(lib, "diagram:led", "my-diagrams")).toBe(false);
     expect(canPlace(lib, "folder:chk", "onb")).toBe(true);
     expect(canPlace(lib, "folder:chk", "arc")).toBe(true);
     expect(canPlace(lib, "folder:chk", "gone")).toBe(false);
-    // the stray listing's diagram can go out to a real folder
-    expect(canPlace(lib, "diagram:lost", "pay")).toBe(true);
   });
 
   it("canPlace — a folder does not go into itself or its descendants", () => {
@@ -245,11 +241,11 @@ describe("placedInList — the list shown right away (#230 D13, T11)", () => {
     expect(find(folderMoved, "pay").folders.map((f) => f.id)).toEqual(["arc"]);
   });
 
-  it("project order — the stray list stays at the end", () => {
+  it("project order — among the projects", () => {
     const next = placedInList(library(), "folder:pay", { parent: null, index: 0 });
-    expect(next.map((f) => f.id)).toEqual(["pay", "onb", "my-diagrams"]);
+    expect(next.map((f) => f.id)).toEqual(["pay", "onb"]);
     const end = placedInList(library(), "folder:onb", { parent: null, index: 99 });
-    expect(end.map((f) => f.id)).toEqual(["pay", "onb", "my-diagrams"]);
+    expect(end.map((f) => f.id)).toEqual(["pay", "onb"]);
   });
 
   it("a parent without order starts from the order it showed", () => {
@@ -266,7 +262,7 @@ describe("placedInList — the list shown right away (#230 D13, T11)", () => {
 });
 
 describe("siblingsOf (#230 D10)", () => {
-  it("parent, sibling keys and position — the root for projects, null for stray", () => {
+  it("parent, sibling keys and position — the root for projects, null for what is not listed", () => {
     expect(siblingsOf(library(), "diagram:pyt")).toEqual({
       parent: "pay",
       keys: ["folder:chk", "diagram:led", "diagram:pyt", "folder:arc"],
@@ -277,8 +273,6 @@ describe("siblingsOf (#230 D10)", () => {
       keys: ["folder:onb", "folder:pay"],
       index: 1,
     });
-    expect(siblingsOf(library(), "diagram:lost")).toBeNull();
-    expect(siblingsOf(library(), "folder:my-diagrams")).toBeNull();
     expect(siblingsOf(library(), "diagram:ghost")).toBeNull();
   });
 });

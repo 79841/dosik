@@ -7,16 +7,8 @@ import { useLibraryStore } from "../libraryStore";
 import { openDocument, resetTabsForTests, showHomeTab } from "../tabActions";
 import { defaultTarget, namedTarget, targetFolder } from "../targets";
 
-/** newest first, as `list_library` sorts them — the order Rust's `latest_folder` agrees with */
+/** newest first, as `list_library` sorts them — the order Rust's `default_target` agrees with */
 const library = (): FolderMeta[] => [
-  {
-    id: "my-diagrams",
-    name: "My Diagrams",
-    updatedAt: 9,
-    stray: true,
-    diagrams: [{ id: "lost", title: "Lost", updatedAt: 9, readable: true }],
-    folders: [],
-  },
   {
     id: "work",
     name: "Work",
@@ -51,12 +43,11 @@ describe("where a new diagram goes (#220 D8)", () => {
   });
 
   describe("defaultTarget (T3)", () => {
-    it("the first non-stray project in the listing — the listing is ordered by most recent change", () => {
+    it("the most recently changed project in the listing", () => {
       expect(defaultTarget(library())?.id).toBe("work");
     });
 
-    it("null when there are only strays or nothing", () => {
-      expect(defaultTarget(library().slice(0, 1))).toBeNull();
+    it("null when there is no project", () => {
       expect(defaultTarget([])).toBeNull();
       expect(defaultTarget(null)).toBeNull();
     });
@@ -68,9 +59,8 @@ describe("where a new diagram goes (#220 D8)", () => {
       expect(namedTarget(library(), "side")?.name).toBe("Side");
     });
 
-    it("the default if the picked one vanished or is stray, null if there are no projects", () => {
+    it("the default if the picked one vanished, null if there are no projects", () => {
       expect(namedTarget(library(), "gone")?.name).toBe("Work");
-      expect(namedTarget(library(), "my-diagrams")?.name).toBe("Work");
       expect(namedTarget([], "side")).toBeNull();
     });
   });
@@ -97,9 +87,22 @@ describe("where a new diagram goes (#220 D8)", () => {
       expect(targetFolder()).toBe("side");
     });
 
-    it("a diagram in a stray project is not a target — it has no folder", () => {
-      openDocument(blankDoc(), { projectId: "lost" });
+    it("a project not found is never a target — Home showing it, Change having picked it, or the newest (#253 R7)", () => {
+      const lost: FolderMeta = {
+        id: "arc",
+        name: "architecture",
+        updatedAt: 99,
+        missing: true,
+        diagrams: [],
+        folders: [],
+      };
+      useLibraryStore.setState({ folders: [lost, ...library()] });
+      showHomeTab({ kind: "folder", folder: "arc" });
       expect(targetFolder()).toBe("work");
+      useAppStore.setState({ newDiagramTarget: "arc" });
+      expect(targetFolder()).toBe("work");
+      expect(namedTarget([lost, ...library()], "arc")?.id).toBe("work");
+      expect(defaultTarget([lost])).toBeNull();
     });
 
     it("③ when Home is active, the Home view's folder", () => {

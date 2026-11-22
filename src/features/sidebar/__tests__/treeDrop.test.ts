@@ -32,10 +32,9 @@ const library = (): FolderMeta[] => [
     [folder("chk", [diagram("ord")], [], { order: ["diagram:ord"] }), folder("arc")],
     { order: ["folder:chk", "diagram:led", "diagram:pyt", "folder:arc"] },
   ),
-  folder("my-diagrams", [diagram("lost")], [], { stray: true, order: ["diagram:lost"] }),
 ];
 
-const scene = (folders = library(), open = ["pay", "chk", "my-diagrams"]) => {
+const scene = (folders = library(), open = ["pay", "chk"]) => {
   const rows = visibleRows(buildTree(folders, []), new Set(open.map(folderKey)));
   const boxes = new Map<TreeKey, { top: number; bottom: number }>(
     rows.map((r, i) => [r.key, { top: 100 + i * 27, bottom: 126 + i * 27 }]),
@@ -107,9 +106,7 @@ describe("dropAt — dragging a diagram (#230 D9, T13)", () => {
     expect(s.at("folder:chk", s.top("folder:pay") + 13)).toBeNull();
   });
 
-  it("the stray list and outside the tree have no target", () => {
-    expect(s.at(pyt, s.top("folder:my-diagrams") + 13)).toBeNull();
-    expect(s.at(pyt, s.top("diagram:lost") + 3)).toBeNull();
+  it("outside the tree has no target", () => {
     expect(s.at(pyt, 50)).toBeNull();
     expect(s.at(pyt, 2000)).toBeNull();
   });
@@ -118,13 +115,6 @@ describe("dropAt — dragging a diagram (#230 D9, T13)", () => {
     expect(s.at(pyt, s.top("diagram:led") - 0.5)).toMatchObject({
       line: { row: "diagram:led", edge: "top" },
     });
-  });
-
-  it("a stray diagram can be dragged out into a real folder", () => {
-    expect(s.at("diagram:lost", s.top("diagram:led") + 3)).toMatchObject({
-      placement: { parent: "pay", index: 1 },
-    });
-    expect(s.at("diagram:lost", s.top("folder:pay") + 13)).toMatchObject({ kind: "into" });
   });
 });
 
@@ -166,14 +156,11 @@ describe("dropAt — dragging a project: project blocks (#230 D9)", () => {
     // pay's own block: no move
     expect(s.at("folder:pay", s.top("folder:pay") + 5)).toBeNull();
     expect(s.at("folder:pay", s.top("folder:arc") + 20)).toBeNull();
-    // onb past pay's lower half: the end of the real projects, before the stray listing
+    // onb past pay's lower half: the end of the projects
     expect(s.at("folder:onb", s.top("diagram:pyt") + 20)).toEqual({
       kind: "slot",
       placement: { parent: null, index: 1 },
       line: { row: "folder:arc", edge: "bottom", level: 1 },
-    });
-    expect(s.at("folder:onb", s.top("diagram:lost"))).toMatchObject({
-      placement: { parent: null, index: 1 },
     });
   });
 
@@ -183,8 +170,41 @@ describe("dropAt — dragging a project: project blocks (#230 D9)", () => {
   });
 });
 
+describe("a project not found (#253 R7)", () => {
+  /** onb · lost (not found) · pay ▾ […] */
+  const lost = (): FolderMeta[] => {
+    const [onb, pay] = library();
+    return [onb!, folder("lost", [], [], { missing: true }), pay!];
+  };
+  const s = scene(lost(), ["pay", "chk"]);
+
+  it("takes nothing dropped on it — its row is no way in", () => {
+    expect(s.at("diagram:pyt", s.top("folder:lost") + 13)).toBeNull();
+    expect(s.at("folder:chk", s.top("folder:lost") + 2)).toBeNull();
+  });
+
+  it("keeps its place among the projects — a project dragged past it counts it", () => {
+    expect(s.at("folder:onb", s.top("diagram:pyt") + 20)).toMatchObject({
+      placement: { parent: null, index: 2 },
+    });
+    expect(s.at("folder:pay", s.top("folder:lost") + 2)).toEqual({
+      kind: "slot",
+      placement: { parent: null, index: 1 },
+      line: { row: "folder:lost", edge: "top", level: 1 },
+    });
+  });
+
+  it("does not move itself — no drop, no ⌥↑/⌥↓", () => {
+    expect(s.at("folder:lost", 50)).toBeNull();
+    expect(keyboardStep(lost(), "folder:lost", -1)).toBeNull();
+    expect(keyboardStep(lost(), "folder:lost", 1)).toBeNull();
+    // the others step over it
+    expect(keyboardStep(lost(), "folder:pay", -1)).toEqual({ parent: null, index: 1, count: 3 });
+  });
+});
+
 describe("keyboardStep (#230 D10, T14)", () => {
-  it("a slot between siblings — edge at the ends, null for stray", () => {
+  it("a slot between siblings — edge at the ends", () => {
     expect(keyboardStep(library(), "diagram:led", 1)).toEqual({
       parent: "pay",
       index: 2,
@@ -197,7 +217,6 @@ describe("keyboardStep (#230 D10, T14)", () => {
       index: 0,
       count: 2,
     });
-    expect(keyboardStep(library(), "diagram:lost", -1)).toBeNull();
   });
 
   it("announcement sentences", () => {

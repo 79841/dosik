@@ -23,25 +23,31 @@ const SIZE_CLASS: Record<ProjectBadgeSize, string> = {
   board: "h-5 w-5 rounded-[5.5px] text-[12px]",
 };
 
+/** a project whose folder cannot be found (#253 R7): its mark greyed */
+const GREYED_CLASS = "bg-fill-subtle text-muted";
+
 /**
  * A project's mark (#236 D3, `badge` in the design system): the first letter
  * of its name in its colour on that colour's tint. The colour comes from the
- * project's folder id. Not read — the name beside it is.
+ * project's folder id; `greyed`, a project not found, has none (#253 R7). Not
+ * read — the name beside it is.
  */
 export const ProjectBadge = ({
   id,
   name,
   size = 16,
+  greyed = false,
   className = "",
 }: {
   id: string;
   name: string;
   size?: ProjectBadgeSize;
+  greyed?: boolean;
   className?: string;
 }) => (
   <span
     aria-hidden="true"
-    className={`inline-flex flex-none items-center justify-center font-bold leading-none ${SIZE_CLASS[size]} ${COLOUR_CLASS[badgeColour(id)]} ${className}`}
+    className={`inline-flex flex-none items-center justify-center font-bold leading-none ${SIZE_CLASS[size]} ${greyed ? GREYED_CLASS : COLOUR_CLASS[badgeColour(id)]} ${className}`}
   >
     {badgeLetter(name)}
   </span>

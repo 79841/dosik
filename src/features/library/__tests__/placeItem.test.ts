@@ -154,22 +154,6 @@ describe("placeItem (#230 D13, T21)", () => {
     expect(useAppStore.getState().tabs.map((t) => t.projectId)).toEqual(["ord"]);
   });
 
-  it("a stray diagram moves into a real folder — exactly where the drag showed it (#230)", async () => {
-    const stray: FolderMeta = {
-      id: "my-diagrams",
-      name: "My Diagrams",
-      updatedAt: 0,
-      stray: true,
-      diagrams: [{ id: "lost", title: "Lost", updatedAt: 0, readable: true }],
-      folders: [],
-      order: ["diagram:lost"],
-    };
-    useLibraryStore.setState({ folders: [...library(), stray] });
-    expect(await placeItem("diagram:lost", { parent: "pay", index: 1 })).toBe(true);
-    expect(calls("move_project")[0]![1]).toEqual({ id: "lost", folder: "pay", index: 1 });
-    expect(toasts()).toEqual(["Moved “Lost” to Payments"]);
-  });
-
   it("reordering within the same parent does not wait for autosave — the file does not move (#230)", async () => {
     renderHook(() => useAutosave());
     openDocument(blankDoc(), { projectId: "led" });

@@ -1,5 +1,5 @@
 /**
- * The built-in architecture icon set (#9). Ids are stored in `.dosik.json`
+ * The built-in architecture icon set (#9). Ids are stored in `.dosik` files
  * (`shape: "icon"`, `icon: "<id>"`) and exposed through the bridge, so they
  * are a contract: ids are only ever added, never removed or renamed.
  */

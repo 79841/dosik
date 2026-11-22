@@ -4,13 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useDiagramStore } from "../../../shared/lib/store";
 import { useToastStore } from "../../../shared/lib/toastStore";
+import { useAppStore } from "../appStore";
 import { blankDoc } from "../libraryApi";
+import { newTab } from "../tabModel";
 import {
   AUTOSAVE_DEBOUNCE_MS,
+  baseStampOf,
   flushAutosave,
+  forgetProject,
+  noteProjectContents,
+  onSaveRefused,
   resetAutosaveForTests,
   useAutosave,
 } from "../useAutosave";
+import { likeRust } from "../../../test/rustAnswers";
 
 const mockedInvoke = vi.mocked(invoke);
 const saves = () => mockedInvoke.mock.calls.filter(([cmd]) => cmd === "save_project");
@@ -23,7 +30,7 @@ describe("useAutosave (#114)", () => {
     resetAutosaveForTests();
     useDiagramStore.getState().loadDoc(blankDoc(), null);
     useToastStore.getState().dismissAll();
-    mockedInvoke.mockResolvedValue(undefined);
+    mockedInvoke.mockImplementation(likeRust());
   });
   afterEach(() => vi.useRealTimers());
 
@@ -91,10 +98,12 @@ describe("useAutosave (#114)", () => {
   it("reports a save failure with an error toast and does not let the exception escape", async () => {
     renderHook(() => useAutosave());
     useDiagramStore.getState().openProject("p1", blankDoc());
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === "save_project") throw new Error("disk full");
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd) => {
+        if (cmd === "save_project") throw new Error("disk full");
+        return undefined;
+      }),
+    );
     addNode("a");
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
     expect(useToastStore.getState().toasts.map((t) => t.text)).toEqual(["Error: disk full"]);
@@ -117,11 +126,13 @@ describe("useAutosave (#114)", () => {
     useDiagramStore.getState().openProject("p1", blankDoc());
     let finish!: () => void;
     mockedInvoke.mockImplementation(
-      (cmd) =>
-        new Promise((resolve) => {
-          if (cmd === "save_project") finish = () => resolve(undefined);
-          else resolve(undefined);
-        }),
+      likeRust(
+        (cmd) =>
+          new Promise((resolve) => {
+            if (cmd === "save_project") finish = () => resolve(undefined);
+            else resolve(undefined);
+          }),
+      ),
     );
     addNode("a");
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
@@ -161,11 +172,13 @@ describe("useAutosave (#114)", () => {
     // only the first write is slow; the writes queued behind it resolve at once
     let finish: (() => void) | null = null;
     mockedInvoke.mockImplementation(
-      (cmd) =>
-        new Promise((resolve) => {
-          if (cmd === "save_project" && finish === null) finish = () => resolve(undefined);
-          else resolve(undefined);
-        }),
+      likeRust(
+        (cmd) =>
+          new Promise((resolve) => {
+            if (cmd === "save_project" && finish === null) finish = () => resolve(undefined);
+            else resolve(undefined);
+          }),
+      ),
     );
     addNode("a");
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
@@ -183,10 +196,12 @@ describe("useAutosave (#114)", () => {
     renderHook(() => useAutosave());
     useDiagramStore.getState().openProject("p1", blankDoc());
     let fail = true;
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === "save_project" && fail) throw new Error("disk full");
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd) => {
+        if (cmd === "save_project" && fail) throw new Error("disk full");
+        return undefined;
+      }),
+    );
     addNode("a");
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
     expect(saves()).toHaveLength(1);
@@ -201,10 +216,12 @@ describe("useAutosave (#114)", () => {
     renderHook(() => useAutosave());
     useDiagramStore.getState().openProject("p1", blankDoc());
     let fail = true;
-    mockedInvoke.mockImplementation(async (cmd) => {
-      if (cmd === "save_project" && fail) throw new Error("disk full");
-      return undefined;
-    });
+    mockedInvoke.mockImplementation(
+      likeRust(async (cmd) => {
+        if (cmd === "save_project" && fail) throw new Error("disk full");
+        return undefined;
+      }),
+    );
     addNode("a"); // C1 — fails
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
     addNode("b"); // C2 — fails
@@ -228,5 +245,191 @@ describe("useAutosave (#114)", () => {
     await flushing;
     expect(saves()).toHaveLength(1);
     expect(saves()[0]![1]).toMatchObject({ id: "p1" });
+  });
+
+  describe("a library in real folders (#253)", () => {
+    /** save_project answers each save in turn from `answers`, then as written */
+    const answering = (...answers: unknown[]) =>
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd) => (cmd === "save_project" ? answers.shift() : undefined)),
+      );
+    const contentsOf = (i: number) =>
+      JSON.parse((saves()[i]![1] as { contents: string }).contents) as { title: string };
+
+    it("each save brings the stamp its tab last saw — from the read, then from the save before it", async () => {
+      renderHook(() => useAutosave());
+      useDiagramStore.getState().openProject("p1", blankDoc());
+      noteProjectContents("p1", blankDoc(), "1-10-aa");
+      answering({ kind: "saved", name: "Untitled Diagram", stamp: "2-20-bb" });
+      addNode("a");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(saves()[0]![1]).toMatchObject({ id: "p1", base: "1-10-aa" });
+      expect(baseStampOf("p1")).toBe("2-20-bb");
+      addNode("b");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(saves()[1]![1]).toMatchObject({ base: "2-20-bb" });
+    });
+
+    it("a write queued behind another starts from the stamp that one left", async () => {
+      renderHook(() => useAutosave());
+      useDiagramStore.getState().openProject("p1", blankDoc());
+      noteProjectContents("p1", blankDoc(), "1-10-aa");
+      let finish!: (answer: unknown) => void;
+      mockedInvoke.mockImplementation(
+        likeRust((cmd) =>
+          cmd !== "save_project"
+            ? Promise.resolve(undefined)
+            : saves().length === 1
+              ? new Promise((resolve) => {
+                  finish = resolve;
+                })
+              : Promise.resolve({ kind: "saved", name: "Untitled Diagram", stamp: "3-30-cc" }),
+        ),
+      );
+      addNode("a");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      addNode("b");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(saves()).toHaveLength(1);
+      finish({ kind: "saved", name: "Untitled Diagram", stamp: "2-20-bb" });
+      await flushAutosave();
+      expect(saves()).toHaveLength(2);
+      expect(saves()[1]![1]).toMatchObject({ base: "2-20-bb" });
+    });
+
+    it("no stamp known: the save goes without one", async () => {
+      renderHook(() => useAutosave());
+      useDiagramStore.getState().openProject("p1", blankDoc());
+      noteProjectContents("p1", blankDoc());
+      addNode("a");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(saves()[0]![1]).not.toHaveProperty("base");
+    });
+
+    it("saved under another name, the diagram takes it as its title — no undo step (D8)", async () => {
+      renderHook(() => useAutosave());
+      useDiagramStore.getState().openProject("p1", blankDoc());
+      answering({ kind: "saved", name: "Flow 2", stamp: "2-20-bb" });
+      useDiagramStore.getState().commit();
+      useDiagramStore.getState().setTitle("Flow");
+      const steps = useDiagramStore.getState().past.length;
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(contentsOf(0).title).toBe("Flow");
+      expect(useDiagramStore.getState().title).toBe("Flow 2");
+      expect(useDiagramStore.getState().past).toHaveLength(steps);
+      // the title the file has goes to disk with the next save, and stays
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(contentsOf(1).title).toBe("Flow 2");
+      // ⌘Z goes back to the title before the edit
+      useDiagramStore.getState().undo();
+      expect(useDiagramStore.getState().title).toBe("Untitled Diagram");
+    });
+
+    it("a title typed again while the save was on its way is not taken back", async () => {
+      renderHook(() => useAutosave());
+      useDiagramStore.getState().openProject("p1", blankDoc());
+      let finish!: (answer: unknown) => void;
+      mockedInvoke.mockImplementation(
+        likeRust((cmd) =>
+          cmd === "save_project"
+            ? new Promise((resolve) => {
+                finish = resolve;
+              })
+            : Promise.resolve(undefined),
+        ),
+      );
+      useDiagramStore.getState().setTitle("a/b");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      useDiagramStore.getState().setTitle("Typed on");
+      finish({ kind: "saved", name: "a-b", stamp: "2-20-bb" });
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(useDiagramStore.getState().title).toBe("Typed on");
+    });
+
+    it("a diagram left for another tab takes its saved name in its tab", async () => {
+      renderHook(() => useAutosave());
+      useDiagramStore.getState().openProject("p1", blankDoc());
+      let finish!: (answer: unknown) => void;
+      mockedInvoke.mockImplementation(
+        likeRust((cmd) =>
+          cmd === "save_project"
+            ? new Promise((resolve) => {
+                finish = resolve;
+              })
+            : Promise.resolve(undefined),
+        ),
+      );
+      useDiagramStore.getState().setTitle("Flow");
+      const flushing = flushAutosave();
+      // the tab is left while its save is on its way: its document is a snapshot now
+      const left = {
+        ...newTab({ projectId: "p1", filePath: null, title: "Flow" }),
+        doc: { ...useDiagramStore.getState(), title: "Flow" },
+      };
+      const other = newTab({ projectId: "p2", filePath: null, title: "Other" });
+      useAppStore.getState().commitTabs({ tabs: [left, other], activeTab: other.id });
+      useDiagramStore.getState().openProject("p2", { ...blankDoc(), title: "Other" });
+      await vi.waitFor(() => expect(saves()).toHaveLength(1));
+      finish({ kind: "saved", name: "Flow 2", stamp: "2-20-bb" });
+      await flushing;
+      const tab = useAppStore.getState().tabs.find((t) => t.id === left.id);
+      expect(tab?.title).toBe("Flow 2");
+      expect(tab?.doc?.title).toBe("Flow 2");
+      expect(useDiagramStore.getState().title).toBe("Other");
+      useAppStore.getState().commitTabs({ tabs: [], activeTab: null });
+    });
+
+    it("a diagram gone from disk is not written again until it is read again (D13)", async () => {
+      renderHook(() => useAutosave());
+      useDiagramStore.getState().openProject("p1", blankDoc());
+      noteProjectContents("p1", blankDoc(), "1-10-aa");
+      forgetProject("p1");
+      addNode("a");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      await flushAutosave();
+      expect(saves()).toHaveLength(0);
+      // found again (Locate…) and read: written as ever
+      noteProjectContents("p1", useDiagramStore.getState().toDoc(), "2-10-bb");
+      addNode("b");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(saves()[0]![1]).toMatchObject({ base: "2-10-bb" });
+    });
+
+    it("an answer of a kind the app does not know counts as a failed save — toast, bytes unwritten", async () => {
+      renderHook(() => useAutosave());
+      useDiagramStore.getState().openProject("p1", blankDoc());
+      answering({ kind: "written" });
+      addNode("a");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(useToastStore.getState().toasts.map((t) => t.text)).toEqual([
+        "Error: Couldn't tell whether the diagram was saved",
+      ]);
+      // the same bytes are tried again
+      useDiagramStore.setState((st) => ({ nodes: [...st.nodes] }));
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(saves()).toHaveLength(2);
+    });
+
+    it("a save Rust refuses is told to the tabs, and its bytes count as unwritten (D11)", async () => {
+      renderHook(() => useAutosave());
+      const told: [string, string][] = [];
+      onSaveRefused((id, why) => told.push([id, why]));
+      useDiagramStore.getState().openProject("p1", blankDoc());
+      answering({ kind: "changedOnDisk" }, { kind: "gone" });
+      addNode("a");
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(told).toEqual([["p1", "changedOnDisk"]]);
+      // the same bytes are tried again: they never reached the disk
+      useDiagramStore.setState((st) => ({ nodes: [...st.nodes] }));
+      await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS);
+      expect(saves()).toHaveLength(2);
+      expect(told).toEqual([
+        ["p1", "changedOnDisk"],
+        ["p1", "gone"],
+      ]);
+      expect(useToastStore.getState().toasts).toEqual([]);
+    });
   });
 });

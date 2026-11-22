@@ -4,7 +4,15 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { MCP_PATHS, PACKAGE_INFO, resolveMcpPaths } from "../mcp/paths.mjs";
+import {
+  appDataDir,
+  isDevRun,
+  libraryLocation,
+  libraryRecordDir,
+  MCP_PATHS,
+  PACKAGE_INFO,
+  resolveMcpPaths,
+} from "../mcp/paths.mjs";
 
 /**
  * Where the MCP server finds its parts (#252): in the repository it builds
@@ -60,5 +68,74 @@ describe("MCP server paths (#252)", () => {
     expect(paths.packaged).toBe(false);
     expect(paths.root).toBe(repo);
     expect(paths.bundleId).toBe("x.y");
+  });
+});
+
+/**
+ * Where the app keeps its library record (#253): the MCP server registers
+ * projects there for the app to take in, so it must find the very folder the
+ * app writes — Tauri's app data folder for the bundle identifier.
+ */
+describe("the app's data and library folders (#253)", () => {
+  const ID = "app.dosik.desktop";
+
+  it("is the app data folder Tauri uses on each platform", () => {
+    expect(appDataDir(ID, "darwin", {}, "/Users/a")).toBe(
+      "/Users/a/Library/Application Support/app.dosik.desktop",
+    );
+    expect(
+      appDataDir(ID, "win32", { APPDATA: "C:\\Users\\a\\AppData\\Roaming" }, "C:\\Users\\a"),
+    ).toBe("C:\\Users\\a\\AppData\\Roaming\\app.dosik.desktop");
+    // no APPDATA: the roaming folder in the home folder
+    expect(appDataDir(ID, "win32", {}, "C:\\Users\\a")).toBe(
+      "C:\\Users\\a\\AppData\\Roaming\\app.dosik.desktop",
+    );
+    expect(appDataDir(ID, "linux", {}, "/home/a")).toBe("/home/a/.local/share/app.dosik.desktop");
+    expect(appDataDir(ID, "linux", { XDG_DATA_HOME: "/data" }, "/home/a")).toBe(
+      "/data/app.dosik.desktop",
+    );
+    // a relative XDG_DATA_HOME is ignored, as the XDG spec says
+    expect(appDataDir(ID, "linux", { XDG_DATA_HOME: "rel" }, "/home/a")).toBe(
+      "/home/a/.local/share/app.dosik.desktop",
+    );
+  });
+
+  it("DOSIK_APP_DATA names another one — a test instance with an identifier of its own", () => {
+    expect(appDataDir(ID, "darwin", { DOSIK_APP_DATA: "/tmp/other" }, "/Users/a")).toBe(
+      "/tmp/other",
+    );
+    // only a whole path counts
+    expect(appDataDir(ID, "darwin", { DOSIK_APP_DATA: "rel" }, "/Users/a")).toBe(
+      "/Users/a/Library/Application Support/app.dosik.desktop",
+    );
+    expect(appDataDir(ID, "darwin", { DOSIK_APP_DATA: "" }, "/Users/a")).toBe(
+      "/Users/a/Library/Application Support/app.dosik.desktop",
+    );
+  });
+
+  it("DOSIK_DEV=1 means a development run's record and library — kept apart like the app keeps them", () => {
+    expect(isDevRun({})).toBe(false);
+    expect(isDevRun({ DOSIK_DEV: "0" })).toBe(false);
+    expect(isDevRun({ DOSIK_DEV: "" })).toBe(false);
+    for (const on of ["1", "true", "YES"]) expect(isDevRun({ DOSIK_DEV: on })).toBe(true);
+    expect(libraryRecordDir("/data", false, "darwin")).toBe("/data/library");
+    expect(libraryRecordDir("/data", true, "darwin")).toBe("/data/library-dev");
+    expect(libraryRecordDir("C:\\data", true, "win32")).toBe("C:\\data\\library-dev");
+  });
+
+  it("finds the library folder by the app's rule — DOSIK_LIBRARY_DIR, else Documents/Dosik (Dosik Dev)", () => {
+    expect(libraryLocation({}, false, "/Users/a", "darwin")).toBe("/Users/a/Documents/Dosik");
+    expect(libraryLocation({}, true, "/Users/a", "darwin")).toBe("/Users/a/Documents/Dosik Dev");
+    for (const dev of [false, true]) {
+      expect(libraryLocation({ DOSIK_LIBRARY_DIR: "/x/Lib" }, dev, "/Users/a", "darwin")).toBe(
+        "/x/Lib",
+      );
+    }
+    expect(libraryLocation({ DOSIK_LIBRARY_DIR: "rel" }, false, "/Users/a", "darwin")).toBe(
+      "/Users/a/Documents/Dosik",
+    );
+    expect(libraryLocation({}, false, "C:\\Users\\a", "win32")).toBe(
+      "C:\\Users\\a\\Documents\\Dosik",
+    );
   });
 });

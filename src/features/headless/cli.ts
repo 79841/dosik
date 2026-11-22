@@ -10,7 +10,7 @@ import type { DiagramDoc } from "../../shared/lib/types";
  * 1. **Data layer only.** PNG is rendered from a live `.react-flow__viewport`
  *    by `html-to-image`; there is no headless path that does not keep a hidden
  *    window (not headless, and dead on a display-less CI). Markdown, Mermaid
- *    and `.dosik.json` are pure data and come along. (PPTX did too until the
+ *    and the document itself (`.dosik`) are pure data and come along. (PPTX did too until the
  *    export was removed, #192.)
  *    SVG joined them in #148: it is drawn from the document with the canvas's
  *    own shape components and edge layout (`vectorSvg`), so it is not the
@@ -21,14 +21,19 @@ import type { DiagramDoc } from "../../shared/lib/types";
  * 3. **Node, not a Tauri subcommand.** The data layer is TypeScript; a Node
  *    entry point reuses `applyOps` and the exporters as they are.
  */
-export const HEADLESS_FORMATS = ["md", "mmd", "dosik.json", "svg"] as const;
+/**
+ * `dosik` is the document as the app saves it; `dosik.json` is what it was
+ * saved as before — still written where a caller asks for it, so a script
+ * that edits an older file in place keeps working.
+ */
+export const HEADLESS_FORMATS = ["md", "mmd", "dosik", "dosik.json", "svg"] as const;
 export type HeadlessFormat = (typeof HEADLESS_FORMATS)[number];
 
 /** formats that exist in the app but cannot leave a window */
 export const WINDOWED_FORMATS = ["png"] as const;
 
 export interface HeadlessArgs {
-  /** `.dosik.json` to start from; without it the document starts empty */
+  /** the `.dosik` (or older `.dosik.json`) to start from; without it the document starts empty */
   in?: string;
   /** JSON file of bridge ops to apply, `{"ops":[…]}` or `[…]` */
   ops?: string;
@@ -223,7 +228,7 @@ export const parseDoc = (raw: string, path: string): DiagramDoc => {
     );
   }
   if (!isDiagramDocShape(parsed)) {
-    throw new HeadlessError(`${path}: not a .dosik.json — nodes and edges arrays are required`);
+    throw new HeadlessError(`${path}: not a Dosik diagram — nodes and edges arrays are required`);
   }
   return parsed;
 };

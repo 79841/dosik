@@ -21,6 +21,11 @@ const withPlacements = (folders: FolderMeta[]): FolderMeta[] =>
 let asked = 0;
 /** the newest-asked listing that has landed */
 let landed = 0;
+/** listings asked and not answered yet */
+let onTheirWay = 0;
+
+/** whether a listing is on its way — a share that does not answer may hold one for long */
+export const isListing = (): boolean => onTheirWay > 0;
 
 interface LibraryState {
   /** the library as last listed; `null` until the first listing lands */
@@ -48,6 +53,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   readFailed: false,
   refresh: async () => {
     const mine = ++asked;
+    onTheirWay++;
     try {
       const listed = await listLibrary();
       // a newer listing has landed meanwhile: this one is older news
@@ -61,6 +67,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       // not when a newer listing already answered
       if (mine >= landed) set((s) => ({ folders: s.folders ?? [], readFailed: true }));
       throw error;
+    } finally {
+      onTheirWay--;
     }
   },
 }));

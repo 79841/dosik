@@ -28,7 +28,6 @@ describe("New diagrams go to … · Change (#220 D8, T23)", () => {
         // the most recent project is the default (#230 D5) — not the first listed
         project("work", "Work", { updatedAt: 2 }),
         project("side", "Side"),
-        project("x", "X", { stray: true }),
       ],
     });
   });
@@ -60,14 +59,14 @@ describe("New diagrams go to … · Change (#220 D8, T23)", () => {
     const { container, rerender } = render(<TargetLine />);
     expect(container).toBeEmptyDOMElement();
     useLibraryStore.setState({
-      folders: [project("work", "Work"), project("x", "X", { stray: true })],
+      folders: [project("work", "Work")],
     });
     rerender(<TargetLine />);
     expect(screen.getByText(/New diagrams go to/)).toHaveTextContent("Work");
     expect(screen.queryByRole("button", { name: /Change/ })).toBeNull();
   });
 
-  it("menu — a menuitemradio per project, current target checked, no stray", async () => {
+  it("menu — a menuitemradio per project, current target checked", async () => {
     const user = userEvent.setup();
     render(<TargetLine />);
     await user.click(change());
@@ -80,6 +79,24 @@ describe("New diagrams go to … · Change (#220 D8, T23)", () => {
     expect(items[0]).toHaveFocus();
     // no project dot in the line or the menu (#229 D19)
     expect(document.querySelector(".bg-project-grey")).toBeNull();
+  });
+
+  it("a project not found is no choice — and never the line's name (#253 R7)", async () => {
+    useLibraryStore.setState({
+      folders: [
+        project("lost", "architecture", { updatedAt: 9, missing: true }),
+        project("work", "Work", { updatedAt: 2 }),
+        project("side", "Side"),
+      ],
+    });
+    const user = userEvent.setup();
+    render(<TargetLine />);
+    expect(spoken(change().parentElement!)).not.toContain("architecture");
+    await user.click(change());
+    expect(screen.getAllByRole("menuitemradio").map((i) => i.textContent)).toEqual([
+      "Work",
+      "Side",
+    ]);
   });
 
   it("choosing changes the label, closes the menu, and moves focus to Change", async () => {

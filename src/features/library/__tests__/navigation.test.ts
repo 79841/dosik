@@ -28,6 +28,7 @@ import {
 import { openDocument, resetTabsForTests } from "../tabActions";
 import { hasUnsavedExternalChanges, resetUnsavedGuardForTests } from "../unsavedGuard";
 import { resetAutosaveForTests, useAutosave } from "../useAutosave";
+import { likeRust } from "../../../test/rustAnswers";
 
 const WORK: HomeView = { kind: "folder", folder: "work" };
 const mockedInvoke = vi.mocked(invoke);
@@ -42,15 +43,17 @@ const book = (title: string): DiagramDoc => ({ version: 1, title, nodes: [], edg
 
 /** load_project answers from `files`; every other command resolves undefined */
 const serve = (files: Record<string, unknown> = {}) =>
-  mockedInvoke.mockImplementation(async (cmd, args) => {
-    if (cmd === "load_project") {
-      const { id } = args as { id: string };
-      if (!(id in files)) throw new Error(`no such diagram: ${id}`);
-      return JSON.stringify(files[id]);
-    }
-    if (cmd === "read_text_file") return JSON.stringify({ ...blankDoc(), title: "External" });
-    return undefined;
-  });
+  mockedInvoke.mockImplementation(
+    likeRust(async (cmd, args) => {
+      if (cmd === "load_project") {
+        const { id } = args as { id: string };
+        if (!(id in files)) throw new Error(`no such diagram: ${id}`);
+        return JSON.stringify(files[id]);
+      }
+      if (cmd === "read_text_file") return JSON.stringify({ ...blankDoc(), title: "External" });
+      return undefined;
+    }),
+  );
 
 /** an external file with one edit that is not on disk (#123) */
 const editedExternalFile = () => {
@@ -197,10 +200,12 @@ describe("navigation (#217 D2·D4·D5·D22, #218 D18)", () => {
     });
 
     it("toasts an error when it cannot create and stays on the current screen", async () => {
-      mockedInvoke.mockImplementation(async (cmd) => {
-        if (cmd === "save_project") throw new Error("disk full");
-        return undefined;
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd) => {
+          if (cmd === "save_project") throw new Error("disk full");
+          return undefined;
+        }),
+      );
       await newDiagram();
       expect(toasts()).toEqual(["Error: disk full"]);
       expect(useAppStore.getState().view).toBe("home");
@@ -222,11 +227,13 @@ describe("navigation (#217 D2·D4·D5·D22, #218 D18)", () => {
 
     it("clicking elsewhere while reading opens it as a background tab — and the toast says so (#218)", async () => {
       let fileRead: () => void = () => {};
-      mockedInvoke.mockImplementation(async (cmd) => {
-        if (cmd !== "read_text_file") return undefined;
-        await new Promise<void>((resolve) => (fileRead = resolve));
-        return JSON.stringify({ ...blankDoc(), title: "External" });
-      });
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd) => {
+          if (cmd !== "read_text_file") return undefined;
+          await new Promise<void>((resolve) => (fileRead = resolve));
+          return JSON.stringify({ ...blankDoc(), title: "External" });
+        }),
+      );
       mockedOpen.mockResolvedValue("/tmp/x.dosik.json");
       const opening = openFileAnywhere();
       await settle();
@@ -294,8 +301,8 @@ describe("navigation (#217 D2·D4·D5·D22, #218 D18)", () => {
     it("a broken file toasts an error — the document survives", async () => {
       useDiagramStore.getState().setTitle("Survivor");
       mockedOpen.mockResolvedValue("/tmp/broken.dosik.json");
-      mockedInvoke.mockImplementation(async (cmd) =>
-        cmd === "read_text_file" ? '{"nodes":"nope"}' : undefined,
+      mockedInvoke.mockImplementation(
+        likeRust(async (cmd) => (cmd === "read_text_file" ? '{"nodes":"nope"}' : undefined)),
       );
       await openFileAnywhere();
       expect(toasts()).toEqual(["Error: Not a valid diagram file"]);
@@ -311,7 +318,7 @@ describe("newDiagram — +, ⌘T, ⌘N (#218 D11)", () => {
   });
 
   it("opens a new diagram in a new tab, toasts on failure", async () => {
-    mockedInvoke.mockResolvedValue(undefined);
+    mockedInvoke.mockImplementation(likeRust());
     await newDiagram();
     expect(useAppStore.getState().tabs).toHaveLength(1);
     expect(useDiagramStore.getState().projectId).not.toBeNull();

@@ -12,6 +12,7 @@ import {
   frameFold,
   frameLayout,
   isCollapsed,
+  MISSING_H,
   STACK_FACES_W,
   STACK_FRAME_W,
   STACK_STEP,
@@ -68,6 +69,18 @@ describe("column count and frame size (#221 D4·D5, T8)", () => {
       ["card", "p-3", 280, 276],
     ]);
     expect(items.every((it) => it.w === CARD_W && it.h === CARD_H)).toBe(true);
+  });
+
+  it("a project not found holds its box alone — as wide as an empty frame, 216 high (#253 R7, Library-Missing 240·150 ÷ 0.7)", () => {
+    const lost: FolderMeta = { ...folder("p", 3), missing: true };
+    const layout = frameLayout(lost, true);
+    expect(layout.items).toEqual([{ kind: "missing", x: 20, y: 64, w: EMPTY_W, h: MISSING_H }]);
+    // the canvas's box, 92 high, ÷ 0.7 on the 4 grid
+    expect(MISSING_H).toBe(132);
+    expect(layout).toMatchObject({ w: STACK_FRAME_W, h: 216 });
+    // nothing to fold
+    expect(drawsStack(layout)).toBe(false);
+    expect(frameFold(lost, layout)).toBeNull();
   });
 
   it("an empty project has one text cell — same width as a stack frame, height 80 (#231 D13, design 240·56 ÷ 0.7)", () => {

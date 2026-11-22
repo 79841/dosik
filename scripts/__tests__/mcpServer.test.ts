@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it, vi } from "vitest";
 
+import { createLibrary } from "../mcp/library.mjs";
 import { createMcpServer } from "../mcp/mcpServer.mjs";
 import { DRAWING_META_KEY } from "../mcp/tools.mjs";
 import { VIEW_MIME, VIEW_URI, viewHtml } from "../mcp/view.mjs";
@@ -19,6 +20,12 @@ const connect = async (ui: boolean) => {
     resolvePort: () => 4517,
     probeBridge: vi.fn(async () => ({ state: "ready" })),
     renderSvg: vi.fn(async () => ({ svg: SVG, view: VIEW })),
+    // a home of its own: the library folder is never looked for in the real one
+    library: createLibrary({
+      bundleId: "app.test",
+      env: { DOSIK_APP_DATA: "/nonexistent-dosik-test" },
+      home: "/nonexistent-dosik-test-home",
+    }),
   };
   const server = createMcpServer({ deps, viewBundle: async () => "window.view = 1;" });
   const client = new Client(
@@ -73,6 +80,26 @@ describe("MCP server wiring — follows the capabilities the client declares (#2
     expect(result.isError).toBe(true);
     expect(result.content).toEqual([
       { type: "text", text: '`theme` must be "auto", "light" or "dark".' },
+    ]);
+  });
+
+  it("lists the library tools and runs them through the server (#253)", async () => {
+    const client = await connect(false);
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name)).toEqual(
+      expect.arrayContaining([
+        "list_projects",
+        "add_project",
+        "list_project",
+        "create_folder",
+        "create_diagram",
+      ]),
+    );
+    // a refusal comes back as a result the agent can read
+    const result = await client.callTool({ name: "add_project", arguments: { path: "relative" } });
+    expect(result.isError).toBe(true);
+    expect(result.content).toEqual([
+      { type: "text", text: "`path` must be absolute (got: relative)." },
     ]);
   });
 

@@ -7,7 +7,7 @@ import { serializeProject } from "./libraryApi";
 
 /**
  * Guards the edits of an *external* file (#123). A library project is
- * autosaved, so closing it loses nothing; an external `.dosik.json` (Open…)
+ * autosaved, so closing it loses nothing; an external `.dosik` file (Open…)
  * is written only on Save. Since tabs (#218 D8) nothing but closing — its
  * tab, or the window — drops a document, so that is where this asks. The
  * baseline is the serialized document as it was last known to match the
@@ -55,20 +55,22 @@ export const isUnsavedSnapshot = (snapshot: DocSnapshot, bytes: string | null): 
   snapshot.projectId === null &&
   serializeProject(documentFile(snapshot)) !== bytes;
 
-const fileName = (path: string): string => path.split(/[\\/]/).pop() || path;
+/** the last name of a path, either separator — what the question calls a file */
+export const fileNameOf = (path: string): string => path.split(/[\\/]/).pop() || path;
 
 /**
- * Asks once whether to drop the unsaved edits of these files — one file in
- * the words #123 used, several (closing the window) in one question (D8).
- * `true`: nothing to lose, or the user chose to discard.
+ * Asks once whether to drop the unsaved edits of these — a file by its name
+ * (`fileNameOf`), a library diagram by its title — one in the words #123
+ * used, several (closing the window) in one question (D8). `true`: nothing
+ * to lose, or the user chose to discard.
  */
-export const askDiscard = async (paths: readonly string[]): Promise<boolean> => {
-  if (paths.length === 0) return true;
-  const names = paths.map((p) => `“${fileName(p)}”`);
+export const askDiscard = async (names: readonly string[]): Promise<boolean> => {
+  if (names.length === 0) return true;
+  const quoted = names.map((n) => `“${n}”`);
   const message =
-    paths.length === 1
-      ? `${names[0]} has unsaved changes. Discard them?`
-      : `${paths.length} files have unsaved changes — ${names.join(", ")}. Discard them?`;
+    names.length === 1
+      ? `${quoted[0]} has unsaved changes. Discard them?`
+      : `${names.length} files have unsaved changes — ${quoted.join(", ")}. Discard them?`;
   return ask(message, {
     title: "Unsaved changes",
     kind: "warning",
