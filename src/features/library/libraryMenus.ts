@@ -15,6 +15,7 @@ import type { MenuItem } from "../../shared/ui/Menu";
 import { showInLabel } from "./fileManager";
 import type { FolderMeta, ItemKind, ProjectMeta } from "./libraryApi";
 import {
+  addFolderToLibrary,
   copyItemPath,
   deleteDiagramAsking,
   deleteFolderAsking,
@@ -33,6 +34,17 @@ import { type ScreenStamp, screenStamp } from "./screenStamp";
  * the menu was opened, so the caller says how. Rules split the groups as the
  * canvas draws them (note `sidebarMenus`).
  */
+
+/**
+ * New project · Add folder… (#256 R1, `Sidebar-Library` ①④): what the
+ * sidebar's + and a right-click on its empty space or PROJECTS header offer.
+ * New project is the caller's — it names the new folder where it was made;
+ * Add folder… brings in a folder from anywhere as one project.
+ */
+export const projectsMenuItems = (newProject: () => void): MenuItem[] => [
+  { label: "New project", icon: FolderPlus, takesFocus: true, onSelect: newProject },
+  { label: "Add folder…", icon: FolderInput, onSelect: () => void addFolderToLibrary() },
+];
 
 /**
  * Show in Finder · Copy Path (#238 R2), a group of their own before Rename: a

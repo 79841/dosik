@@ -2,6 +2,7 @@ import { ask } from "@tauri-apps/plugin-dialog";
 
 import { writeClipboardText } from "../../shared/lib/systemClipboard";
 import { toastError, useToastStore } from "../../shared/lib/toastStore";
+import { showProjectRow } from "../sidebar/treeStore";
 import { useAppStore } from "./appStore";
 import { DASHBOARD } from "./homeView";
 import {
@@ -20,6 +21,8 @@ import {
   moveProject,
   type ProjectMeta,
   parseItemKey,
+  pickDefaultLocation,
+  pickLibraryFolder,
   removeProject,
   renameFolder,
   reorderItem,
@@ -41,6 +44,7 @@ import {
   type Placement,
   siblingsOf,
 } from "./libraryTree";
+import { screenStamp, stillOnScreen } from "./screenStamp";
 import { closeDiagramTabs, confirmDiscardDiagramTabs } from "./tabActions";
 import { flushAutosave } from "./useAutosave";
 
@@ -68,6 +72,25 @@ const guarded = async <T>(task: () => Promise<T>): Promise<T | undefined> => {
 };
 
 export const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** whether one of the system's folder pickers Rust opens is up now */
+let picking = false;
+
+/**
+ * Opens a folder picker through `pick` — unless one is up already (a second
+ * press of Add folder…, Change… or Locate… before the first one closed):
+ * then none, and nothing to say (`undefined`). One at a time, so two answers
+ * never land one after another.
+ */
+const onePicker = async <T>(pick: () => Promise<T>): Promise<T | undefined> => {
+  if (picking) return undefined;
+  picking = true;
+  try {
+    return await pick();
+  } finally {
+    picking = false;
+  }
+};
 
 /**
  * A new, empty folder; resolves to its id so the caller can start renaming
@@ -196,7 +219,7 @@ const leaveGone = (listed: FolderMeta[], id: string, parent: FolderMeta | null):
  */
 export const locateProjectAsking = (folder: FolderMeta): Promise<boolean> =>
   guarded(async () => {
-    const answer = await locateProject(folder.id);
+    const answer = await onePicker(() => locateProject(folder.id));
     if (answer === "already") pushToast("Already in the library");
     if (answer !== "located") return false;
     await refresh();
@@ -223,6 +246,46 @@ export const removeFromLibrary = (folder: FolderMeta): Promise<boolean> =>
     await refresh();
     return true;
   }).then((removed) => removed === true);
+
+/**
+ * Add folder… (#256 R1): Rust shows the system's folder picker and the
+ * folder picked joins the library as one project, on top, saved where it
+ * is. Once listed, its row is picked and scrolled to — while the screen is
+ * still the one it was asked from: the picker waits, and where the user went
+ * meanwhile is left alone (#218 D15). A folder in the library already, or one
+ * that cannot be a project (too broad, the app's data folder), is not added:
+ * the toast says which. Nothing picked is nothing.
+ * Resolves the new project's id.
+ */
+export const addFolderToLibrary = (): Promise<string | undefined> =>
+  guarded(async () => {
+    const asked = screenStamp();
+    const answer = await onePicker(pickLibraryFolder);
+    if (answer?.kind === "already") pushToast("Already in the library");
+    // too broad, or the app's own data folder: one word for both
+    if (answer?.kind === "invalid") pushToast("Choose another folder");
+    if (answer?.kind !== "added") return undefined;
+    await refresh();
+    if (stillOnScreen(asked)) showProjectRow(answer.id);
+    return answer.id;
+  });
+
+/**
+ * Change… (#256 R2): Rust shows the folder picker and the folder picked is
+ * where new projects go from now — every project stays, and the folders in
+ * it join the library — so it is listed again. A folder that is a project or
+ * inside one, or too broad, is not taken: the toast says so. Resolves
+ * whether it changed — Rust's word, whatever the listing after it comes to.
+ */
+export const changeDefaultLocation = (): Promise<boolean> =>
+  guarded(async () => {
+    const answer = await onePicker(pickDefaultLocation);
+    if (answer === "invalid") pushToast("Choose another folder for new projects");
+    if (answer !== "changed") return false;
+    // changed: a listing that fails now says why, and takes nothing back
+    await refresh().catch(toastError);
+    return true;
+  }).then((changed) => changed === true);
 
 /** the writes that place items, one after another (#230 D13) */
 let placing: Promise<unknown> = Promise.resolve();

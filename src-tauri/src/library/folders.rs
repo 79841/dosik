@@ -578,11 +578,11 @@ mod tests {
     #[test]
     fn a_new_project_is_a_folder_in_the_default_location_on_top() {
         let lib = test_library("folders-project");
-        std::fs::create_dir_all(lib.default_location.join("Older")).unwrap();
+        std::fs::create_dir_all(lib.default_location().join("Older")).unwrap();
         list(&lib).unwrap();
         let name = create_folder(&lib, "p1", "Payments", Some(&spot(40, 80)), None).unwrap();
         assert_eq!(name, "Payments");
-        assert!(lib.default_location.join("Payments").is_dir());
+        assert!(lib.default_location().join("Payments").is_dir());
         let listed = list(&lib).unwrap();
         assert_eq!(names_of(&listed), vec!["Payments", "Older"]);
         assert_eq!(listed[0].id, "p1");
@@ -605,9 +605,9 @@ mod tests {
     #[test]
     fn the_default_location_is_made_for_the_first_project() {
         let lib = test_library("folders-first");
-        assert!(!lib.default_location.exists());
+        assert!(!lib.default_location().exists());
         create_folder(&lib, "p1", "First", None, None).unwrap();
-        assert_eq!(names_in(&lib.default_location), vec!["First"]);
+        assert_eq!(names_in(&lib.default_location()), vec!["First"]);
     }
 
     #[test]
@@ -660,7 +660,7 @@ mod tests {
         saved(create(&lib, "d1", &titled("Flow"), Some(&p)).unwrap());
         create_folder(&lib, "q", "Other", Some(&spot(1, 2)), None).unwrap();
         assert_eq!(rename_folder(&lib, &p, "Renamed").unwrap(), "Renamed");
-        assert!(lib.default_location.join("Renamed/Flow.dosik").is_file());
+        assert!(lib.default_location().join("Renamed/Flow.dosik").is_file());
         let listed = list(&lib).unwrap();
         assert_eq!(names_of(&listed), vec!["Other", "Renamed"]);
         assert_eq!(listed[1].id, p);
@@ -759,7 +759,7 @@ mod tests {
         assert!(trash.is_empty(), "nothing went to the Trash");
         assert_eq!(tree(&lib), disk);
         assert_eq!(ids_of(&lib), before);
-        assert!(lib.default_location.join("P").is_dir());
+        assert!(lib.default_location().join("P").is_dir());
         // and with the record writable, each goes through
         move_diagram(&lib, "flow", "fb", None).unwrap();
         assert!(p_dir(&lib).join("B/Flow.dosik").is_file());
@@ -857,7 +857,7 @@ mod tests {
         let (lib, _) = two_folders("folders-move-project");
         create_folder(&lib, "q", "Q", None, None).unwrap();
         move_diagram(&lib, "flow", "q", None).unwrap();
-        assert!(lib.default_location.join("Q/Flow.dosik").is_file());
+        assert!(lib.default_location().join("Q/Flow.dosik").is_file());
         let ids = ids_of(&lib);
         assert!(ids.contains(&("flow".to_string(), "Flow.dosik".to_string())));
         let listed = list(&lib).unwrap();
@@ -1199,7 +1199,7 @@ mod tests {
     #[test]
     fn a_project_that_cannot_be_found_is_not_renamed() {
         let (lib, p) = with_project("folders-rename-missing");
-        std::fs::remove_dir_all(lib.default_location.clone()).unwrap();
+        std::fs::remove_dir_all(lib.default_location()).unwrap();
         assert!(rename_folder(&lib, &p, "New").is_err());
         assert!(rename_folder(&lib, "nope", "New").is_err());
     }

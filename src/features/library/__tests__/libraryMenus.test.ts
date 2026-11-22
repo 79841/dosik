@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   Copy,
+  FolderInput,
   FolderMinus,
   FolderPlus,
   FolderSearch,
@@ -16,7 +17,7 @@ import {
 import { useAppStore } from "../appStore";
 import { DASHBOARD } from "../homeView";
 import type { FolderMeta } from "../libraryApi";
-import { diagramMenuItems, folderMenuItems } from "../libraryMenus";
+import { diagramMenuItems, folderMenuItems, projectsMenuItems } from "../libraryMenus";
 import { useLibraryStore } from "../libraryStore";
 import { showInLabel } from "../fileManager";
 
@@ -225,5 +226,23 @@ describe("a project not found, a folder added from elsewhere (#253 R7·R8, Sideb
     expect(mockedInvoke).toHaveBeenCalledWith("remove_project", { id: "work" });
     expect(onDeleted.mock.calls[0]![0]).toMatchObject({ homeView: DASHBOARD });
     expect(ask).not.toHaveBeenCalled();
+  });
+});
+
+describe("the projects menu (#256 R1, Sidebar-Library ①④)", () => {
+  it("New project · Add folder…, with the artboard's folder-plus and folder-input; New project is the caller's", () => {
+    const newProject = vi.fn();
+    const items = projectsMenuItems(newProject);
+    expect(shape(items)).toEqual(["New project", "Add folder…"]);
+    expect(item(items, "New project").icon).toBe(FolderPlus);
+    expect(item(items, "Add folder…").icon).toBe(FolderInput);
+    // New project names the folder in place: the field takes the focus
+    expect(item(items, "New project").takesFocus).toBe(true);
+    expect(item(items, "Add folder…").takesFocus).toBeUndefined();
+    item(items, "New project").onSelect();
+    expect(newProject).toHaveBeenCalledOnce();
+    vi.mocked(invoke).mockResolvedValueOnce({ kind: "cancelled" });
+    item(items, "Add folder…").onSelect();
+    expect(vi.mocked(invoke)).toHaveBeenLastCalledWith("add_library_folder");
   });
 });

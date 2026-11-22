@@ -5,12 +5,14 @@
 //! ```text
 //! { "v": 1,
 //!   "migration": { "from", "to", "at" },        <- the older library moved, once
-//!   "defaultLocation": "/…/Documents/Dosik",
+//!   "defaultLocation": "/…/Documents/Dosik",     <- where new projects go now
+//!   "chosenLocation": "/…/Dropbox/Dosik",        <- the one picked in Settings
 //!   "projects": [                               <- in the user's order
 //!     { "id", "path",                            <- a folder anywhere on disk
 //!       "board": { "x", "y", "collapsed"? },     <- its frame on the Home canvas
 //!       "ids":   { "Sub/Flow.dosik": "<id>" },   <- what the app calls each item
-//!       "order": { "": ["Sub", "Flow.dosik"] } } <- each folder's items, by name
+//!       "order": { "": ["Sub", "Flow.dosik"] },  <- each folder's items, by name
+//!       "keptAdded": true }                      <- added, lost, and kept so
 //!   ] }
 //! ```
 //!
@@ -110,6 +112,11 @@ pub struct ProjectRecord {
     pub ids: BTreeMap<String, String>,
     /// relative folder → its items' names in the user's order
     pub order: BTreeMap<String, Vec<String>>,
+    /// A folder added from elsewhere that could not be found when the
+    /// default location moved onto its parent: it stays one added — not
+    /// found, never forgotten — until it is found, located or removed.
+    #[serde(rename = "keptAdded", skip_serializing_if = "std::ops::Not::not")]
+    pub kept_added: bool,
 }
 
 impl ProjectRecord {
@@ -121,6 +128,7 @@ impl ProjectRecord {
             board: None,
             ids: BTreeMap::new(),
             order: BTreeMap::new(),
+            kept_added: false,
         })
     }
 
@@ -158,8 +166,13 @@ pub struct LibraryState {
     pub v: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub migration: Option<Migration>,
+    /// where new projects go now — what the MCP server reads
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_location: Option<String>,
+    /// the default location picked in Settings, where the next run starts —
+    /// apart from the one in use, which a run told elsewhere writes
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chosen_location: Option<String>,
     pub projects: Vec<ProjectRecord>,
 }
 
@@ -169,6 +182,7 @@ impl Default for LibraryState {
             v: STATE_VERSION,
             migration: None,
             default_location: None,
+            chosen_location: None,
             projects: Vec::new(),
         }
     }
@@ -263,6 +277,7 @@ pub(super) fn from_value(value: &Value) -> Option<LibraryState> {
             board: entry.get("board").and_then(BoardSpot::read),
             ids,
             order: read_orders(entry.get("order")),
+            kept_added: entry.get("keptAdded").and_then(Value::as_bool) == Some(true),
         });
     }
     Some(LibraryState {
@@ -272,6 +287,10 @@ pub(super) fn from_value(value: &Value) -> Option<LibraryState> {
             .and_then(|m| serde_json::from_value(m.clone()).ok()),
         default_location: top
             .get("defaultLocation")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        chosen_location: top
+            .get("chosenLocation")
             .and_then(Value::as_str)
             .map(str::to_string),
         projects,
@@ -661,6 +680,7 @@ mod tests {
         p.ids.insert("Flow.dosik".into(), "d1".into());
         p.ids.insert("Sub".into(), "f1".into());
         p.order.insert("".into(), s(&["Sub", "Flow.dosik"]));
+        p.kept_added = true;
         let state = LibraryState {
             migration: Some(Migration {
                 from: "/old".into(),
@@ -668,6 +688,7 @@ mod tests {
                 at: 5,
             }),
             default_location: Some("/new".into()),
+            chosen_location: Some("/chosen".into()),
             ..state_with(vec![p])
         };
         save(&dir, &state).unwrap();
@@ -677,6 +698,8 @@ mod tests {
             serde_json::from_str(&std::fs::read_to_string(dir.join(STATE_FILE)).unwrap()).unwrap();
         assert_eq!(raw["v"], 1);
         assert_eq!(raw["defaultLocation"], "/new");
+        assert_eq!(raw["chosenLocation"], "/chosen");
+        assert_eq!(raw["projects"][0]["keptAdded"], true);
         assert_eq!(
             raw["projects"][0]["order"][""],
             serde_json::json!(["Sub", "Flow.dosik"])

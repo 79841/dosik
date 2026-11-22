@@ -155,6 +155,15 @@ useAppStore.subscribe((state, prev) => {
 });
 
 /**
+ * A project just added to the library (#256 R1): its row is the one picked
+ * and scrolls into view — the focus stays where it is.
+ */
+export const showProjectRow = (id: string): void => {
+  const row = folderKey(id);
+  useTreeStore.setState({ picked: row, reveal: row });
+};
+
+/**
  * The folders the sidebar has unfolded, by id — what a Move to… picker opens
  * with, wherever it opens (#229)
  */

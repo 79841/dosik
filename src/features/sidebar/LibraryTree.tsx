@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Ellipsis, FolderPlus, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Ellipsis, Plus } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { DROP_RING, DROP_TARGET, FOCUS_RING, FOCUS_TREE_ROW } from "../../shared/lib/palette";
@@ -15,7 +15,7 @@ import {
   plural,
   renameFolderTo,
 } from "../library/libraryActions";
-import { diagramMenuItems, folderMenuItems } from "../library/libraryMenus";
+import { diagramMenuItems, folderMenuItems, projectsMenuItems } from "../library/libraryMenus";
 import { indentClass, NameInput, SKELETON_DELAY_MS } from "../library/libraryParts";
 import { refreshLibraryQuietly, useLibraryStore } from "../library/libraryStore";
 import {
@@ -45,7 +45,7 @@ import {
   visibleRows,
 } from "./treeModel";
 import { DiagramGlyph, FolderGlyph } from "../../shared/ui/KindGlyph";
-import { besidePointer, Menu, type MenuItem } from "../../shared/ui/Menu";
+import { belowRightOf, besidePointer, Menu, type MenuItem } from "../../shared/ui/Menu";
 import { ProjectBadge } from "../../shared/ui/ProjectBadge";
 import { type DropTarget, dropAt, keyboardStep, placementNotice, type RowBox } from "./treeDrop";
 import { TreeDragLayer } from "./TreeDragLayer";
@@ -53,19 +53,27 @@ import { unfoldedFolders, useTreeStore } from "./treeStore";
 
 type Point = { x: number; y: number };
 
+/** the + menu hangs this far under the + (`Sidebar-Library` ①) */
+const ADD_MENU_GAP = 2;
+
 /**
- * The PROJECTS section (#217 R2): its header with New project, and the tree.
- * New project makes the project and names it right there in the tree — the
- * screen does not move, so a document open in the editor stays open (D12).
+ * The PROJECTS section (#217 R2): its header with the + menu, and the tree.
+ * The + — and a right-click on the empty space or the header — offers New
+ * project and Add folder… (#256 R1). New project makes the project and names
+ * it right there in the tree — the screen does not move, so a document open
+ * in the editor stays open (D12).
  */
 export const ProjectsSection = () => {
   const headingId = useId();
-  /** where the empty space's or the header's right-click opened New project (#230 D11) */
+  const plus = useRef<HTMLButtonElement>(null);
+  /** where the + menu opened, under the + (#256 R1) */
+  const [addMenu, setAddMenu] = useState<Point | null>(null);
+  /** where the empty space's or the header's right-click opened the same menu (#230 D11) */
   const [backgroundMenu, setBackgroundMenu] = useState<Point | null>(null);
   const create = async () => {
-    // the + button: named in place only while the screen is the one it was
-    // asked from and the focus is still there, in the tree, or nowhere — not
-    // taken from where the user went (#218 D15, #229)
+    // named in place only while the screen is the one it was asked from and
+    // the focus is still there, in the tree, or nowhere — not taken from
+    // where the user went (#218 D15, #229)
     const asked = screenStamp();
     const from = document.activeElement;
     const id = await newFolder();
@@ -74,6 +82,7 @@ export const ProjectsSection = () => {
       useTreeStore.getState().setRenaming(id);
     }
   };
+  const items = projectsMenuItems(() => void create());
   const onBackgroundMenu = (e: React.MouseEvent) => {
     // the name field keeps the webview's own menu (cut, copy, paste)
     if ((e.target as Element).closest("input")) return;
@@ -93,27 +102,43 @@ export const ProjectsSection = () => {
           Projects
         </h2>
         <button
+          ref={plus}
           type="button"
-          aria-label="New project"
-          onClick={() => void create()}
-          className={`flex h-5 w-5 items-center justify-center rounded-[4px] text-icon transition-colors hover:bg-hover ${FOCUS_RING}`}
+          aria-label="Add a project"
+          aria-haspopup="menu"
+          aria-expanded={addMenu !== null}
+          onClick={(e) => setAddMenu(addMenu ? null : belowRightOf(e.currentTarget, ADD_MENU_GAP))}
+          className={`flex h-5 w-5 items-center justify-center rounded-[4px] transition-colors ${
+            addMenu ? "bg-selected text-ink" : "text-icon hover:bg-hover"
+          } ${FOCUS_RING}`}
         >
           <Plus size={13} strokeWidth={2} aria-hidden="true" />
         </button>
       </div>
       <LibraryTree labelledBy={headingId} onBackgroundMenu={onBackgroundMenu} />
+      {addMenu ? (
+        <Menu
+          at={addMenu}
+          label="Add a project"
+          items={items}
+          opener={plus}
+          onSelect={(item) => {
+            setAddMenu(null);
+            // Add folder… waits for the system's picker with the focus back on the +
+            if (!item.takesFocus) plus.current?.focus();
+            item.onSelect();
+          }}
+          onClose={(returnFocus) => {
+            setAddMenu(null);
+            if (returnFocus) plus.current?.focus();
+          }}
+        />
+      ) : null}
       {backgroundMenu ? (
         <Menu
           at={backgroundMenu}
           label="Projects"
-          items={[
-            {
-              label: "New project",
-              icon: FolderPlus,
-              takesFocus: true,
-              onSelect: () => void create(),
-            },
-          ]}
+          items={items}
           onSelect={(item) => {
             setBackgroundMenu(null);
             item.onSelect();

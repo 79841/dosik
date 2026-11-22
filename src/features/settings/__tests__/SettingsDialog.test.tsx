@@ -24,6 +24,10 @@ const { useIntegrationsStore } = await import("../sections/IntegrationsSection")
 const { useDiagramStore } = await import("../../../shared/lib/store");
 const { handleCanvasKeyDown } = await import("../../canvas/canvasKeymap");
 const { makeDoc, makeNode } = await import("../../../shared/lib/__tests__/testFixtures");
+const { useLibraryStore } = await import("../../library/libraryStore");
+const { useToastStore } = await import("../../../shared/lib/toastStore");
+const { showNamedInLabel } = await import("../../library/fileManager");
+type FolderMeta = import("../../library/libraryApi").FolderMeta;
 
 /** what the Rust side answers, per command */
 const answers: Record<string, unknown> = {};
@@ -49,7 +53,9 @@ beforeEach(() => {
   for (const key of Object.keys(answers)) delete answers[key];
   answer("claude_cli_status", { version: "2.1.4 (Claude Code)", signed_in: true });
   answer("codex_cli_status", { version: null, signed_in: null });
-  answer("library_root", { path: "/Users/a/Library/x/projects", shown: "~/Library/x/projects" });
+  answer("library_root", { path: "/Users/a/Dosik", shown: "~/Dosik" });
+  useLibraryStore.setState({ folders: [], readFailed: false });
+  useToastStore.getState().dismissAll();
   answer("bridge_status", { port: 4517, listening: true });
   useSettingsStore.setState({
     open: false,
@@ -202,9 +208,11 @@ describe("Settings dialog (#252)", () => {
       }
       return [...new Set(drawn)];
     };
+    useLibraryStore.setState({ folders: shelf() });
     act(() => openSettings("General"));
     expect(cardLook("Appearance")).toEqual([]);
     expect(cardLook("Library")).toEqual([]);
+    expect(cardLook("Folders in the library")).toEqual([]);
     act(() => openSettings("AI assistant"));
     const claude = within(dialog()).getByRole("region", { name: "Claude" });
     await within(claude).findByText("Not signed in");
@@ -269,33 +277,337 @@ describe("General", () => {
     expect(useThemeStore.getState().preference).toBe("system");
   });
 
-  it("groups the theme under Appearance and the location under Library", () => {
+  it("groups the theme under Appearance, the default location under Library, then the folders in the library (#256)", () => {
     render(<SettingsDialog />);
     act(() => openSettings("General"));
     expect(
       within(dialog())
         .getAllByRole("heading", { level: 3 })
         .map((h) => h.textContent),
-    ).toEqual(["Appearance", "Library"]);
+    ).toEqual(["Appearance", "Library", "Folders in the library"]);
     const appearance = within(dialog()).getByRole("region", { name: "Appearance" });
     expect(within(appearance).getByRole("radiogroup", { name: "Theme" })).toBeInTheDocument();
     const library = within(dialog()).getByRole("region", { name: "Library" });
-    expect(within(library).getByText("Location")).toBeInTheDocument();
+    expect(within(library).getByText("Default location")).toBeInTheDocument();
+    const folders = within(dialog()).getByRole("region", { name: "Folders in the library" });
     // named by its head, so a screen reader says the name once, not as a label and again as a heading
-    for (const group of [appearance, library]) {
+    for (const group of [appearance, library, folders]) {
       expect(group).not.toHaveAttribute("aria-label");
       const head = document.getElementById(group.getAttribute("aria-labelledby") ?? "");
       expect(head?.tagName).toBe("H3");
     }
   });
+});
 
-  it("shows the library folder with ~ and opens it in Finder", async () => {
+/** a library: two projects in the default location, one added from elsewhere, one added and not found */
+const shelf = (): FolderMeta[] => [
+  { id: "pay", name: "Payments", updatedAt: 1, diagrams: [], folders: [] },
+  {
+    id: "client",
+    name: "client-diagrams",
+    updatedAt: 1,
+    diagrams: [],
+    folders: [],
+    added: true,
+    path: "/Users/a/Work/client-diagrams",
+    shown: "~/Work/client-diagrams",
+  },
+  { id: "sk", name: "Sketches", updatedAt: 1, diagrams: [], folders: [] },
+  {
+    id: "arc",
+    name: "architecture",
+    updatedAt: 0,
+    diagrams: [],
+    folders: [],
+    added: true,
+    missing: true,
+    path: "/Users/a/Projects/platform/docs/architecture",
+    shown: "~/Projects/platform/docs/architecture",
+  },
+];
+
+describe("General ▸ Library (#256 R2)", () => {
+  /** Show in Finder, as each row names it: the folder in it (#256) */
+  const showIn = (name: string) => showNamedInLabel(name);
+  const library = () => within(dialog()).getByRole("region", { name: "Library" });
+  const folders = () => within(dialog()).getByRole("region", { name: "Folders in the library" });
+  /** a row of a group by its title: the 52px line that holds it */
+  const rowOf = (group: HTMLElement, title: string) =>
+    within(group).getByText(title, { selector: "p" }).closest(".min-h-\\[52px\\]") as HTMLElement;
+  /** what a row says under its title */
+  const description = (row: HTMLElement) => row.querySelector("p + p")?.textContent;
+  /** a row's controls, left to right, as their names and words */
+  const controls = (row: HTMLElement) =>
+    [...(row.lastElementChild?.children ?? [])].map(
+      (el) => el.getAttribute("aria-label") ?? el.textContent,
+    );
+  const toasts = () => useToastStore.getState().toasts.map((t) => t.text);
+  /** what the default location's row says, once it is there */
+  const homeLine = async () => {
+    await within(folders()).findByText("Dosik", { selector: "p" });
+    return description(rowOf(folders(), "Dosik"));
+  };
+
+  beforeEach(() => {
+    useLibraryStore.setState({ folders: shelf() });
+  });
+
+  it("Default location: where new projects go, with ~, and Change…", async () => {
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    const row = rowOf(library(), "Default location");
+    await waitFor(() => expect(description(row)).toBe("New projects go here — ~/Dosik"));
+    // the path in the diagram font
+    expect(within(row).getByText("~/Dosik").tagName).toBe("CODE");
+    expect(controls(row)).toEqual(["Change…"]);
+  });
+
+  it("the folders: the default location first with its projects, then each one added, then the ones not found, then Add folder…", async () => {
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    const group = folders();
+    await within(group).findByText("Dosik", { selector: "p" });
+    const titles = [...group.querySelectorAll(".min-h-\\[52px\\] > div > p:first-child")].map(
+      (p) => p.textContent,
+    );
+    expect(titles).toEqual(["Dosik", "client-diagrams", "architecture"]);
+    const home = rowOf(group, "Dosik");
+    expect(description(home)).toBe("~/Dosik · 2 projects");
+    expect(controls(home)).toEqual(["Default", showIn("Dosik")]);
+    const added = rowOf(group, "client-diagrams");
+    expect(description(added)).toBe("~/Work/client-diagrams");
+    expect(controls(added)).toEqual([showIn("client-diagrams"), "Remove client-diagrams"]);
+    const lost = rowOf(group, "architecture");
+    expect(description(lost)).toBe("~/Projects/platform/docs/architecture");
+    expect(controls(lost)).toEqual(["Not found", "Locate architecture", "Remove architecture"]);
+    // Add folder… closes the group, after a hairline like every row
+    const buttons = within(group).getAllByRole("button");
+    expect(buttons.at(-1)).toHaveTextContent("Add folder…");
+    expect(buttons.at(-1)?.parentElement?.previousElementSibling).toHaveClass("bg-line");
+  });
+
+  it("counts only the default location's projects it finds", async () => {
+    useLibraryStore.setState({
+      folders: [
+        ...shelf(),
+        { id: "lost", name: "Lost", updatedAt: 0, diagrams: [], folders: [], missing: true },
+      ],
+    });
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(await homeLine()).toBe("~/Dosik · 2 projects");
+  });
+
+  it("Show in Finder opens the default location, or the folder by id", async () => {
     const user = userEvent.setup();
     render(<SettingsDialog />);
     act(() => openSettings("General"));
-    expect(await within(dialog()).findByText("~/Library/x/projects")).toBeInTheDocument();
-    await user.click(within(dialog()).getByRole("button", { name: "Show in Finder" }));
-    expect(invokeMock).toHaveBeenCalledWith("show_library_in_finder");
+    await within(folders()).findByText("Dosik", { selector: "p" });
+    await user.click(within(folders()).getByRole("button", { name: showIn("Dosik") }));
+    expect(invokeMock).toHaveBeenLastCalledWith("show_library_in_finder");
+    await user.click(within(folders()).getByRole("button", { name: showIn("client-diagrams") }));
+    expect(invokeMock).toHaveBeenLastCalledWith("show_in_finder", { kind: "folder", id: "client" });
+  });
+
+  it("Remove takes the folder out of the library at once — its files stay; the row goes and the focus stays in the group", async () => {
+    const user = userEvent.setup();
+    answer(
+      "list_library",
+      shelf().filter((f) => f.id !== "client"),
+    );
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    await user.click(within(folders()).getByRole("button", { name: "Remove client-diagrams" }));
+    await waitFor(() => expect(within(folders()).queryByText("client-diagrams")).toBeNull());
+    expect(invokeMock).toHaveBeenCalledWith("remove_project", { id: "client" });
+    expect(invokeMock).not.toHaveBeenCalledWith("delete_folder", expect.anything());
+    expect(within(folders()).getByRole("button", { name: "Add folder…" })).toHaveFocus();
+    expect(toasts()).toEqual([]);
+  });
+
+  it("Locate… goes to Rust by id; one already in the library says so", async () => {
+    const user = userEvent.setup();
+    answer("locate_project", "already");
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    await user.click(within(folders()).getByRole("button", { name: "Locate architecture" }));
+    await waitFor(() => expect(toasts()).toEqual(["Already in the library"]));
+    expect(invokeMock).toHaveBeenCalledWith("locate_project", { id: "arc" });
+  });
+
+  it("Locate… that found it — the focus goes to the row it moved to, its Show in Finder", async () => {
+    const user = userEvent.setup();
+    answer("locate_project", "located");
+    answer(
+      "list_library",
+      shelf().map((f) =>
+        f.id === "arc"
+          ? {
+              ...f,
+              missing: false,
+              path: "/Users/a/Found/architecture",
+              shown: "~/Found/architecture",
+            }
+          : f,
+      ),
+    );
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    await user.click(within(folders()).getByRole("button", { name: "Locate architecture" }));
+    await waitFor(() =>
+      expect(within(folders()).getByRole("button", { name: showIn("architecture") })).toHaveFocus(),
+    );
+    expect(description(rowOf(folders(), "architecture"))).toBe("~/Found/architecture");
+  });
+
+  it("Locate… that found it, but the listing no longer has it — the focus goes to Add folder…", async () => {
+    const user = userEvent.setup();
+    answer("locate_project", "located");
+    answer(
+      "list_library",
+      shelf().filter((f) => f.id !== "arc"),
+    );
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    await user.click(within(folders()).getByRole("button", { name: "Locate architecture" }));
+    await waitFor(() =>
+      expect(within(folders()).getByRole("button", { name: "Add folder…" })).toHaveFocus(),
+    );
+  });
+
+  it("Add folder… — as in the sidebar: the folder picked joins and shows as a row", async () => {
+    const user = userEvent.setup();
+    const joined: FolderMeta = {
+      id: "repo",
+      name: "dosik",
+      updatedAt: 1,
+      diagrams: [],
+      folders: [],
+      added: true,
+      path: "/Users/a/code/dosik",
+      shown: "~/code/dosik",
+    };
+    answer("add_library_folder", { kind: "added", id: "repo" });
+    answer("list_library", [joined, ...shelf()]);
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    await user.click(within(folders()).getByRole("button", { name: "Add folder…" }));
+    expect(await within(folders()).findByText("dosik", { selector: "p" })).toBeInTheDocument();
+    expect(description(rowOf(folders(), "dosik"))).toBe("~/code/dosik");
+    answer("add_library_folder", { kind: "invalid" });
+    await user.click(within(folders()).getByRole("button", { name: "Add folder…" }));
+    await waitFor(() => expect(toasts()).toEqual(["Choose another folder"]));
+  });
+
+  it("Change… — the new default location shows once Rust has it; the old one's projects stay as rows of their own", async () => {
+    const user = userEvent.setup();
+    answer("change_default_location", "changed");
+    const moved = shelf().map((f) =>
+      f.added ? f : { ...f, added: true, shown: `~/Dosik/${f.name}` },
+    );
+    answer("list_library", [
+      { id: "n", name: "Notes", updatedAt: 1, diagrams: [], folders: [] },
+      ...moved,
+    ]);
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(await homeLine()).toBe("~/Dosik · 2 projects");
+    answer("library_root", { path: "/Users/a/Dropbox/Dosik", shown: "~/Dropbox/Dosik" });
+    await user.click(within(library()).getByRole("button", { name: "Change…" }));
+    await waitFor(() =>
+      expect(description(rowOf(library(), "Default location"))).toBe(
+        "New projects go here — ~/Dropbox/Dosik",
+      ),
+    );
+    const home = rowOf(folders(), "Dosik");
+    expect(description(home)).toBe("~/Dropbox/Dosik · 1 project");
+    expect(within(folders()).getByText("Payments", { selector: "p" })).toBeInTheDocument();
+    expect(invokeMock).toHaveBeenCalledWith("change_default_location");
+  });
+
+  it("Change… shows the new default location even when listing the library after it fails", async () => {
+    const user = userEvent.setup();
+    answer("change_default_location", "changed");
+    answer("list_library", new Error("the library could not be read"));
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(await homeLine()).toBe("~/Dosik · 2 projects");
+    answer("library_root", { path: "/Users/a/Dropbox/Dosik", shown: "~/Dropbox/Dosik" });
+    await user.click(within(library()).getByRole("button", { name: "Change…" }));
+    await waitFor(() =>
+      expect(description(rowOf(library(), "Default location"))).toBe(
+        "New projects go here — ~/Dropbox/Dosik",
+      ),
+    );
+    expect(toasts()).toContain("Error: the library could not be read");
+  });
+
+  it("Change… or Add folder… pressed while a folder picker is up opens no second one", async () => {
+    const user = userEvent.setup();
+    let close: (answer: unknown) => void = () => undefined;
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "change_default_location") return new Promise((r) => (close = r));
+      const value = answers[command];
+      if (value instanceof Error) throw value;
+      return value;
+    });
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    await user.click(within(library()).getByRole("button", { name: "Change…" }));
+    await user.click(within(library()).getByRole("button", { name: "Change…" }));
+    await user.click(within(folders()).getByRole("button", { name: "Add folder…" }));
+    const picks = (name: string) => invokeMock.mock.calls.filter(([c]) => c === name).length;
+    expect(picks("change_default_location")).toBe(1);
+    expect(picks("add_library_folder")).toBe(0);
+    await act(async () => close("cancelled"));
+    expect(toasts()).toEqual([]);
+  });
+
+  it("Change… cancelled leaves everything as it was", async () => {
+    const user = userEvent.setup();
+    answer("change_default_location", "cancelled");
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(await homeLine()).toBe("~/Dosik · 2 projects");
+    const reads = invokeMock.mock.calls.filter(([c]) => c === "library_root").length;
+    await user.click(within(library()).getByRole("button", { name: "Change…" }));
+    await waitFor(() => expect(invokeMock).toHaveBeenCalledWith("change_default_location"));
+    expect(invokeMock.mock.calls.filter(([c]) => c === "library_root")).toHaveLength(reads);
+    expect(invokeMock).not.toHaveBeenCalledWith("list_library");
+  });
+
+  it("a value still on its way keeps its line: the rows do not jump when it comes", () => {
+    invokeMock.mockImplementation(
+      (command: string) =>
+        new Promise((resolve) => {
+          if (command !== "library_root") resolve(answers[command]);
+        }),
+    );
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    const row = rowOf(library(), "Default location");
+    expect(description(row)).toBe("");
+    expect(row.querySelector("p + p")).toHaveClass("min-h-[15px]");
+  });
+
+  it("follows the library while open — a folder added or removed elsewhere shows", async () => {
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    await within(folders()).findByText("client-diagrams", { selector: "p" });
+    act(() => useLibraryStore.setState({ folders: shelf().filter((f) => f.id !== "client") }));
+    expect(within(folders()).queryByText("client-diagrams")).toBeNull();
+    expect(await homeLine()).toBe("~/Dosik · 2 projects");
+  });
+
+  it("lists the library when nothing has listed it yet", async () => {
+    useLibraryStore.setState({ folders: null });
+    answer("list_library", shelf());
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(
+      await within(folders()).findByText("client-diagrams", { selector: "p" }),
+    ).toBeInTheDocument();
+    expect(invokeMock).toHaveBeenCalledWith("list_library");
   });
 });
 

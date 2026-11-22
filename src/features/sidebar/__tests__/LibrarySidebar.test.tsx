@@ -63,7 +63,7 @@ describe("docked sidebar (#217 R2, T28)", () => {
         .map((b) => b.textContent),
     ).toEqual(["Home", "Recent"]);
     expect(within(aside).getByRole("tree", { name: "Projects" })).toBeInTheDocument();
-    expect(within(aside).getByRole("button", { name: "New project" })).toBeInTheDocument();
+    expect(within(aside).getByRole("button", { name: "Add a project" })).toBeInTheDocument();
     expect(within(aside).getByRole("button", { name: "Open file…" })).toHaveAttribute(
       "aria-keyshortcuts",
     );

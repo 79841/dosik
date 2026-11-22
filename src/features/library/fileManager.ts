@@ -12,3 +12,10 @@ export const showInLabel = (userAgent: string = navigator.userAgent): string => 
   if (userAgent.includes("Windows")) return "Show in File Explorer";
   return "Show in File Manager";
 };
+
+/**
+ * The same words naming what they show — "Show Research notes in Finder" —
+ * for a button among others of its kind, one per row (#256).
+ */
+export const showNamedInLabel = (name: string, userAgent: string = navigator.userAgent): string =>
+  showInLabel(userAgent).replace(/^Show /, `Show ${name} `);

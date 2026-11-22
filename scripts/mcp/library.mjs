@@ -251,7 +251,11 @@ const readRecord = (lib) => {
   const projects = Array.isArray(parsed?.projects)
     ? parsed.projects
         .filter((p) => typeof p?.path === "string" && paths.isAbsolute(p.path))
-        .map((p) => ({ path: p.path, ids: isObject(p.ids) ? p.ids : {} }))
+        .map((p) => ({
+          path: p.path,
+          ids: isObject(p.ids) ? p.ids : {},
+          keptAdded: p.keptAdded === true,
+        }))
     : [];
   const location = parsed?.defaultLocation;
   return {
@@ -314,7 +318,8 @@ const projectEntry = (path, ids = {}, missing = false) => ({
 /**
  * The library as the app will list it next: the record's projects (one in
  * the library folder whose folder is gone is no project any more, while the
- * library folder is there — it was removed in the file manager), the library
+ * library folder is there — it was removed in the file manager — unless the
+ * app keeps it as one added from elsewhere and not found), the library
  * folder's folders the record does not have yet, and the folders the inbox
  * hands over.
  */
@@ -328,8 +333,9 @@ const look = (lib) => {
     const kind = kindOf(lib, p.path);
     const there = kind === "dir";
     // gone from the library folder: removed in the file manager — but one
-    // that cannot be looked at may well be there, and only cannot be found
-    const removed = kind !== "unknown" && defaultThere;
+    // that cannot be looked at may well be there, and only cannot be found;
+    // and one the app keeps as added from elsewhere (`keptAdded`) stays
+    const removed = kind !== "unknown" && defaultThere && !p.keptAdded;
     if (!there && removed && paths.dirname(p.path) === defaultLocation) continue;
     projects.push(projectEntry(p.path, p.ids, !there));
   }

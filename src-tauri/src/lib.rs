@@ -228,6 +228,8 @@ pub fn run() {
             library::delete_project,
             library::locate_project,
             library::remove_project,
+            library::add_library_folder,
+            library::change_default_location,
             library::watch_files,
             library::library_diagram_at,
             library::library_path,

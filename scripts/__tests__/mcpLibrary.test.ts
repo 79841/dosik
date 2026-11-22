@@ -179,6 +179,24 @@ describe("list_projects", () => {
     expect(() => createFolder(lib, join(locked, "Sub"))).toThrow(/cannot be found/);
   });
 
+  it("keeps a folder added from elsewhere and not found as the app does, once the library folder moved onto its parent", () => {
+    const { lib, record, work } = sandbox();
+    mkdirSync(join(work, "Here"), { recursive: true });
+    writeState(record, {
+      v: 1,
+      defaultLocation: work,
+      projects: [
+        { ...project(join(work, "Gone")), keptAdded: true },
+        // one of the library folder's that went: no project any more
+        project(join(work, "Removed")),
+      ],
+    });
+    expect(listProjects(lib).projects).toEqual([
+      { name: "Gone", path: join(work, "Gone"), missing: true },
+      { name: "Here", path: join(work, "Here"), missing: false },
+    ]);
+  });
+
   it("takes the library folder the record names over its own rule", () => {
     const { lib, library, record, base } = sandbox();
     const elsewhere = join(base, "Elsewhere");

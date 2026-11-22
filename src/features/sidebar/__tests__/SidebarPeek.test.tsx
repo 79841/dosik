@@ -141,7 +141,7 @@ describe("peek (#217 D16, T31)", () => {
     renderChrome();
     fireEvent.pointerEnter(show());
     wait(120);
-    const newProject = screen.getByRole("button", { name: "New project" });
+    const newProject = screen.getByRole("button", { name: "Add a project" });
     act(() => newProject.focus());
     fireEvent.pointerLeave(show());
     wait(400);
@@ -160,7 +160,7 @@ describe("peek (#217 D16, T31)", () => {
     fireEvent.pointerEnter(aside);
     const hovering = hover(aside);
     try {
-      act(() => screen.getByRole("button", { name: "New project" }).focus());
+      act(() => screen.getByRole("button", { name: "Add a project" }).focus());
       // focus moves out from under the pointer — a dialog, a programmatic focus
       act(() => screen.getByRole("button", { name: "elsewhere" }).focus());
       wait(400);

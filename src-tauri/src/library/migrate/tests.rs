@@ -163,7 +163,8 @@ fn titles_by_id(list: &[listing::FolderMeta]) -> BTreeMap<String, String> {
 
 /// nothing the run made is left beside the default location or in it
 fn no_leftovers(lib: &Library) {
-    let parent = lib.default_location.parent().unwrap();
+    let default = lib.default_location();
+    let parent = default.parent().unwrap();
     if parent.exists() {
         for name in names_in(parent) {
             assert!(
@@ -173,8 +174,8 @@ fn no_leftovers(lib: &Library) {
             );
         }
     }
-    if lib.default_location.exists() {
-        for name in names_in(&lib.default_location) {
+    if lib.default_location().exists() {
+        for name in names_in(&lib.default_location()) {
             assert!(
                 !name.starts_with('.'),
                 "{name} left in the default location"
@@ -191,7 +192,7 @@ fn the_older_library_moves_into_real_folders_as_it_was() {
     let before = snapshot(&lib.legacy_dir);
     let old = legacy::read_only(&lib.legacy_dir).folders;
     assert!(run(&lib).unwrap().is_some());
-    let at_ = &lib.default_location;
+    let at_ = &lib.default_location();
     assert_eq!(
         names_in(at_),
         vec!["Archive", "My Diagrams", "Payments 2", "payments"]
@@ -279,7 +280,7 @@ fn it_moves_once() {
     // a record that cannot be read is put aside — and nothing is moved again
     std::fs::write(lib.data_dir.join(state::STATE_FILE), "{broken").unwrap();
     assert!(run(&lib).unwrap().is_none());
-    assert_eq!(names_in(&lib.default_location).len(), listed.len());
+    assert_eq!(names_in(&lib.default_location()).len(), listed.len());
 }
 
 #[test]
@@ -288,7 +289,7 @@ fn with_nothing_to_move_nothing_is_made() {
     assert!(run(&lib).unwrap().is_none());
     std::fs::create_dir_all(&lib.legacy_dir).unwrap();
     assert!(run(&lib).unwrap().is_none());
-    assert!(!lib.default_location.exists());
+    assert!(!lib.default_location().exists());
     assert!(!lib.data_dir.join(JOURNAL).exists());
     assert!(!lib.legacy_dir.join(MARKER).exists());
 }
@@ -297,13 +298,13 @@ fn with_nothing_to_move_nothing_is_made() {
 fn a_default_location_already_there_keeps_what_is_in_it() {
     let lib = test_library("migrate-each");
     older_library(&lib);
-    let mine = lib.default_location.join("Archive");
+    let mine = lib.default_location().join("Archive");
     std::fs::create_dir_all(&mine).unwrap();
     std::fs::write(mine.join("notes.txt"), "mine").unwrap();
     let old = legacy::read_only(&lib.legacy_dir).folders;
     assert!(run(&lib).unwrap().is_some());
     assert_eq!(
-        names_in(&lib.default_location),
+        names_in(&lib.default_location()),
         vec![
             "Archive",
             "Archive 2",
@@ -350,9 +351,9 @@ fn taken_back(
     mine: Option<&Path>,
 ) {
     match mine {
-        None => assert!(!lib.default_location.exists(), "no default location made"),
+        None => assert!(!lib.default_location().exists(), "no default location made"),
         Some(mine) => assert_eq!(
-            names_in(&lib.default_location),
+            names_in(&lib.default_location()),
             vec![mine.file_name().unwrap().to_string_lossy().into_owned()]
         ),
     }
@@ -373,7 +374,7 @@ fn a_failure_takes_back_everything_and_the_next_run_moves_it() {
             let lib = test_library("migrate-fail");
             older_library(&lib);
             let mine = each.then(|| {
-                let mine = lib.default_location.join("Mine");
+                let mine = lib.default_location().join("Mine");
                 std::fs::create_dir_all(&mine).unwrap();
                 mine
             });
@@ -414,7 +415,7 @@ fn a_run_cut_short_is_taken_back_or_finished_never_doubled() {
             let lib = test_library("migrate-crash");
             older_library(&lib);
             if each {
-                std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+                std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
             }
             fail_at(&[(point, Inject::Crash)]);
             assert!(run(&lib).is_err(), "{point}");
@@ -433,7 +434,7 @@ fn a_run_cut_short_is_taken_back_or_finished_never_doubled() {
                 "{point}: {:?}",
                 listed.iter().map(|p| &p.name).collect::<Vec<_>>()
             );
-            let mut names = names_in(&lib.default_location);
+            let mut names = names_in(&lib.default_location());
             names.retain(|n| n != "Mine");
             assert_eq!(
                 names,
@@ -453,20 +454,20 @@ fn a_run_cut_short_once_moving_is_finished_and_what_came_since_stays() {
         let lib = test_library("migrate-forward");
         older_library(&lib);
         if each {
-            std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+            std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
         }
         fail_at(&[("move", Inject::Crash)]);
         assert!(run(&lib).is_err());
         // while the app was away: a file put in a moved project, a project
         // made beside them (the MCP server works without the app)
-        put(&lib.default_location.join("Archive/notes.txt"), "mine");
-        put(&lib.default_location.join("New/Plan.dosik"), &doc("Plan"));
+        put(&lib.default_location().join("Archive/notes.txt"), "mine");
+        put(&lib.default_location().join("New/Plan.dosik"), &doc("Plan"));
         assert!(run(&lib).unwrap().is_some(), "finished now");
         assert_eq!(
-            std::fs::read_to_string(lib.default_location.join("Archive/notes.txt")).unwrap(),
+            std::fs::read_to_string(lib.default_location().join("Archive/notes.txt")).unwrap(),
             "mine"
         );
-        assert!(lib.default_location.join("New/Plan.dosik").is_file());
+        assert!(lib.default_location().join("New/Plan.dosik").is_file());
         let listed = list(&lib).unwrap();
         let mut names: Vec<&str> = listed.iter().map(|p| p.name.as_str()).collect();
         names.sort_unstable();
@@ -537,7 +538,7 @@ fn a_taking_back_cut_short_is_taken_back_on_the_next_start_never_finished() {
             let lib = test_library("migrate-take-back-cut");
             older_library(&lib);
             if each {
-                std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+                std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
             }
             // placed, then the record cannot be written; the app stops while
             // what was made is being taken back
@@ -546,7 +547,7 @@ fn a_taking_back_cut_short_is_taken_back_on_the_next_start_never_finished() {
             assert_eq!(journal_stage(&lib), Stage::TakingBack, "{point}");
             // the next start takes back the rest and moves it again, whole
             assert!(run(&lib).unwrap().is_some(), "{point}");
-            let mut names = names_in(&lib.default_location);
+            let mut names = names_in(&lib.default_location());
             names.retain(|n| n != "Mine");
             assert_eq!(
                 names,
@@ -567,7 +568,7 @@ fn a_taking_back_that_fails_is_tried_again_never_finished() {
         let lib = test_library("migrate-take-back-fails");
         older_library(&lib);
         if each {
-            std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+            std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
         }
         let before = snapshot(&lib.legacy_dir);
         // placed, the record cannot be written, and a rename back fails too
@@ -596,11 +597,11 @@ fn a_folder_there_in_another_normal_form_is_a_clash_and_the_project_takes_the_ne
         r#"{"name":"Café","createdAt":1}"#,
     );
     put(&lib.legacy_dir.join("cafe/menu.dosik.json"), &doc("Menu"));
-    let theirs = lib.default_location.join("Cafe\u{301}");
+    let theirs = lib.default_location().join("Cafe\u{301}");
     std::fs::create_dir_all(&theirs).unwrap();
     std::fs::write(theirs.join("notes.txt"), "mine").unwrap();
     assert!(run(&lib).unwrap().is_some());
-    let moved = lib.default_location.join("Caf\u{e9} 2");
+    let moved = lib.default_location().join("Caf\u{e9} 2");
     assert!(moved.join("Menu.dosik").is_file());
     assert_eq!(
         std::fs::read_to_string(theirs.join("notes.txt")).unwrap(),
@@ -626,7 +627,7 @@ fn two_titles_in_two_normal_forms_are_two_files() {
     assert_eq!(names["a"], "Caf\u{e9}");
     assert_eq!(names["b"], "Cafe\u{301} 2");
     // each its own bytes: neither copy took the other's place
-    let p = lib.default_location.join("P");
+    let p = lib.default_location().join("P");
     assert_eq!(
         std::fs::read_to_string(p.join("Cafe\u{301} 2.dosik")).unwrap(),
         doc("Cafe\u{301}")
@@ -684,7 +685,7 @@ fn a_copy_is_never_put_over_another() {
 fn a_folder_made_where_a_project_goes_meanwhile_is_left_and_the_next_name_taken() {
     let lib = test_library("migrate-made-meanwhile");
     older_library(&lib);
-    std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+    std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
     MID_PLACE.with(|hook| {
         *hook.borrow_mut() = Some(Box::new(|to: &Path| {
             std::fs::create_dir_all(to).unwrap();
@@ -692,7 +693,7 @@ fn a_folder_made_where_a_project_goes_meanwhile_is_left_and_the_next_name_taken(
         }))
     });
     assert!(run(&lib).unwrap().is_some());
-    let mut names = names_in(&lib.default_location);
+    let mut names = names_in(&lib.default_location());
     names.retain(|n| n != "Mine");
     // the first project's first name went to the folder made meanwhile
     assert_eq!(
@@ -706,7 +707,7 @@ fn a_folder_made_where_a_project_goes_meanwhile_is_left_and_the_next_name_taken(
         ]
     );
     assert_eq!(
-        std::fs::read_to_string(lib.default_location.join("Archive/theirs.txt")).unwrap(),
+        std::fs::read_to_string(lib.default_location().join("Archive/theirs.txt")).unwrap(),
         "theirs"
     );
     let listed = list(&lib).unwrap();
@@ -718,13 +719,13 @@ fn a_folder_made_where_a_project_goes_meanwhile_is_left_and_the_next_name_taken(
 fn a_run_cut_short_twice_finds_where_each_project_last_went() {
     let lib = test_library("migrate-twice");
     older_library(&lib);
-    std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+    std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
     // cut short as the first project was about to go to "Archive"
     fail_at(&[("placing", Inject::Crash)]);
     assert!(run(&lib).is_err());
     // meanwhile a folder of that name is made; the next start puts the
     // project beside it, and is cut short again
-    let theirs = lib.default_location.join("Archive");
+    let theirs = lib.default_location().join("Archive");
     put(&theirs.join("notes.txt"), "mine");
     fail_at(&[("move", Inject::Crash)]);
     assert!(run(&lib).is_err());
@@ -741,7 +742,7 @@ fn a_run_cut_short_twice_finds_where_each_project_last_went() {
 fn a_staging_folder_that_will_not_go_leaves_the_move_standing() {
     let lib = test_library("migrate-staging-stays");
     older_library(&lib);
-    std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+    std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
     // the system drops a file of its own into the folder the copy is built in
     MID_PLACE.with(|hook| {
         *hook.borrow_mut() = Some(Box::new(|to: &Path| {
@@ -779,7 +780,10 @@ fn a_folder_of_the_older_library_that_cannot_be_read_stays_behind_and_is_counted
     assert_eq!(moved.unwrap(), Some(1));
     let listed = list(&lib).unwrap();
     assert!(!titles_by_id(&listed).contains_key("sub"));
-    assert!(!lib.default_location.join("Payments 2/Sub-Folder").exists());
+    assert!(!lib
+        .default_location()
+        .join("Payments 2/Sub-Folder")
+        .exists());
     assert!(
         sub.join("deep.dosik.json").is_file(),
         "it stays in the older library"
@@ -798,7 +802,7 @@ fn a_diagram_that_is_no_json_is_named_by_its_id_cleaned() {
     put(&lib.legacy_dir.join("p/con.dosik.json"), "{not json");
     assert!(run(&lib).unwrap().is_some());
     assert_eq!(
-        names_in(&lib.default_location.join("P")),
+        names_in(&lib.default_location().join("P")),
         vec!["con-.dosik"]
     );
 }
@@ -810,13 +814,13 @@ fn a_run_cut_short_whose_journal_cannot_be_read_doubles_nothing() {
     for point in ["move", "state"] {
         let lib = test_library("migrate-journal-broken");
         older_library(&lib);
-        std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+        std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
         let old = legacy::read_only(&lib.legacy_dir).folders;
         fail_at(&[(point, Inject::Crash)]);
         assert!(run(&lib).is_err(), "{point}");
         std::fs::write(lib.data_dir.join(JOURNAL), "{broken").unwrap();
         assert!(run(&lib).unwrap().is_some(), "{point}");
-        let mut names = names_in(&lib.default_location);
+        let mut names = names_in(&lib.default_location());
         names.retain(|n| n != "Mine");
         assert_eq!(
             names,
@@ -837,7 +841,7 @@ fn a_folder_that_only_shares_a_projects_name_is_not_taken_for_its_copy() {
     let lib = test_library("migrate-journal-broken-theirs");
     older_library(&lib);
     // the user's own Archive, not what the move made
-    let theirs = lib.default_location.join("Archive");
+    let theirs = lib.default_location().join("Archive");
     put(&theirs.join("notes.txt"), "mine");
     std::fs::create_dir_all(&lib.data_dir).unwrap();
     std::fs::write(lib.data_dir.join(JOURNAL), "{broken").unwrap();
@@ -851,10 +855,10 @@ fn a_folder_that_only_shares_a_projects_name_is_not_taken_for_its_copy() {
 fn a_folder_made_where_a_project_went_is_never_taken_back() {
     let lib = test_library("migrate-back-theirs");
     older_library(&lib);
-    std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+    std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
     // the user's Archive turns up as the move is about to put one there —
     // with a diagram called as the move's would be
-    let theirs = lib.default_location.join("Archive");
+    let theirs = lib.default_location().join("Archive");
     MID_PLACE.with(|hook| {
         *hook.borrow_mut() = Some(Box::new(|to: &Path| {
             std::fs::create_dir_all(to).unwrap();
@@ -866,7 +870,7 @@ fn a_folder_made_where_a_project_went_is_never_taken_back() {
     assert!(run(&lib).is_err());
     assert_eq!(journal_stage(&lib), Stage::TakingBack);
     // meanwhile the move's own Archive is moved away by the user
-    std::fs::remove_dir_all(lib.default_location.join("Archive 2")).unwrap();
+    std::fs::remove_dir_all(lib.default_location().join("Archive 2")).unwrap();
     assert!(run(&lib).unwrap().is_some());
     // theirs is where it was, as it was
     assert_eq!(
@@ -882,21 +886,21 @@ fn a_folder_made_where_a_project_went_is_never_taken_back() {
 fn a_project_gone_while_the_move_is_taken_back_is_passed_over() {
     let lib = test_library("migrate-back-gone");
     older_library(&lib);
-    std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
-    put(&lib.default_location.join("Mine/notes.txt"), "mine");
+    std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
+    put(&lib.default_location().join("Mine/notes.txt"), "mine");
     fail_at(&[("state", Inject::Fail), ("unmove", Inject::Fail)]);
     assert!(run(&lib).is_err());
-    std::fs::remove_dir_all(lib.default_location.join("My Diagrams")).unwrap();
+    std::fs::remove_dir_all(lib.default_location().join("My Diagrams")).unwrap();
     // taken back as far as it can be, then moved again, whole
     assert!(run(&lib).unwrap().is_some());
-    let mut names = names_in(&lib.default_location);
+    let mut names = names_in(&lib.default_location());
     names.retain(|n| n != "Mine");
     assert_eq!(
         names,
         vec!["Archive", "My Diagrams", "Payments 2", "payments"]
     );
     assert_eq!(
-        names_in(&lib.default_location.join("Mine")),
+        names_in(&lib.default_location().join("Mine")),
         vec!["notes.txt"]
     );
     no_leftovers(&lib);
@@ -908,18 +912,20 @@ fn what_changed_where_the_move_put_it_is_finished_never_taken_back() {
         let lib = test_library("migrate-back-edited");
         older_library(&lib);
         if each {
-            std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+            std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
         }
         fail_at(&[("state", Inject::Fail), ("unmove", Inject::Fail)]);
         assert!(run(&lib).is_err(), "{each}");
         // an agent edits a diagram the move put there, and makes a project
         // beside them
-        let edited = lib.default_location.join("Archive/Untitled Diagram.dosik");
+        let edited = lib
+            .default_location()
+            .join("Archive/Untitled Diagram.dosik");
         std::fs::write(&edited, doc("Edited")).unwrap();
-        put(&lib.default_location.join("New/Plan.dosik"), &doc("Plan"));
+        put(&lib.default_location().join("New/Plan.dosik"), &doc("Plan"));
         assert!(run(&lib).unwrap().is_some(), "{each}: finished now");
         assert_eq!(std::fs::read_to_string(&edited).unwrap(), doc("Edited"));
-        assert!(lib.default_location.join("New/Plan.dosik").is_file());
+        assert!(lib.default_location().join("New/Plan.dosik").is_file());
         let listed = list(&lib).unwrap();
         let names = titles_by_id(&listed);
         assert_eq!(names["arc"], "Archive", "{each}");
@@ -933,15 +939,16 @@ fn what_changed_where_the_move_put_it_is_finished_never_taken_back() {
 fn a_move_finished_after_a_change_passes_over_a_project_gone_since() {
     let lib = test_library("migrate-finish-gone");
     older_library(&lib);
-    std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+    std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
     fail_at(&[("state", Inject::Fail), ("unmove", Inject::Fail)]);
     assert!(run(&lib).is_err());
     std::fs::write(
-        lib.default_location.join("Archive/Untitled Diagram.dosik"),
+        lib.default_location()
+            .join("Archive/Untitled Diagram.dosik"),
         doc("Edited"),
     )
     .unwrap();
-    std::fs::remove_dir_all(lib.default_location.join("My Diagrams")).unwrap();
+    std::fs::remove_dir_all(lib.default_location().join("My Diagrams")).unwrap();
     // finished, not stuck on what is gone
     assert!(run(&lib).unwrap().is_some());
     let listed = list(&lib).unwrap();
@@ -958,12 +965,12 @@ fn a_rename_made_before_the_journal_could_say_so_is_finished() {
         let lib = test_library("migrate-renamed-unmarked");
         older_library(&lib);
         if each {
-            std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+            std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
         }
         fail_at(&[(point, Inject::Crash)]);
         assert!(run(&lib).is_err(), "{point}");
         assert!(run(&lib).unwrap().is_some(), "{point}");
-        let mut names = names_in(&lib.default_location);
+        let mut names = names_in(&lib.default_location());
         names.retain(|n| n != "Mine");
         assert_eq!(
             names,
@@ -979,7 +986,7 @@ fn an_empty_project_is_found_whole_only_in_an_empty_folder() {
     let lib = test_library("migrate-adopt-empty");
     older_library(&lib);
     // the user's own "payments", as named as the older library's empty project
-    let theirs = lib.default_location.join("payments");
+    let theirs = lib.default_location().join("payments");
     put(&theirs.join("notes.txt"), "mine");
     std::fs::create_dir_all(&lib.data_dir).unwrap();
     std::fs::write(lib.data_dir.join(JOURNAL), "{broken").unwrap();
@@ -1001,7 +1008,7 @@ fn a_whole_move_cut_short_whose_journal_cannot_be_read_doubles_nothing() {
     std::fs::write(lib.data_dir.join(JOURNAL), "{broken").unwrap();
     assert!(run(&lib).unwrap().is_some());
     assert_eq!(
-        names_in(&lib.default_location),
+        names_in(&lib.default_location()),
         vec!["Archive", "My Diagrams", "Payments 2", "payments"]
     );
     same_tree(&old, &list(&lib).unwrap());
@@ -1012,7 +1019,7 @@ fn a_whole_move_cut_short_whose_journal_cannot_be_read_doubles_nothing() {
 fn looking_for_what_a_move_made_cut_short_doubles_nothing() {
     let lib = test_library("migrate-adopt-cut");
     older_library(&lib);
-    std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+    std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
     let old = legacy::read_only(&lib.legacy_dir).folders;
     fail_at(&[("move", Inject::Crash)]);
     assert!(run(&lib).is_err());
@@ -1021,7 +1028,7 @@ fn looking_for_what_a_move_made_cut_short_doubles_nothing() {
     fail_at(&[("adopting", Inject::Crash)]);
     assert!(run(&lib).is_err());
     assert!(run(&lib).unwrap().is_some());
-    let mut names = names_in(&lib.default_location);
+    let mut names = names_in(&lib.default_location());
     names.retain(|n| n != "Mine");
     assert_eq!(
         names,
@@ -1046,7 +1053,7 @@ fn a_copy_whose_name_turns_out_taken_takes_the_next() {
     assert_eq!(titles_by_id(&listed)["notitle"], "Untitled Diagram 2");
     assert_eq!(
         std::fs::read_to_string(
-            lib.default_location
+            lib.default_location()
                 .join("Archive/Untitled Diagram 2.dosik")
         )
         .unwrap(),
@@ -1108,7 +1115,7 @@ fn a_move_taken_back_whole_but_for_its_journal_is_never_finished_on_what_came_si
         let lib = test_library("migrate-back-unjournaled");
         older_library(&lib);
         if each {
-            std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+            std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
         }
         // placed, the record cannot be written, all of it taken back — and
         // the app stops before the journal goes
@@ -1116,8 +1123,8 @@ fn a_move_taken_back_whole_but_for_its_journal_is_never_finished_on_what_came_si
         assert!(run(&lib).is_err(), "{each}");
         assert!(lib.data_dir.join(JOURNAL).exists(), "{each}");
         // meanwhile an agent makes folders where the move had put projects
-        put(&lib.default_location.join("Archive/theirs.txt"), "theirs");
-        put(&lib.default_location.join("New/Plan.dosik"), &doc("Plan"));
+        put(&lib.default_location().join("Archive/theirs.txt"), "theirs");
+        put(&lib.default_location().join("New/Plan.dosik"), &doc("Plan"));
         // the next start moves it again: nothing of theirs taken for the move's
         assert!(run(&lib).unwrap().is_some(), "{each}");
         let listed = list(&lib).unwrap();
@@ -1126,7 +1133,7 @@ fn a_move_taken_back_whole_but_for_its_journal_is_never_finished_on_what_came_si
         assert_eq!(names["notitle"], "Untitled Diagram", "{each}");
         assert!(names.contains_key("deep"), "{each}");
         assert_eq!(
-            names_in(&lib.default_location.join("Archive")),
+            names_in(&lib.default_location().join("Archive")),
             vec!["theirs.txt"],
             "{each}"
         );
@@ -1143,7 +1150,7 @@ fn journal_of(lib: &Library) -> Journal {
 fn a_project_renamed_unmarked_and_removed_since_does_not_stop_the_move() {
     let lib = test_library("migrate-unmarked-removed");
     older_library(&lib);
-    std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+    std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
     // cut short between the first rename and its mark; the user removes
     // what it put there
     fail_at(&[("renamed", Inject::Crash)]);
@@ -1154,7 +1161,7 @@ fn a_project_renamed_unmarked_and_removed_since_does_not_stop_the_move() {
     // finished on the next start, and the one after does nothing more
     assert!(run(&lib).unwrap().is_some());
     assert!(run(&lib).unwrap().is_none());
-    let mut names = names_in(&lib.default_location);
+    let mut names = names_in(&lib.default_location());
     names.retain(|n| n != "Mine");
     assert_eq!(names, vec!["My Diagrams", "Payments 2", "payments"]);
     no_leftovers(&lib);
@@ -1165,7 +1172,7 @@ fn finishing_after_a_taking_back_takes_an_unmarked_rename_only_as_it_was_left() 
     for touched in [false, true] {
         let lib = test_library("migrate-unmarked-finish");
         older_library(&lib);
-        std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+        std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
         fail_at(&[("renamed", Inject::Crash)]);
         assert!(run(&lib).is_err());
         // the journal as a taking back would leave it, finishing instead
@@ -1199,7 +1206,7 @@ fn finishing_after_a_taking_back_takes_an_unmarked_rename_only_as_it_was_left() 
 fn a_rename_undone_before_the_journal_could_say_so_is_never_taken_for_made_again() {
     let lib = test_library("migrate-unmoved-unmarked");
     older_library(&lib);
-    std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+    std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
     // placed, the record cannot be written; the first rename back is made
     // and the app stops before the journal says so
     fail_at(&[("state", Inject::Fail), ("unmoved", Inject::Crash)]);
@@ -1227,8 +1234,8 @@ fn an_empty_project_moved_is_not_taken_for_the_one_edited_last() {
         let lib = test_library("migrate-empty-newest");
         older_library(&lib);
         if each {
-            std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
-            let mine = lib.default_location.join("Mine");
+            std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
+            let mine = lib.default_location().join("Mine");
             crate::library::disk::set_modified(&mine, at(0)).unwrap();
         }
         assert!(run(&lib).unwrap().is_some());
@@ -1239,7 +1246,7 @@ fn an_empty_project_moved_is_not_taken_for_the_one_edited_last() {
         // a new diagram goes where the newest diagram is, as before the move
         crate::library::ops::create(&lib, "d-new", &doc("Next"), None).unwrap();
         assert!(
-            lib.default_location
+            lib.default_location()
                 .join("My Diagrams/Next.dosik")
                 .is_file(),
             "{each}"

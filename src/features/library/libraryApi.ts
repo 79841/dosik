@@ -408,6 +408,50 @@ export type LocateAnswer = "located" | "cancelled" | "already";
 export const locateProject = (id: string): Promise<LocateAnswer> =>
   invoke<LocateAnswer>("locate_project", { id });
 
+/**
+ * What Add folder… came to (#256 R3): the folder picked is a project now, on
+ * top (`added`); it is in the library already, or inside or holding a
+ * project of it (`already`); it is too broad to be one (`invalid`); nothing
+ * was picked (`cancelled`).
+ */
+export type AddFolderAnswer =
+  | { kind: "added"; id: string }
+  | { kind: "already" }
+  | { kind: "invalid" }
+  | { kind: "cancelled" };
+
+/** Rust's answer as the app trusts it — one of no known kind is no answer, and throws */
+const cleanAddFolderAnswer = (raw: unknown): AddFolderAnswer => {
+  const answer = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
+  if (answer.kind === "added" && typeof answer.id === "string") {
+    return { kind: "added", id: answer.id };
+  }
+  if (answer.kind === "already" || answer.kind === "invalid" || answer.kind === "cancelled") {
+    return { kind: answer.kind };
+  }
+  throw new Error("Couldn't tell whether the folder was added");
+};
+
+/** Add folder…: Rust shows the system's folder picker, so no path comes from here (#256 D5) */
+export const pickLibraryFolder = async (): Promise<AddFolderAnswer> =>
+  cleanAddFolderAnswer(await invoke<unknown>("add_library_folder"));
+
+/**
+ * What Change… came to (#256 R3): new projects go to the folder picked from
+ * now; nothing was picked; or it is a project or inside one, or too broad.
+ */
+export type ChangeLocationAnswer = "changed" | "cancelled" | "invalid";
+
+/**
+ * Change…: Rust shows the folder picker and makes the folder picked the
+ * default location (#256 D5) — an answer of no known kind throws
+ */
+export const pickDefaultLocation = async (): Promise<ChangeLocationAnswer> => {
+  const answer = await invoke<unknown>("change_default_location");
+  if (answer === "changed" || answer === "invalid" || answer === "cancelled") return answer;
+  throw new Error("Couldn't tell whether the default location changed");
+};
+
 /** Remove from Library: the project's record goes, its folder stays (#253 D9, D15) */
 export const removeProject = (id: string): Promise<void> => invoke("remove_project", { id });
 
@@ -449,6 +493,12 @@ export const libraryPath = (kind: ItemKind, id: string): Promise<ItemPath> =>
 /** a folder opens in Finder; a diagram's file is shown selected there (#238 D3) — opened by Rust */
 export const showInFinder = (kind: ItemKind, id: string): Promise<void> =>
   invoke("show_in_finder", { kind, id });
+
+/** where new projects go (#253 R6, #256 R2): `path` whole, `shown` from `~` */
+export const libraryRoot = (): Promise<ItemPath> => invoke("library_root");
+
+/** the default location opens in Finder — made first when nothing has made it yet */
+export const showLibraryInFinder = (): Promise<void> => invoke("show_library_in_finder");
 
 export const blankDoc = (): DiagramDoc => ({
   version: 1,

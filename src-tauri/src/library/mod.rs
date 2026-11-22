@@ -18,6 +18,7 @@ mod migrate;
 mod names;
 mod ops;
 mod removal;
+mod roots;
 mod state;
 mod walk;
 mod watch;
@@ -33,6 +34,7 @@ use ctx::Library;
 use listing::{shown_path, FolderMeta};
 use ops::{ItemKind, Loaded, SaveOutcome};
 use removal::{BoardFailure, FolderBoard, LocateOutcome, SystemTrash};
+use roots::{AddOutcome, ChangeOutcome};
 use state::BoardSpot;
 
 /// what the window listens for (`LIBRARY_CHANGED_EVENT` in `useLibraryWatch.ts`)
@@ -284,20 +286,23 @@ type Shelf<'a> = State<'a, Arc<AppLibrary>>;
 
 /// Where the library is on this machine: its places in the app data — a
 /// development run's apart from the real ones — the default location
-/// (`DOSIK_LIBRARY_DIR`, or Documents), the home folder.
+/// (`DOSIK_LIBRARY_DIR`, the one chosen in Settings, or Documents), the home
+/// folder.
 fn open(app: &AppHandle) -> Result<Library, String> {
     let paths = app.path();
     let data = paths.app_data_dir().map_err(|e| e.to_string())?;
     let home = paths.home_dir().ok();
     let documents = paths.document_dir().ok();
     let dev = tauri::is_dev();
+    let (record, older) = ctx::data_places(&data, dev);
+    let chosen = ctx::chosen_location(&record);
     let default = ctx::default_location(
         std::env::var_os("DOSIK_LIBRARY_DIR").as_deref(),
+        chosen.as_deref(),
         dev,
         documents.as_deref(),
         home.as_deref(),
     )?;
-    let (record, older) = ctx::data_places(&data, dev);
     let default = ctx::resolved_default_location(&default);
     Ok(Library::new(record, default, older, home))
 }
@@ -572,6 +577,87 @@ pub async fn locate_project(
     .await
 }
 
+/// What Add folder… came to.
+#[derive(Serialize, Debug, PartialEq, Eq, Clone)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum AddFolderAnswer {
+    /// the folder picked is a project now, on top
+    Added { id: String },
+    /// it is in the library already, or inside or holding a project of it
+    Already,
+    /// it is too broad to be a project
+    Invalid,
+    /// nothing was picked
+    Cancelled,
+}
+
+/// Add folder…: the system's folder picker — opened from here, so no path
+/// ever comes from the webview — and the folder picked joins the library as
+/// one project, on top, watched from now.
+#[tauri::command]
+pub async fn add_library_folder(
+    app: AppHandle,
+    shelf: Shelf<'_>,
+) -> Result<AddFolderAnswer, String> {
+    use tauri_plugin_dialog::DialogExt;
+    blocking(&shelf, move |shelf, lib| {
+        let Some(picked) = app.dialog().file().blocking_pick_folder() else {
+            return Ok(AddFolderAnswer::Cancelled);
+        };
+        let path = picked.into_path().map_err(|e| e.to_string())?;
+        let answer = match roots::add_folder_at(lib, &path)? {
+            AddOutcome::Added { id } => AddFolderAnswer::Added { id },
+            AddOutcome::Already => AddFolderAnswer::Already,
+            AddOutcome::Invalid => AddFolderAnswer::Invalid,
+        };
+        shelf.rewatch();
+        Ok(answer)
+    })
+    .await
+}
+
+/// What Change… came to.
+#[derive(Serialize, Debug, PartialEq, Eq, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum ChangeAnswer {
+    /// new projects go to the folder picked from now
+    Changed,
+    /// nothing was picked
+    Cancelled,
+    /// the folder picked is a project or inside one, or too broad
+    Invalid,
+}
+
+/// Settings ▸ General ▸ Change…: the system's folder picker, opened where
+/// the default location is, and the folder picked becomes it — the record
+/// says so (the MCP server reads it there), every project stays, and the
+/// watch follows.
+#[tauri::command]
+pub async fn change_default_location(
+    app: AppHandle,
+    shelf: Shelf<'_>,
+) -> Result<ChangeAnswer, String> {
+    use tauri_plugin_dialog::DialogExt;
+    blocking(&shelf, move |shelf, lib| {
+        let mut picker = app.dialog().file();
+        let now = lib.default_location();
+        if disk::is_real_dir(&now) {
+            picker = picker.set_directory(now);
+        }
+        let Some(picked) = picker.blocking_pick_folder() else {
+            return Ok(ChangeAnswer::Cancelled);
+        };
+        let path = picked.into_path().map_err(|e| e.to_string())?;
+        let answer = match roots::set_default_location_at(lib, &path)? {
+            ChangeOutcome::Changed => ChangeAnswer::Changed,
+            ChangeOutcome::Invalid => ChangeAnswer::Invalid,
+        };
+        shelf.rewatch();
+        Ok(answer)
+    })
+    .await
+}
+
 /// The files open in tabs outside the library (Open file…), watched from
 /// now, so a change made to one elsewhere reaches its tab (`files-changed`).
 /// Off the main thread: the window asks at once, the watch may be busy.
@@ -647,11 +733,12 @@ pub fn show_in_finder(
     .map_err(|e| e.to_string())
 }
 
-/// The default location, for Settings ▸ General, shown with `~`.
+/// The default location, for Settings ▸ General, shown with `~` — the one
+/// chosen there last.
 #[tauri::command]
 pub fn library_root(shelf: Shelf<'_>) -> Result<ItemPath, String> {
     let lib = shelf.library.as_ref().map_err(Clone::clone)?;
-    Ok(item_path_of(lib, &lib.default_location))
+    Ok(item_path_of(lib, &lib.default_location()))
 }
 
 /// Settings ▸ General ▸ Show in Finder: the default location opens — made
@@ -665,7 +752,7 @@ pub fn show_library_in_finder(app: AppHandle, shelf: Shelf<'_>) -> Result<(), St
         let st = lib.load_state(&held)?;
         ops::ensure_default_location(lib, &st)?;
     }
-    let path = &lib.default_location;
+    let path = &lib.default_location();
     app.opener()
         .open_path(path.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())
@@ -718,7 +805,7 @@ mod tests {
             r#"{"name":"Payments","createdAt":1}"#,
         )
         .unwrap();
-        let default = lib.default_location.clone();
+        let default = lib.default_location();
         let shelf = AppLibrary::new(Ok(lib));
         let _ = shelf.watcher.set(watch::Watcher::start(|_| {}).unwrap());
         // the files open in tabs are watched, the move neither run nor waited for
@@ -746,7 +833,7 @@ mod tests {
             r#"{"name":"Payments","createdAt":1}"#,
         )
         .unwrap();
-        let default = lib.default_location.clone();
+        let default = lib.default_location();
         let legacy = lib.legacy_dir.clone();
         let shelf = AppLibrary::new(Ok(lib));
         let lib = shelf.ready().unwrap();
@@ -764,7 +851,7 @@ mod tests {
         let lib = test_library("mod-failed");
         std::fs::create_dir_all(lib.legacy_dir.join("pay")).unwrap();
         // a file where the default location's parent would be: nothing can be made
-        let parent = lib.default_location.parent().unwrap().to_path_buf();
+        let parent = lib.default_location().parent().unwrap().to_path_buf();
         std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
         std::fs::write(&parent, "in the way").unwrap();
         let shelf = AppLibrary::new(Ok(lib));
@@ -791,7 +878,7 @@ mod tests {
             r#"{"name":"Payments","createdAt":1}"#,
         )
         .unwrap();
-        let default = lib.default_location.clone();
+        let default = lib.default_location();
         let parent = default.parent().unwrap().to_path_buf();
         std::fs::create_dir_all(parent.parent().unwrap()).unwrap();
         std::fs::write(&parent, "in the way").unwrap();
@@ -814,7 +901,7 @@ mod tests {
     #[test]
     fn what_the_app_reads_and_writes_is_not_told_as_a_change() {
         let lib = test_library("mod-seen");
-        let file = lib.default_location.join("P").join("Flow.dosik");
+        let file = lib.default_location().join("P").join("Flow.dosik");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, r#"{"title":"Flow","nodes":[],"edges":[]}"#).unwrap();
         let shelf = AppLibrary::new(Ok(lib));
@@ -846,7 +933,7 @@ mod tests {
     #[test]
     fn a_batch_of_the_watch_is_sorted_out_without_the_lock() {
         let lib = test_library("mod-sort-unlocked");
-        let file = lib.default_location.join("P").join("Flow.dosik");
+        let file = lib.default_location().join("P").join("Flow.dosik");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, r#"{"title":"Flow","nodes":[],"edges":[]}"#).unwrap();
         let shelf = AppLibrary::new(Ok(lib));
@@ -863,7 +950,7 @@ mod tests {
     #[test]
     fn a_file_open_outside_the_library_is_told_by_the_path_the_window_gave() {
         let lib = test_library("mod-files");
-        let dir = lib.default_location.parent().unwrap().join("Mine");
+        let dir = lib.default_location().parent().unwrap().join("Mine");
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("a.dosik.json");
         std::fs::write(&file, "{}").unwrap();
@@ -895,7 +982,7 @@ mod tests {
     #[test]
     fn events_the_watch_lost_tell_the_window_to_look_at_everything_again() {
         let lib = test_library("mod-missed");
-        let dir = lib.default_location.parent().unwrap().join("Mine");
+        let dir = lib.default_location().parent().unwrap().join("Mine");
         std::fs::create_dir_all(&dir).unwrap();
         let shelf = AppLibrary::new(Ok(lib));
         // the library listed again, and every diagram open in a tab read again
@@ -919,6 +1006,133 @@ mod tests {
     }
 
     #[test]
+    fn the_folder_pickers_wait_off_the_main_thread() {
+        // a system picker blocks until it closes: on the main thread it
+        // would freeze the window under it
+        let source = include_str!("mod.rs");
+        for name in [
+            "add_library_folder",
+            "change_default_location",
+            "locate_project",
+        ] {
+            assert!(
+                source.contains(&format!("pub async fn {name}(")),
+                "{name} is async"
+            );
+        }
+    }
+
+    #[test]
+    fn add_folder_and_change_answer_as_the_window_reads_them() {
+        assert_eq!(
+            serde_json::to_value(AddFolderAnswer::Added { id: "p1".into() }).unwrap(),
+            serde_json::json!({ "kind": "added", "id": "p1" })
+        );
+        for (answer, kind) in [
+            (AddFolderAnswer::Already, "already"),
+            (AddFolderAnswer::Invalid, "invalid"),
+            (AddFolderAnswer::Cancelled, "cancelled"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(answer).unwrap(),
+                serde_json::json!({ "kind": kind })
+            );
+        }
+        for (answer, word) in [
+            (ChangeAnswer::Changed, "changed"),
+            (ChangeAnswer::Cancelled, "cancelled"),
+            (ChangeAnswer::Invalid, "invalid"),
+        ] {
+            assert_eq!(
+                serde_json::to_value(answer).unwrap(),
+                serde_json::json!(word)
+            );
+        }
+    }
+
+    #[test]
+    fn a_changed_default_location_is_watched_and_outlasts_the_run() {
+        let lib = test_library("mod-change");
+        let old = lib.default_location();
+        std::fs::create_dir_all(old.join("P")).unwrap();
+        let next = old.parent().unwrap().join("Elsewhere");
+        std::fs::create_dir_all(next.join("Q")).unwrap();
+        let data = lib.data_dir.clone();
+        let shelf = AppLibrary::new(Ok(lib));
+        listing::list(shelf.ready().unwrap()).unwrap();
+        assert_eq!(
+            roots::set_default_location_at(shelf.ready().unwrap(), &next).unwrap(),
+            ChangeOutcome::Changed
+        );
+        let lib = shelf.ready().unwrap();
+        let held = lib.lock();
+        let st = lib.load_state(&held).unwrap();
+        drop(held);
+        let watched = watch::roots(lib, &st);
+        assert!(watched.contains(&watch::Root {
+            path: ctx::resolved_default_location(&next),
+            recursive: true
+        }));
+        assert!(watched.contains(&watch::Root {
+            path: old.join("P"),
+            recursive: true
+        }));
+        // the next run starts where it was chosen
+        let chosen = ctx::chosen_location(&data);
+        assert_eq!(
+            ctx::default_location(None, chosen.as_deref(), false, None, None).unwrap(),
+            next
+        );
+    }
+
+    #[test]
+    fn a_run_told_where_by_the_environment_leaves_no_choice_behind() {
+        let base = crate::library::disk::tests::scratch("mod-env-run");
+        let data = base.join("appdata").join("library");
+        let docs = base.join("home").join("Docs");
+        let run = |default: PathBuf| {
+            Library::new(
+                data.clone(),
+                default,
+                base.join("appdata").join("projects"),
+                Some(base.join("home")),
+            )
+        };
+        let next_start = || {
+            let chosen = ctx::chosen_location(&data);
+            ctx::default_location(None, chosen.as_deref(), false, Some(&docs), None).unwrap()
+        };
+        // a run told where by DOSIK_LIBRARY_DIR writes it down as the
+        // location in use, for the MCP server…
+        let told = base.join("Told");
+        std::fs::create_dir_all(told.join("T")).unwrap();
+        let lib = run(told.clone());
+        listing::list(&lib).unwrap();
+        assert_eq!(
+            state::load(&data).unwrap().default_location.as_deref(),
+            told.to_str()
+        );
+        // …but the next run without it goes back to Documents
+        assert_eq!(next_start(), docs.join("Dosik"));
+        // unless that run picked it in Settings: then it was chosen
+        assert_eq!(
+            roots::set_default_location_at(&lib, &told).unwrap(),
+            ChangeOutcome::Changed
+        );
+        assert_eq!(next_start(), told);
+        // one chosen in Settings outlasts a later run told elsewhere
+        let lib = run(docs.join("Dosik"));
+        let chosen = base.join("Dropbox");
+        std::fs::create_dir_all(&chosen).unwrap();
+        assert_eq!(
+            roots::set_default_location_at(&lib, &chosen).unwrap(),
+            ChangeOutcome::Changed
+        );
+        listing::list(&run(told.clone())).unwrap();
+        assert_eq!(next_start(), chosen);
+    }
+
+    #[test]
     fn locate_answers_in_lower_case() {
         assert_eq!(
             serde_json::to_value(LocateAnswer::Cancelled).unwrap(),
@@ -933,18 +1147,15 @@ mod tests {
     #[test]
     fn the_picker_opens_where_the_project_was_or_nearest_to_it() {
         let lib = test_library("mod-last-place");
-        std::fs::create_dir_all(lib.default_location.join("P")).unwrap();
+        std::fs::create_dir_all(lib.default_location().join("P")).unwrap();
         let listed = listing::list(&lib).unwrap();
         let id = listed[0].id.clone();
         assert_eq!(
             last_place(&lib, &id).unwrap(),
-            Some(lib.default_location.join("P"))
+            Some(lib.default_location().join("P"))
         );
-        std::fs::remove_dir(lib.default_location.join("P")).unwrap();
-        assert_eq!(
-            last_place(&lib, &id).unwrap(),
-            Some(lib.default_location.clone())
-        );
+        std::fs::remove_dir(lib.default_location().join("P")).unwrap();
+        assert_eq!(last_place(&lib, &id).unwrap(), Some(lib.default_location()));
         assert!(last_place(&lib, "nope").is_err());
         assert!(last_place(&lib, "../x").is_err());
     }

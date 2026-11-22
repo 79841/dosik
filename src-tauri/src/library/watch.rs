@@ -40,25 +40,39 @@ pub struct Root {
 }
 
 /// What the library's watch covers: the inbox by itself, the default
-/// location and every project outside it with everything in them.
+/// location and every project outside it with everything in them — but no
+/// folder another of them holds (a project deep in a default location moved
+/// onto its parent): letting the outer one go could take the inner one's
+/// watch with it.
 pub fn roots(lib: &Library, st: &LibraryState) -> BTreeSet<Root> {
+    let mut recursive = vec![lib.default_location()];
+    for record in &st.projects {
+        let root = record.root();
+        if !lib.in_default_location(&root) {
+            recursive.push(root);
+        }
+    }
+    // the outer ones first, by how the file system has them
+    let mut real: Vec<(PathBuf, PathBuf)> = recursive
+        .into_iter()
+        .map(|path| (normalized(&path), path))
+        .collect();
+    real.sort_by_key(|(real, _)| real.components().count());
+    let mut kept: Vec<PathBuf> = Vec::new();
     let mut out = BTreeSet::new();
     out.insert(Root {
         path: lib.inbox_dir(),
         recursive: false,
     });
-    out.insert(Root {
-        path: lib.default_location.clone(),
-        recursive: true,
-    });
-    for record in &st.projects {
-        let root = record.root();
-        if !lib.in_default_location(&root) {
-            out.insert(Root {
-                path: root,
-                recursive: true,
-            });
+    for (real, path) in real {
+        if kept.iter().any(|outer| real.starts_with(outer)) {
+            continue;
         }
+        kept.push(real);
+        out.insert(Root {
+            path,
+            recursive: true,
+        });
     }
     out
 }
@@ -247,7 +261,7 @@ pub fn sort_out(
     LOCKED_WHILE_SORTING.with(|c| c.set(Some(lib.is_locked())));
     let roots = ProjectRoots::of(st);
     let inbox = normalized(&lib.inbox_dir());
-    let default = normalized(&lib.default_location);
+    let default = normalized(&lib.default_location());
     let mut tell = false;
     let mut changed = BTreeSet::new();
     for path in paths {
@@ -362,10 +376,10 @@ mod tests {
     /// and the added project Ext (Far), listed
     fn library(tag: &str) -> (Library, Vec<FolderMeta>) {
         let lib = test_library(tag);
-        let p = lib.default_location.join("P");
+        let p = lib.default_location().join("P");
         put(&p.join("Flow.dosik"), &titled("Flow"));
         put(&p.join("Sub/Deep.dosik"), &titled("Deep"));
-        let ext = lib.default_location.parent().unwrap().join("Ext");
+        let ext = lib.default_location().parent().unwrap().join("Ext");
         put(&ext.join("Far.dosik"), &titled("Far"));
         list(&lib).unwrap();
         let note = serde_json::json!({ "path": ext.to_string_lossy(), "at": 1 });
@@ -402,25 +416,62 @@ mod tests {
     }
 
     fn p(lib: &Library) -> PathBuf {
-        lib.default_location.join("P")
+        lib.default_location().join("P")
     }
 
     #[test]
     fn the_inbox_the_default_location_and_projects_outside_it_are_watched() {
         let (lib, listed) = library("watch-roots");
         assert_eq!(listed.len(), 2);
-        let ext = lib.default_location.parent().unwrap().join("Ext");
+        let ext = lib.default_location().parent().unwrap().join("Ext");
         let roots: Vec<(PathBuf, bool)> = roots(&lib, &record(&lib))
             .into_iter()
             .map(|r| (r.path, r.recursive))
             .collect();
         let mut expected = vec![
             (lib.inbox_dir(), false),
-            (lib.default_location.clone(), true),
+            (lib.default_location(), true),
             (ext, true),
         ];
         expected.sort();
         assert_eq!(roots, expected);
+    }
+
+    #[test]
+    fn a_folder_another_watched_folder_holds_is_not_watched_again() {
+        use crate::library::roots::{add_folder_at, set_default_location_at};
+        let lib = test_library("watch-nested");
+        let base = lib.default_location().parent().unwrap().to_path_buf();
+        let work = base.join("work");
+        let repo = work.join("clients").join("Repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(work.join("Notes")).unwrap();
+        add_folder_at(&lib, &repo).unwrap();
+        // the default location moved onto the folder holding the project
+        set_default_location_at(&lib, &work).unwrap();
+        list(&lib).unwrap();
+        let recursive = |lib: &Library| -> Vec<PathBuf> {
+            roots(lib, &record(lib))
+                .into_iter()
+                .filter(|r| r.recursive)
+                .map(|r| r.path)
+                .collect()
+        };
+        // one watch for both: letting the outer one go must never take the
+        // inner one with it
+        let real = crate::library::ctx::resolved_default_location;
+        assert_eq!(recursive(&lib), vec![real(&work)]);
+        assert!(roots(&lib, &record(&lib)).contains(&Root {
+            path: lib.inbox_dir(),
+            recursive: false
+        }));
+        // the outer one gone from the watch: the inner one is watched again
+        let elsewhere = base.join("Elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        set_default_location_at(&lib, &elsewhere).unwrap();
+        let mut expected = vec![real(&elsewhere), repo, real(&work).join("Notes")];
+        expected.sort();
+        assert_eq!(recursive(&lib), expected);
     }
 
     #[test]
@@ -514,7 +565,7 @@ mod tests {
     fn a_project_folder_gone_takes_its_diagrams() {
         let (lib, listed) = library("watch-project-gone");
         let far = id_of(&listed, "Far");
-        let ext = lib.default_location.parent().unwrap().join("Ext");
+        let ext = lib.default_location().parent().unwrap().join("Ext");
         std::fs::remove_dir_all(&ext).unwrap();
         assert_eq!(sort(&lib, &mut HashMap::new(), &[ext]), Some(vec![far]));
     }
@@ -535,9 +586,9 @@ mod tests {
             Some(vec![])
         );
         // a new project in the default location
-        std::fs::create_dir_all(lib.default_location.join("Q")).unwrap();
+        std::fs::create_dir_all(lib.default_location().join("Q")).unwrap();
         assert_eq!(
-            sort(&lib, &mut seen, &[lib.default_location.join("Q")]),
+            sort(&lib, &mut seen, &[lib.default_location().join("Q")]),
             Some(vec![])
         );
         // a note in the inbox
@@ -557,22 +608,25 @@ mod tests {
             p(&lib).join(".DS_Store"),
             p(&lib).join(".dosik-1-2.tmp"),
             p(&lib).join(".git").join("index"),
-            lib.default_location.join(".hidden"),
+            lib.default_location().join(".hidden"),
             lib.inbox_dir().join(".note.tmp"),
             // a file of the user's that is no diagram, an empty folder
             p(&lib).join("notes.txt"),
             p(&lib).join("Empty"),
             // a diagram directly in the default location: outside every project
-            lib.default_location.join("Loose.dosik"),
+            lib.default_location().join("Loose.dosik"),
             // outside the library altogether
-            lib.default_location.parent().unwrap().join("Other.dosik"),
+            lib.default_location().parent().unwrap().join("Other.dosik"),
             // the project's own folder, there
             p(&lib),
         ];
         put(&p(&lib).join("notes.txt"), "x");
         std::fs::create_dir_all(p(&lib).join("Empty")).unwrap();
         put(&p(&lib).join(".git/index"), "x");
-        put(&lib.default_location.join("Loose.dosik"), &titled("Loose"));
+        put(
+            &lib.default_location().join("Loose.dosik"),
+            &titled("Loose"),
+        );
         assert_eq!(sort(&lib, &mut seen, &quiet), None);
         // a diagram deeper than the listing reads
         let mut deep = p(&lib);
@@ -589,7 +643,7 @@ mod tests {
         let (lib, listed) = library("watch-batch");
         let flow = id_of(&listed, "Flow");
         let far = id_of(&listed, "Far");
-        let ext = lib.default_location.parent().unwrap().join("Ext");
+        let ext = lib.default_location().parent().unwrap().join("Ext");
         std::fs::write(p(&lib).join("Flow.dosik"), titled("Flow 2")).unwrap();
         std::fs::write(ext.join("Far.dosik"), titled("Far 2")).unwrap();
         let mut told = sort(
@@ -613,12 +667,12 @@ mod tests {
     fn a_file_outside_the_library_has_its_folder_watched_unless_the_library_watches_it() {
         let (lib, _) = library("watch-files");
         let library = roots(&lib, &record(&lib));
-        let base = lib.default_location.parent().unwrap().to_path_buf();
+        let base = lib.default_location().parent().unwrap().to_path_buf();
         let files = [
             base.join("Mine").join("a.dosik.json"),
             base.join("Mine").join("b.dosik"),
             // in a project: the library's watch has it
-            lib.default_location.join("P").join("c.dosik"),
+            lib.default_location().join("P").join("c.dosik"),
             base.join("Ext").join("Sub").join("d.dosik"),
         ];
         assert_eq!(
@@ -653,7 +707,7 @@ mod tests {
         watcher.watch(&wanted);
         assert_eq!(watcher.watched(), wanted);
         // a folder gone is let go; back, it is taken up again
-        let ext = lib.default_location.parent().unwrap().join("Ext");
+        let ext = lib.default_location().parent().unwrap().join("Ext");
         std::fs::rename(&ext, ext.with_extension("away")).unwrap();
         watcher.watch(&wanted);
         assert!(!watcher.watched().iter().any(|r| r.path == ext));

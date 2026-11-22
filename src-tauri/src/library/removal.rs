@@ -193,6 +193,7 @@ pub fn locate_project_at(lib: &Library, id: &str, path: &Path) -> Result<LocateO
         Err(Refusal::Invalid(why)) => return Err(why),
     }
     st.projects[at].path = state::path_text(path)?;
+    st.projects[at].kept_added = false;
     lib.save_state(&held, &st)?;
     Ok(LocateOutcome::Located)
 }
@@ -482,8 +483,8 @@ mod tests {
         assert!(remove_project(&lib, &p).is_err());
         assert!(p_dir(&lib).is_dir());
         // the default location itself gone: the project is not found, and may go
-        let away = lib.default_location.with_file_name("away");
-        std::fs::rename(&lib.default_location, &away).unwrap();
+        let away = lib.default_location().with_file_name("away");
+        std::fs::rename(lib.default_location(), &away).unwrap();
         assert!(list(&lib).unwrap()[0].missing);
         remove_project(&lib, &p).unwrap();
         assert!(list(&lib).unwrap().is_empty());
@@ -536,11 +537,11 @@ mod tests {
     #[test]
     fn a_folder_that_overlaps_the_library_is_not_taken() {
         let (lib, id, repo) = with_added("removal-locate-overlap");
-        std::fs::create_dir_all(lib.default_location.join("Mine")).unwrap();
+        std::fs::create_dir_all(lib.default_location().join("Mine")).unwrap();
         list(&lib).unwrap();
         let away = repo.with_file_name("gone");
         std::fs::rename(&repo, &away).unwrap();
-        let mine = lib.default_location.join("Mine");
+        let mine = lib.default_location().join("Mine");
         assert_eq!(
             locate_project_at(&lib, &id, &mine).unwrap(),
             LocateOutcome::Already

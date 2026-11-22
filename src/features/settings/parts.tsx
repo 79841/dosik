@@ -235,19 +235,22 @@ export const Button = ({
  * `title`). Busy, its icon gives way to the spinner and a press waits.
  */
 export const IconAction = ({
+  id,
   icon: Icon,
   label,
   onClick,
   size = 28,
   busy,
 }: {
+  /** the button's DOM id — for the focus to go to it */
+  id?: string;
   icon: LucideIcon;
   label: string;
   onClick: () => void;
   size?: 24 | 28;
   busy?: boolean;
 }) => (
-  <IconButton label={label} size={size} align="end" busy={busy} onClick={onClick}>
+  <IconButton id={id} label={label} size={size} align="end" busy={busy} onClick={onClick}>
     {busy ? <Spinner size={15} /> : <Icon size={15} strokeWidth={1.75} aria-hidden="true" />}
   </IconButton>
 );
@@ -290,6 +293,13 @@ export const Status = ({
   </span>
 );
 
+/** a word that marks a row — the default location's Default (#256) */
+export const Pill = ({ children }: { children: ReactNode }) => (
+  <span className="flex h-5 flex-none items-center rounded-full bg-frame px-[7px] text-[10.5px] font-semibold whitespace-nowrap text-muted-strong">
+    {children}
+  </span>
+);
+
 export const Mono = ({ children }: { children: ReactNode }) => (
   <code className="font-mono text-[11px] text-ink">{children}</code>
 );
@@ -325,13 +335,15 @@ export const Steps = ({ intro, commands }: { intro: string; commands: string[] }
 );
 
 /**
- * What a section reads once as it shows — a Tauri command's answer, say;
- * null until it comes. A failure stays null and says why at the bottom. An
- * answer that lands after the section went is dropped (#218 D15).
+ * What a section reads as it shows — a Tauri command's answer, say; null
+ * until it comes — and again whenever `again` changes, the last answer kept
+ * meanwhile. A failure keeps what it had and says why at the bottom. An
+ * answer that lands after the section went, or after a newer read began, is
+ * dropped (#218 D15).
  */
-export const useLoaded = <T,>(load: () => Promise<T>): T | null => {
+export const useLoaded = <T,>(load: () => Promise<T>, again: unknown = null): T | null => {
   const [value, setValue] = useState<T | null>(null);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: read once, when the section shows
+  // biome-ignore lint/correctness/useExhaustiveDependencies: read when the section shows and when `again` changes, not when `load` is made anew
   useEffect(() => {
     let live = true;
     load().then(
@@ -341,7 +353,7 @@ export const useLoaded = <T,>(load: () => Promise<T>): T | null => {
     return () => {
       live = false;
     };
-  }, []);
+  }, [again]);
   return value;
 };
 

@@ -24,11 +24,11 @@ export const besidePointer = (pointer: { x: number; y: number }): { x: number; y
 
 /**
  * where a menu opened from button `el` goes: its right end on the button's,
- * 4 below it (#230)
+ * `gap` below it — 4 (#230); the sidebar's + hangs its menu 2 below (#256)
  */
-export const belowRightOf = (el: Element): { x: number; y: number } => {
+export const belowRightOf = (el: Element, gap = 4): { x: number; y: number } => {
   const box = el.getBoundingClientRect();
-  return { x: box.right - MENU_MIN_WIDTH, y: box.bottom + 4 };
+  return { x: box.right - MENU_MIN_WIDTH, y: box.bottom + gap };
 };
 
 export interface MenuItem {

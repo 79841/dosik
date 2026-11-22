@@ -541,7 +541,7 @@ pub fn create_folder_dir(dir: &Path, wanted: &str) -> Result<String, String> {
 /// record has projects in it that cannot be found: made anew it would hold
 /// none of them, and the next listing would forget them all.
 pub fn ensure_default_location(lib: &Library, st: &LibraryState) -> Result<(), String> {
-    let default = &lib.default_location;
+    let default = &lib.default_location();
     match disk::presence(default) {
         disk::Presence::Dir => return Ok(()),
         disk::Presence::Unknown(kind) => return Err(format!("{}: {kind}", default.display())),
@@ -573,7 +573,7 @@ pub fn make_project(
         return Err(format!("an item with id {id:?} already exists"));
     }
     ensure_default_location(lib, st)?;
-    let default = &lib.default_location;
+    let default = &lib.default_location();
     let name = {
         let _change = lib.restructure(held);
         create_folder_dir(default, wanted)?
@@ -641,14 +641,14 @@ pub(crate) mod tests {
     /// a library with one project, `P`, in its default location, listed
     pub(crate) fn with_project(tag: &str) -> (Library, String) {
         let lib = test_library(tag);
-        std::fs::create_dir_all(lib.default_location.join("P")).unwrap();
+        std::fs::create_dir_all(lib.default_location().join("P")).unwrap();
         let listed = list(&lib).unwrap();
         let id = listed[0].id.clone();
         (lib, id)
     }
 
     pub(crate) fn p_dir(lib: &Library) -> PathBuf {
-        lib.default_location.join("P")
+        lib.default_location().join("P")
     }
 
     fn listed_p(lib: &Library) -> FolderMeta {
@@ -707,15 +707,18 @@ pub(crate) mod tests {
         // no diagram of the library's
         put(&p_dir(&lib).join("notes.txt"), "x");
         put(&p_dir(&lib).join(".hidden/In.dosik"), &titled("In"));
-        put(&lib.default_location.join("Loose.dosik"), &titled("Loose"));
-        let outside = lib.default_location.parent().unwrap().join("Mine.dosik");
+        put(
+            &lib.default_location().join("Loose.dosik"),
+            &titled("Loose"),
+        );
+        let outside = lib.default_location().parent().unwrap().join("Mine.dosik");
         put(&outside, &titled("Mine"));
         for path in [
             p_dir(&lib).join("notes.txt"),
             p_dir(&lib).join(".hidden/In.dosik"),
             p_dir(&lib).join("Gone.dosik"),
             p_dir(&lib).join("Sub"),
-            lib.default_location.join("Loose.dosik"),
+            lib.default_location().join("Loose.dosik"),
             outside,
         ] {
             assert_eq!(at(path.clone()), None, "{}", path.display());
@@ -803,29 +806,29 @@ pub(crate) mod tests {
         let (name, _) = saved(create(&lib, "d1", &titled("First"), None).unwrap());
         assert_eq!(name, "First");
         assert!(lib
-            .default_location
+            .default_location()
             .join("My Diagrams/First.dosik")
             .is_file());
         // the project edited last takes the next one
-        put(&lib.default_location.join("Other/x.dosik"), &titled("x"));
+        put(&lib.default_location().join("Other/x.dosik"), &titled("x"));
         let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
         std::fs::OpenOptions::new()
             .write(true)
-            .open(lib.default_location.join("Other/x.dosik"))
+            .open(lib.default_location().join("Other/x.dosik"))
             .unwrap()
             .set_modified(later)
             .unwrap();
         list(&lib).unwrap();
         saved(create(&lib, "d2", &titled("Second"), None).unwrap());
-        assert!(lib.default_location.join("Other/Second.dosik").is_file());
+        assert!(lib.default_location().join("Other/Second.dosik").is_file());
     }
 
     #[test]
     fn the_library_folder_is_not_made_again_while_its_projects_are_not_found() {
         let (lib, p) = with_project("ops-default-gone");
         saved(create(&lib, "d1", &titled("Flow"), Some(&p)).unwrap());
-        let away = lib.default_location.with_file_name("away");
-        std::fs::rename(&lib.default_location, &away).unwrap();
+        let away = lib.default_location().with_file_name("away");
+        std::fs::rename(lib.default_location(), &away).unwrap();
         // made anew, it would hold none of them: the next listing would forget them all
         let refused = crate::library::folders::create_folder(&lib, "p2", "New", None, None);
         assert!(refused.unwrap_err().contains("library folder"));
@@ -835,19 +838,19 @@ pub(crate) mod tests {
             let st = lib.load_state(&held).unwrap();
             assert!(ensure_default_location(&lib, &st).is_err());
         }
-        assert!(!lib.default_location.exists());
+        assert!(!lib.default_location().exists());
         // back: its project and diagram are there, ids and all
-        std::fs::rename(&away, &lib.default_location).unwrap();
+        std::fs::rename(&away, lib.default_location()).unwrap();
         let listed = listed_p(&lib);
         assert_eq!(
             (listed.id.as_str(), listed.diagrams[0].id.as_str()),
             (p.as_str(), "d1")
         );
         // gone again and removed from the library: nothing is lost by making it
-        std::fs::rename(&lib.default_location, &away).unwrap();
+        std::fs::rename(lib.default_location(), &away).unwrap();
         crate::library::removal::remove_project(&lib, &p).unwrap();
         crate::library::folders::create_folder(&lib, "p2", "New", None, None).unwrap();
-        assert!(lib.default_location.join("New").is_dir());
+        assert!(lib.default_location().join("New").is_dir());
     }
 
     #[test]
@@ -871,18 +874,18 @@ pub(crate) mod tests {
             let opened = std::fs::File::open(path);
             opened.unwrap().set_modified(at).unwrap();
         };
-        put(&lib.default_location.join("A/a.dosik"), &titled("a"));
-        put(&lib.default_location.join("B/b.dosik"), &titled("b"));
+        put(&lib.default_location().join("A/a.dosik"), &titled("a"));
+        put(&lib.default_location().join("B/b.dosik"), &titled("b"));
         // A has a folder made outside, newest of all, with nothing in it: it does not show
-        std::fs::create_dir_all(lib.default_location.join("A/build")).unwrap();
-        set(&lib.default_location.join("A/a.dosik"), 10);
-        set(&lib.default_location.join("B/b.dosik"), 20);
-        set(&lib.default_location.join("A/build"), 30);
+        std::fs::create_dir_all(lib.default_location().join("A/build")).unwrap();
+        set(&lib.default_location().join("A/a.dosik"), 10);
+        set(&lib.default_location().join("B/b.dosik"), 20);
+        set(&lib.default_location().join("A/build"), 30);
         let listed = list(&lib).unwrap();
         let newest = listed.iter().max_by_key(|p| p.updated_at).unwrap();
         assert_eq!(newest.name, "B");
         saved(create(&lib, "d1", &titled("Next"), None).unwrap());
-        assert!(lib.default_location.join("B/Next.dosik").is_file());
+        assert!(lib.default_location().join("B/Next.dosik").is_file());
     }
 
     #[test]
@@ -1031,7 +1034,7 @@ pub(crate) mod tests {
         assert!(names_in(&p_dir(&lib)).is_empty());
         fail_next_record_write();
         assert!(crate::library::folders::create_folder(&lib, "q", "New", None, None).is_err());
-        assert_eq!(names_in(&lib.default_location), vec!["P"]);
+        assert_eq!(names_in(&lib.default_location()), vec!["P"]);
     }
 
     #[test]
@@ -1155,15 +1158,18 @@ pub(crate) mod tests {
         let (lib, p) = with_project("ops-unreachable");
         let (_, stamp) = saved(create(&lib, "d1", &titled("Flow"), Some(&p)).unwrap());
         // the whole library folder gone — a drive away, say: not written, not gone
-        let away = lib.default_location.with_file_name("away");
-        std::fs::rename(&lib.default_location, &away).unwrap();
+        let away = lib.default_location().with_file_name("away");
+        std::fs::rename(lib.default_location(), &away).unwrap();
         assert_eq!(
             save(&lib, "d1", &titled("Flow 2"), Some(&stamp)).unwrap(),
             SaveOutcome::Unreachable
         );
-        assert!(!lib.default_location.exists(), "nothing made where it was");
+        assert!(
+            !lib.default_location().exists(),
+            "nothing made where it was"
+        );
         // back: saved, as the tab last saw it
-        std::fs::rename(&away, &lib.default_location).unwrap();
+        std::fs::rename(&away, lib.default_location()).unwrap();
         let (name, _) = saved(save(&lib, "d1", &titled("Flow"), Some(&stamp)).unwrap());
         assert_eq!(name, "Flow");
     }
@@ -1196,7 +1202,7 @@ pub(crate) mod tests {
         let (lib, p) = with_project("ops-link");
         crate::library::folders::create_folder(&lib, "f1", "Sub", None, Some(&p)).unwrap();
         saved(create(&lib, "d1", &titled("Flow"), Some("f1")).unwrap());
-        let outside = lib.default_location.parent().unwrap().join("outside");
+        let outside = lib.default_location().parent().unwrap().join("outside");
         put(&outside.join("Flow.dosik"), "theirs");
         // the folder replaced by a link to another, outside the app
         std::fs::remove_dir_all(p_dir(&lib).join("Sub")).unwrap();
@@ -1257,9 +1263,9 @@ pub(crate) mod tests {
     fn a_new_diagram_into_a_folder_that_is_not_there_fails() {
         let (lib, p) = with_project("ops-missing");
         assert!(create(&lib, "d1", &titled("x"), Some("nope")).is_err());
-        std::fs::remove_dir_all(lib.default_location.clone()).unwrap();
+        std::fs::remove_dir_all(lib.default_location()).unwrap();
         assert!(create(&lib, "d1", &titled("x"), Some(&p)).is_err());
-        assert!(!lib.default_location.exists());
+        assert!(!lib.default_location().exists());
     }
 
     #[test]

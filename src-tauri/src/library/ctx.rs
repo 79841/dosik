@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Mutex, MutexGuard, RwLock};
 
 use super::state::{self, LibraryState};
 use super::walk::{ReadCache, Seen};
@@ -18,8 +18,8 @@ pub struct Library {
     /// `<app data>/library`: the record, the inbox, the migration journal
     pub data_dir: PathBuf,
     /// where new projects are made; every folder directly in it is a
-    /// project of itself
-    pub default_location: PathBuf,
+    /// project of itself — changed in Settings, with the lock held
+    default_location: RwLock<PathBuf>,
     /// the older library, `<app data>/projects` — read once, to move it
     pub legacy_dir: PathBuf,
     /// the user's home folder, to show paths from `~`
@@ -56,7 +56,7 @@ impl Library {
     ) -> Library {
         Library {
             data_dir,
-            default_location,
+            default_location: RwLock::new(default_location),
             legacy_dir,
             home,
             lock: Mutex::new(()),
@@ -116,11 +116,29 @@ impl Library {
         state::save(&self.data_dir, state)
     }
 
+    /// where new projects are made now
+    pub fn default_location(&self) -> PathBuf {
+        self.default_location
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// New projects go to `path` from now — the lock held by the caller,
+    /// which writes the record to match.
+    pub fn set_default_location(&self, _held: &MutexGuard<'_, ()>, path: PathBuf) {
+        *self
+            .default_location
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = path;
+    }
+
     /// whether `path` is a project of the default location's: directly in
     /// it, however either is spelt
     pub fn in_default_location(&self, path: &Path) -> bool {
+        let default = self.default_location();
         path.parent()
-            .is_some_and(|parent| super::disk::same_place(parent, &self.default_location))
+            .is_some_and(|parent| super::disk::same_place(parent, &default))
     }
 }
 
@@ -159,11 +177,13 @@ impl Library {
 }
 
 /// The default location: the folder `DOSIK_LIBRARY_DIR` names, when it
-/// names one whole; else `Dosik` in the user's Documents — `Dosik Dev` for a
-/// development run, so a test instance never moves the older library into,
-/// or joins, the real one.
+/// names one whole; else the one chosen in Settings (`chosen`, from the
+/// record — never the location a run told by the environment used); else
+/// `Dosik` in the user's Documents — `Dosik Dev` for a development run, so a
+/// test instance never moves the older library into, or joins, the real one.
 pub fn default_location(
     env: Option<&std::ffi::OsStr>,
+    chosen: Option<&Path>,
     dev: bool,
     documents: Option<&Path>,
     home: Option<&Path>,
@@ -176,6 +196,9 @@ pub fn default_location(
             "library: DOSIK_LIBRARY_DIR is not an absolute path ({}); left aside",
             dir.display()
         );
+    }
+    if let Some(dir) = chosen.filter(|d| d.is_absolute()) {
+        return Ok(dir.to_path_buf());
     }
     let documents = documents
         .map(Path::to_path_buf)
@@ -194,6 +217,18 @@ pub fn resolved_default_location(path: &Path) -> PathBuf {
         return path.to_path_buf();
     }
     super::disk::canonical(path).unwrap_or_else(|| path.to_path_buf())
+}
+
+/// The default location picked in Settings, as the record in `record`
+/// keeps it — none when nothing was picked, or the record cannot be read.
+/// Only read: a record that cannot be parsed is left where it is, for the
+/// first look at it under the lock to put aside.
+pub fn chosen_location(record: &Path) -> Option<PathBuf> {
+    let text = std::fs::read_to_string(record.join(state::STATE_FILE)).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    state::from_value(&value)?
+        .chosen_location
+        .map(PathBuf::from)
 }
 
 /// Where in the app data the library keeps its record (inbox, journal) and
@@ -256,7 +291,7 @@ pub(crate) mod tests {
         let home = base.join("home");
         let told = base.join("Elsewhere");
         let at = |env: Option<&OsStr>, dev, docs: Option<&Path>| {
-            default_location(env, dev, docs, Some(&home))
+            default_location(env, None, dev, docs, Some(&home))
         };
         assert_eq!(at(None, false, Some(&docs)).unwrap(), docs.join("Dosik"));
         // a development run keeps a library of its own
@@ -279,7 +314,73 @@ pub(crate) mod tests {
             at(None, false, None).unwrap(),
             home.join("Documents").join("Dosik")
         );
-        assert!(default_location(None, false, None, None).is_err());
+        assert!(default_location(None, None, false, None, None).is_err());
+    }
+
+    #[test]
+    fn the_default_location_chosen_in_settings_outlasts_the_run() {
+        use std::ffi::OsStr;
+        let base = scratch("ctx-chosen");
+        let docs = base.join("Docs");
+        let home = base.join("home");
+        let chosen = base.join("Dropbox").join("Dosik");
+        let at = |env: Option<&OsStr>, chosen: Option<&Path>, dev| {
+            default_location(env, chosen, dev, Some(&docs), Some(&home))
+        };
+        // the record's, over Documents — a development run's record is its own
+        for dev in [false, true] {
+            assert_eq!(at(None, Some(&chosen), dev).unwrap(), chosen);
+        }
+        // the environment still wins: a test instance stays where it is told
+        let told = base.join("Elsewhere");
+        assert_eq!(
+            at(Some(told.as_os_str()), Some(&chosen), false).unwrap(),
+            told
+        );
+        // a relative or empty one in the record is left aside
+        assert_eq!(
+            at(None, Some(Path::new("rel/dir")), false).unwrap(),
+            docs.join("Dosik")
+        );
+        assert_eq!(
+            at(None, Some(Path::new("")), false).unwrap(),
+            docs.join("Dosik")
+        );
+    }
+
+    #[test]
+    fn the_location_chosen_is_read_without_touching_the_record() {
+        let dir = scratch("ctx-chosen-read");
+        assert_eq!(chosen_location(&dir), None);
+        std::fs::write(
+            dir.join(state::STATE_FILE),
+            r#"{"v":1,"chosenLocation":"/Picked/Dosik","projects":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(chosen_location(&dir), Some(PathBuf::from("/Picked/Dosik")));
+        // one that cannot be parsed is none — and stays where it is, for the
+        // first look under the lock to put aside
+        std::fs::write(dir.join(state::STATE_FILE), "{ broken").unwrap();
+        assert_eq!(chosen_location(&dir), None);
+        assert_eq!(
+            crate::library::disk::tests::names_in(&dir),
+            vec![state::STATE_FILE]
+        );
+    }
+
+    #[test]
+    fn the_default_location_changes_with_the_lock_held() {
+        let lib = test_library("ctx-change");
+        let before = lib.default_location();
+        let next = before.parent().unwrap().join("Other");
+        assert!(lib.in_default_location(&before.join("P")));
+        {
+            let held = lib.lock();
+            lib.set_default_location(&held, next.clone());
+        }
+        assert_eq!(lib.default_location(), next);
+        assert!(lib.in_default_location(&next.join("P")));
+        assert!(!lib.in_default_location(&before.join("P")));
     }
 
     #[test]
@@ -321,20 +422,20 @@ pub(crate) mod tests {
         );
         // what a run does first: the move, then a listing, which writes the record
         assert!(crate::library::migrate::run(&lib).unwrap().is_none());
-        std::fs::create_dir_all(lib.default_location.join("Sketches")).unwrap();
+        std::fs::create_dir_all(lib.default_location().join("Sketches")).unwrap();
         crate::library::listing::list(&lib).unwrap();
         // the real older library is not marked moved, the real record not made
         assert!(!data.join("projects").join(".migrated-to").exists());
         assert!(!data.join("library").exists());
         assert!(data.join("library-dev").join("state.json").is_file());
         // nor was the older library moved into the development location
-        assert!(!lib.default_location.join("Payments").exists());
+        assert!(!lib.default_location().join("Payments").exists());
     }
 
     #[test]
     fn the_default_location_holds_its_projects_directly() {
         let lib = test_library("ctx-default");
-        let at = lib.default_location.clone();
+        let at = lib.default_location();
         assert!(lib.in_default_location(&at.join("Payments")));
         assert!(!lib.in_default_location(&at.join("Payments").join("Sub")));
         assert!(!lib.in_default_location(&at));

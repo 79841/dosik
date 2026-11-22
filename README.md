@@ -28,7 +28,7 @@ Pick a shape from the bar on the left, drop it, and connect it. Connectors find 
 
 Everything you draw is saved as you go. Projects hold folders, folders hold diagrams, and each open diagram gets a tab. Home picks up where you left off.
 
-They are your files, in your folders: a project is a real folder in `Documents/Dosik`, and a diagram is a `.dosik` file in it, named after the diagram. Rename, move, or add files in Finder and Dosik follows; delete moves items to the Trash.
+They are your files, in your folders: a project is a real folder, and a diagram is a `.dosik` file in it, named after the diagram. New projects go to `Documents/Dosik`, or to the folder you pick in Settings ▸ General; **Add folder…** (the + beside Projects) brings in a folder from anywhere as a project, saved where it is. Rename, move, or add files in Finder and Dosik follows; delete moves items to the Trash.
 
 ![Home with recent diagrams](docs/images/home.png)
 
@@ -98,7 +98,7 @@ Download the `.dmg` for your Mac from [Releases](https://github.com/79841/dosik/
 
 - macOS 11 or later. Signed with Developer ID and notarized by Apple, so it opens normally
 - Windows and Linux versions are not available yet
-- Your diagrams are plain `.dosik` files in `Documents/Dosik` on your Mac. Nothing leaves your Mac unless you use an AI feature
+- Your diagrams are plain `.dosik` files on your Mac — in `Documents/Dosik` unless you pick another folder in Settings ▸ General. Nothing leaves your Mac unless you use an AI feature
 - The first time this version runs, it brings the library from earlier versions into `Documents/Dosik`; the original is kept as a backup. macOS may ask once to let Dosik use the Documents folder
 - Double-click a `.dosik` file in Finder to open it in Dosik. Older `.dosik.json` files still open with **Open file…**
 

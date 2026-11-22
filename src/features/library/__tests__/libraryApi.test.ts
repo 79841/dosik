@@ -14,6 +14,8 @@ import {
   locateProject,
   moveProject,
   newProjectId,
+  pickDefaultLocation,
+  pickLibraryFolder,
   removeProject,
   renameFolder,
   sameContents,
@@ -395,6 +397,34 @@ describe("libraryApi", () => {
       expect(sameContents(undefined, "1-120-abcd")).toBe(false);
       expect(sameContents(undefined, undefined)).toBe(false);
       expect(sameContents("nodash", "nodash")).toBe(false);
+    });
+
+    it("Add folder… and Change… — Rust opens the picker, no path goes from here (#256 D5)", async () => {
+      mockedInvoke.mockResolvedValueOnce({ kind: "added", id: "p9" });
+      expect(await pickLibraryFolder()).toEqual({ kind: "added", id: "p9" });
+      expect(mockedInvoke).toHaveBeenLastCalledWith("add_library_folder");
+      for (const kind of ["already", "invalid", "cancelled"]) {
+        mockedInvoke.mockResolvedValueOnce({ kind });
+        expect(await pickLibraryFolder()).toEqual({ kind });
+      }
+      // an answer the app cannot read is no answer: it says so, never guesses
+      for (const odd of [{ kind: "added" }, { kind: "added", id: 7 }, { kind: "?" }, undefined]) {
+        mockedInvoke.mockResolvedValueOnce(odd);
+        await expect(pickLibraryFolder()).rejects.toThrow(
+          "Couldn't tell whether the folder was added",
+        );
+      }
+      for (const answer of ["changed", "cancelled", "invalid"]) {
+        mockedInvoke.mockResolvedValueOnce(answer);
+        expect(await pickDefaultLocation()).toBe(answer);
+        expect(mockedInvoke).toHaveBeenLastCalledWith("change_default_location");
+      }
+      for (const odd of [{ kind: "changed" }, "moved", undefined]) {
+        mockedInvoke.mockResolvedValueOnce(odd);
+        await expect(pickDefaultLocation()).rejects.toThrow(
+          "Couldn't tell whether the default location changed",
+        );
+      }
     });
 
     it("Locate… and Remove from Library go to Rust by id — no path from here (R14)", async () => {

@@ -72,7 +72,7 @@ After the turn ends, the token returns `404`. The port is the one the app actual
 > ("…: the N ops after it were not applied").
 
 > **Diagrams and projects.** The app's start screen (Home) shows projects (folders that hold diagrams).
-> A project is a real folder — in `Documents/Dosik`, or added from elsewhere — and a diagram a `<title>.dosik` file in it.
+> A project is a real folder — in the default location, `Documents/Dosik` unless changed in Settings, or added from elsewhere — and a diagram a `<title>.dosik` file in it.
 > Several diagrams open as tabs, and ops and `GET /api/diagram` act on the **active tab**'s document —
 > other tabs are out of the bridge's reach. If `POST /api/ops` arrives while the Home tab is active, the app creates a new diagram,
 > opens it in a new tab, and applies the ops there (other tabs are untouched) — in the folder Home is showing (project or folder view);

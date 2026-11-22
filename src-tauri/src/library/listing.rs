@@ -191,7 +191,7 @@ type Walk = Result<Option<WalkedDir>, String>;
 /// then out of reach, not empty.
 fn take_in(lib: &Library, st: &mut LibraryState) -> Result<(bool, Vec<PathBuf>), String> {
     let mut changed = false;
-    let default = lib.default_location.to_string_lossy().into_owned();
+    let default = lib.default_location().to_string_lossy().into_owned();
     if st.default_location.as_deref() != Some(default.as_str()) {
         st.default_location = Some(default);
         changed = true;
@@ -379,8 +379,11 @@ impl ProjectRoots {
 /// not have yet, among the projects by name. One the record has by another
 /// spelling — through a link, or renamed only in case on a disk that ignores
 /// case — is the same folder: it keeps its id and takes the name it has now.
-fn register_default_projects(lib: &Library, st: &mut LibraryState) -> Result<bool, String> {
-    let default = &lib.default_location;
+pub(super) fn register_default_projects(
+    lib: &Library,
+    st: &mut LibraryState,
+) -> Result<bool, String> {
+    let default = &lib.default_location();
     let denied = |kind: std::io::ErrorKind| -> Result<bool, String> {
         if kind == std::io::ErrorKind::PermissionDenied {
             Err(format!(
@@ -476,7 +479,7 @@ pub fn check_new_project(
         return Err(Refusal::Invalid("too broad a folder for a project".into()));
     }
     let wanted = normalized(path);
-    let default = normalized(&lib.default_location);
+    let default = normalized(&lib.default_location());
     if default.starts_with(&wanted) {
         return overlap("it holds the library folder");
     }
@@ -508,7 +511,7 @@ fn reconcile(
     whole: bool,
     cache: &mut walk::ReadCache,
 ) -> Vec<FolderMeta> {
-    let default_there = disk::presence(&lib.default_location) == disk::Presence::Dir;
+    let default_there = disk::presence(&lib.default_location()) == disk::Presence::Dir;
     let mut out = Vec::new();
     let mut gone = Vec::new();
     for i in 0..st.projects.len() {
@@ -519,8 +522,12 @@ fn reconcile(
             Some((path, tree)) if *path == root => tree.clone(),
             _ => walk::walk_with(&root, cache),
         };
+        // one kept added (`kept_added`) is not found until found, located or removed
+        let kept = st.projects[i].kept_added;
         match tree {
-            Ok(None) if whole && default_there && lib.in_default_location(&root) => gone.push(id),
+            Ok(None) if whole && default_there && !kept && lib.in_default_location(&root) => {
+                gone.push(id)
+            }
             Ok(None) => out.push(missing_meta(lib, &st.projects[i])),
             // there, maybe, but it would not say: shown empty, nothing forgotten
             Err(_) => {
@@ -528,6 +535,8 @@ fn reconcile(
                 out.push(project_meta(lib, &st.projects[i], &unread));
             }
             Ok(Some(tree)) => {
+                // found again: what its place says it is
+                st.projects[i].kept_added = false;
                 let listed = tree.listed_dirs();
                 let away: HashSet<String> = tree.online_only_rels().into_iter().collect();
                 let ids = &st.projects[i].ids;
@@ -619,7 +628,7 @@ fn missing_meta(lib: &Library, record: &ProjectRecord) -> FolderMeta {
         order: Vec::new(),
         board: record.board,
         missing: true,
-        added: !lib.in_default_location(&root),
+        added: record.kept_added || !lib.in_default_location(&root),
         path: Some(record.path.clone()),
         shown: Some(shown_path(&root, lib.home.as_deref())),
         held: held_diagrams(record, &HashSet::new()),
@@ -789,7 +798,7 @@ pub(crate) mod tests {
         let lib = test_library("list-empty");
         assert!(list(&lib).unwrap().is_empty());
         assert!(
-            !lib.default_location.exists(),
+            !lib.default_location().exists(),
             "the listing makes no default location"
         );
     }
@@ -797,7 +806,7 @@ pub(crate) mod tests {
     #[test]
     fn folders_in_the_default_location_are_projects_by_name() {
         let lib = test_library("list-default");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         std::fs::create_dir_all(at.join("beta")).unwrap();
         std::fs::create_dir_all(at.join("Alpha")).unwrap();
         std::fs::create_dir_all(at.join(".hidden")).unwrap();
@@ -824,7 +833,7 @@ pub(crate) mod tests {
     #[test]
     fn a_listing_again_gives_the_same_ids() {
         let lib = test_library("list-same");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("P/Flow.dosik"), doc());
         put(&at.join("P/Sub/Inner.dosik"), doc());
         let first = list(&lib).unwrap();
@@ -840,7 +849,7 @@ pub(crate) mod tests {
     #[test]
     fn what_changed_while_the_app_was_away_is_taken_in() {
         let lib = test_library("list-away");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("P/Keep.dosik"), doc());
         put(&at.join("P/Gone.dosik"), doc());
         put(&at.join("P/Old name.dosik"), doc());
@@ -867,7 +876,7 @@ pub(crate) mod tests {
     #[test]
     fn items_go_by_name_unless_the_record_orders_them() {
         let lib = test_library("list-order");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         for name in ["b", "Flow 10", "flow 2", "a"] {
             put(&at.join(format!("P/{name}.dosik")), doc());
         }
@@ -898,7 +907,7 @@ pub(crate) mod tests {
     #[test]
     fn a_diagram_unchanged_since_the_last_listing_is_not_read_again() {
         let lib = test_library("list-read-once");
-        let file = lib.default_location.join("P/Flow.dosik");
+        let file = lib.default_location().join("P/Flow.dosik");
         put(&file, doc());
         let when = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
         let set = |at: std::time::SystemTime| {
@@ -927,7 +936,7 @@ pub(crate) mod tests {
     #[test]
     fn a_folder_shows_with_a_diagram_in_it_or_an_id() {
         let lib = test_library("list-shown");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         std::fs::create_dir_all(at.join("P/empty made outside")).unwrap();
         put(&at.join("P/src/code.rs"), "fn main() {}");
         put(&at.join("P/docs/deep/Flow.dosik"), doc());
@@ -944,7 +953,7 @@ pub(crate) mod tests {
     #[test]
     fn the_inbox_registers_a_folder_on_top_and_is_emptied() {
         let lib = test_library("list-inbox");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         std::fs::create_dir_all(at.join("Mine")).unwrap();
         list(&lib).unwrap();
         let base = lib
@@ -982,7 +991,7 @@ pub(crate) mod tests {
     #[test]
     fn a_note_of_what_cannot_be_looked_at_now_waits_in_the_inbox() {
         let lib = test_library("list-inbox-later");
-        let at = lib.default_location.clone();
+        let at = lib.default_location();
         std::fs::create_dir_all(at.join("P/Locked/Sub")).unwrap();
         put(&at.join("P/Flow.dosik"), doc());
         list(&lib).unwrap();
@@ -1009,7 +1018,7 @@ pub(crate) mod tests {
     #[test]
     fn a_note_of_what_cannot_be_looked_at_for_a_week_is_let_go() {
         let lib = test_library("list-inbox-week");
-        let at = lib.default_location.clone();
+        let at = lib.default_location();
         std::fs::create_dir_all(at.join("P/Locked/Sub")).unwrap();
         put(&at.join("P/Flow.dosik"), doc());
         list(&lib).unwrap();
@@ -1030,9 +1039,9 @@ pub(crate) mod tests {
     fn a_note_stays_in_the_inbox_until_the_record_has_it() {
         use std::os::unix::fs::PermissionsExt;
         let lib = test_library("list-inbox-kept");
-        std::fs::create_dir_all(lib.default_location.join("P")).unwrap();
+        std::fs::create_dir_all(lib.default_location().join("P")).unwrap();
         list(&lib).unwrap();
-        let repo = lib.default_location.parent().unwrap().join("Repo");
+        let repo = lib.default_location().parent().unwrap().join("Repo");
         std::fs::create_dir_all(&repo).unwrap();
         inbox(&lib, "x", &repo, 1);
         // the record cannot be written: its folder takes no new file
@@ -1057,7 +1066,7 @@ pub(crate) mod tests {
     #[test]
     fn an_item_the_mcp_server_made_goes_on_top_of_its_folder() {
         let lib = test_library("list-inbox-item");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("P/a.dosik"), doc());
         put(&at.join("P/b.dosik"), doc());
         list(&lib).unwrap();
@@ -1077,7 +1086,7 @@ pub(crate) mod tests {
     #[test]
     fn an_item_noted_in_a_new_folder_of_the_default_location_shows() {
         let lib = test_library("list-inbox-default");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         std::fs::create_dir_all(at.join("Bar")).unwrap();
         list(&lib).unwrap();
         // the MCP server made a folder in a folder the app has not listed yet
@@ -1103,7 +1112,7 @@ pub(crate) mod tests {
     #[test]
     fn a_project_spelt_another_way_is_the_same_project() {
         let lib = test_library("list-spelling");
-        let at = lib.default_location.clone();
+        let at = lib.default_location();
         put(&at.join("Foo/x.dosik"), doc());
         // the folder holding the default location, by another name
         let docs = at.parent().unwrap();
@@ -1207,7 +1216,7 @@ pub(crate) mod tests {
     #[test]
     fn a_folder_that_cannot_be_read_forgets_nothing() {
         let lib = test_library("list-unreadable");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("P/Keep.dosik"), doc());
         put(&at.join("P/Sub/Inner.dosik"), doc());
         std::fs::create_dir_all(at.join("P/Sub/Empty")).unwrap();
@@ -1229,7 +1238,7 @@ pub(crate) mod tests {
     #[test]
     fn beside_a_diagram_held_online_only_what_is_gone_is_forgotten() {
         let lib = test_library("list-icloud-beside");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("P/Flow.dosik"), doc());
         put(&at.join("P/Gone.dosik"), doc());
         list(&lib).unwrap();
@@ -1247,7 +1256,7 @@ pub(crate) mod tests {
     #[test]
     fn a_diagram_cloud_storage_took_off_the_disk_is_not_forgotten() {
         let lib = test_library("list-icloud");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("P/Flow.dosik"), doc());
         put(&at.join("P/Keep.dosik"), doc());
         list(&lib).unwrap();
@@ -1268,7 +1277,7 @@ pub(crate) mod tests {
     #[test]
     fn what_is_gone_from_a_folder_read_whole_is_forgotten_beside_one_that_was_not() {
         let lib = test_library("list-partly-read");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("P/Keep.dosik"), doc());
         put(&at.join("P/Gone.dosik"), doc());
         put(&at.join("P/Sub/Flow.dosik"), doc());
@@ -1293,7 +1302,7 @@ pub(crate) mod tests {
     #[test]
     fn a_project_that_cannot_be_read_stays_and_is_not_lost() {
         let lib = test_library("list-unreadable-root");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("P/Flow.dosik"), doc());
         let first = list(&lib).unwrap();
         let before = record(&lib);
@@ -1312,10 +1321,10 @@ pub(crate) mod tests {
     #[test]
     fn a_default_location_that_may_not_be_read_is_an_error() {
         let lib = test_library("list-denied");
-        put(&lib.default_location.join("P/Flow.dosik"), doc());
+        put(&lib.default_location().join("P/Flow.dosik"), doc());
         list(&lib).unwrap();
         let before = record(&lib);
-        let Some(_unlock) = lock_out(&lib.default_location) else {
+        let Some(_unlock) = lock_out(&lib.default_location()) else {
             return;
         };
         assert!(list(&lib).is_err());
@@ -1367,7 +1376,7 @@ pub(crate) mod tests {
     #[test]
     fn a_project_removed_from_the_default_location_leaves_the_library() {
         let lib = test_library("list-default-gone");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("Gone/Flow.dosik"), doc());
         put(&at.join("Stays/Flow.dosik"), doc());
         list(&lib).unwrap();
@@ -1386,7 +1395,7 @@ pub(crate) mod tests {
     #[test]
     fn without_the_default_location_its_projects_are_not_found() {
         let lib = test_library("list-default-missing");
-        let at = lib.default_location.clone();
+        let at = lib.default_location();
         put(&at.join("P/Flow.dosik"), doc());
         let ids = all_ids(&list(&lib).unwrap());
         let away = at.with_file_name("Dosik-away");
@@ -1402,7 +1411,7 @@ pub(crate) mod tests {
     #[test]
     fn a_project_renamed_in_case_only_is_the_same_project() {
         let lib = test_library("list-case");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("payments/Flow.dosik"), doc());
         let first = list(&lib).unwrap();
         std::fs::rename(at.join("payments"), at.join("Payments")).unwrap();
@@ -1414,7 +1423,7 @@ pub(crate) mod tests {
     #[test]
     fn a_folder_renamed_by_the_app_while_the_library_is_listed_keeps_its_id() {
         let lib = std::sync::Arc::new(test_library("list-torn"));
-        let at = lib.default_location.clone();
+        let at = lib.default_location();
         put(&at.join("P/Sub/Flow.dosik"), doc());
         let first = list(&lib).unwrap();
         let sub_id = first[0].folders[0].id.clone();
@@ -1442,14 +1451,14 @@ pub(crate) mod tests {
     #[test]
     fn an_id_given_while_the_library_is_walked_is_not_forgotten() {
         let lib = std::sync::Arc::new(test_library("list-id-meanwhile"));
-        let at = lib.default_location.clone();
+        let at = lib.default_location();
         put(&at.join("P/Flow.dosik"), doc());
         list(&lib).unwrap();
         // the OS hands over a file made just now, while a listing walks
         let given = std::sync::Arc::new(std::sync::Mutex::new(None));
         let (opener, slot) = (lib.clone(), given.clone());
         let open = move || {
-            let file = opener.default_location.join("P/New.dosik");
+            let file = opener.default_location().join("P/New.dosik");
             put(&file, doc());
             let id = crate::library::ops::diagram_id_at(&opener, &file).unwrap();
             *slot.lock().unwrap() = id;
@@ -1464,7 +1473,7 @@ pub(crate) mod tests {
     #[test]
     fn an_id_another_listing_gives_while_this_one_walks_is_not_forgotten() {
         let lib = std::sync::Arc::new(test_library("list-two-listings"));
-        let at = lib.default_location.clone();
+        let at = lib.default_location();
         put(&at.join("P/Flow.dosik"), doc());
         list(&lib).unwrap();
         // a diagram turns up after this listing walked P; another listing
@@ -1472,7 +1481,7 @@ pub(crate) mod tests {
         let given = std::sync::Arc::new(std::sync::Mutex::new(None));
         let (other, slot) = (lib.clone(), given.clone());
         let meanwhile = move || {
-            put(&other.default_location.join("P/New.dosik"), doc());
+            put(&other.default_location().join("P/New.dosik"), doc());
             let listed = list(&other).unwrap();
             let new = listed[0]
                 .diagrams
@@ -1490,14 +1499,14 @@ pub(crate) mod tests {
     #[test]
     fn a_folder_noted_while_the_library_is_walked_keeps_its_id() {
         let lib = std::sync::Arc::new(test_library("list-note-meanwhile"));
-        let at = lib.default_location.clone();
+        let at = lib.default_location();
         put(&at.join("P/Flow.dosik"), doc());
         list(&lib).unwrap();
         // the MCP server makes an empty folder and notes it; another listing
         // takes the note in while this one walks
         let other = lib.clone();
         let note = move || {
-            let folder = other.default_location.join("P/Empty");
+            let folder = other.default_location().join("P/Empty");
             std::fs::create_dir_all(&folder).unwrap();
             inbox(&other, "n", &folder, 1);
             list(&other).unwrap();
@@ -1511,7 +1520,7 @@ pub(crate) mod tests {
     #[test]
     fn the_last_walk_holds_the_lock_so_it_is_whole() {
         let lib = std::sync::Arc::new(test_library("list-last-locked"));
-        let at = lib.default_location.clone();
+        let at = lib.default_location();
         put(&at.join("P/Keep.dosik"), doc());
         put(&at.join("P/Gone.dosik"), doc());
         list(&lib).unwrap();
@@ -1538,7 +1547,7 @@ pub(crate) mod tests {
     #[test]
     fn a_torn_walk_forgets_nothing() {
         let lib = test_library("list-torn-last");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("P/Flow.dosik"), doc());
         let first = list(&lib).unwrap();
         // a change that never ends: every walk is torn, the last one is given
@@ -1581,7 +1590,7 @@ pub(crate) mod tests {
             .to_path_buf();
         let repo = base.join("work").join("Repo");
         std::fs::create_dir_all(repo.join("inner")).unwrap();
-        std::fs::create_dir_all(&lib.default_location).unwrap();
+        std::fs::create_dir_all(lib.default_location()).unwrap();
         let mut st = LibraryState::default();
         st.add_project(ProjectRecord::new("repo", &repo).unwrap(), Slot::First);
         let check = |p: &Path| check_new_project(&lib, &st, p, None).map_err(|r| r.to_string());
@@ -1595,8 +1604,8 @@ pub(crate) mod tests {
         assert!(check(&base.join("home").join("Docs"))
             .unwrap_err()
             .contains("library folder"));
-        assert!(check(&lib.default_location.join("P").join("deeper")).is_err());
-        assert!(check(&lib.default_location.join("P")).is_ok());
+        assert!(check(&lib.default_location().join("P").join("deeper")).is_err());
+        assert!(check(&lib.default_location().join("P")).is_ok());
         assert!(check(Path::new("relative")).is_err());
         // the project being located again is no clash with itself
         assert!(check_new_project(&lib, &st, &repo, Some("repo")).is_ok());
@@ -1623,7 +1632,7 @@ pub(crate) mod tests {
     #[test]
     fn what_an_app_stopped_halfway_left_of_its_writes_is_cleared_once_a_day_old() {
         let lib = test_library("list-stale-temps");
-        let at = &lib.default_location;
+        let at = &lib.default_location();
         put(&at.join("P/Flow.dosik"), doc());
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 24 * 3600);
         let age = |path: &Path| {

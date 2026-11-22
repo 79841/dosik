@@ -351,12 +351,12 @@ pub fn run(lib: &Library) -> Result<Option<usize>, String> {
     // found whole and put on record by a run before (`adopt_whole_copies`):
     // not moved again
     old.folders.retain(|f| st.project(&f.id).is_none());
-    let mode = if disk::exists(&lib.default_location) {
+    let mode = if disk::exists(&lib.default_location()) {
         Mode::Each
     } else {
         Mode::Whole
     };
-    let (mut planned, left) = plan(&old, &st, &lib.default_location, mode);
+    let (mut planned, left) = plan(&old, &st, &lib.default_location(), mode);
     let order: Vec<String> = planned.iter().map(|p| p.record.id.clone()).collect();
     if unreadable {
         planned = match adopt_whole_copies(lib, &held, &mut st, planned) {
@@ -370,7 +370,7 @@ pub fn run(lib: &Library) -> Result<Option<usize>, String> {
         let aside = file.with_extension(format!("json.broken-{}", disk::now_ms()));
         std::fs::rename(&file, &aside).map_err(|e| format!("{}: {e}", file.display()))?;
     }
-    let staging = staging_path(&lib.default_location, mode);
+    let staging = staging_path(&lib.default_location(), mode);
     let mut journal = Journal {
         stage: Stage::Building,
         mode,
@@ -475,7 +475,7 @@ fn place(
             "the journal does not say what to move".into(),
         ));
     }
-    let to = &lib.default_location;
+    let to = &lib.default_location();
     // a rename not marked made counts as made only while the run was
     // putting things in place — cut short before it could say so; after a
     // taking back, what is there is somebody else's
@@ -536,7 +536,7 @@ fn place_each(
     records: &mut [ProjectRecord],
 ) -> Result<(), Failure> {
     let staging = PathBuf::from(&journal.staging);
-    let default = &lib.default_location;
+    let default = &lib.default_location();
     for (n, name) in journal.names.clone().iter().enumerate() {
         let from = staging.join(name);
         if !disk::exists(&from) {
@@ -652,7 +652,7 @@ fn finish(
         st.projects = ours.into_iter().chain(rest).collect();
         st.migration = Some(Migration {
             from: state::path_text(&lib.legacy_dir)?,
-            to: state::path_text(&lib.default_location)?,
+            to: state::path_text(&lib.default_location())?,
             at: disk::now_ms(),
         });
         lib.save_state(held, st)?;
@@ -660,7 +660,7 @@ fn finish(
     // from here the move stands: a marker that cannot be written is
     // written on the next start, the journal kept for it
     let marked = step("marker").and_then(|()| {
-        let target = state::path_text(&lib.default_location)?;
+        let target = state::path_text(&lib.default_location())?;
         disk::write_atomic(&lib.legacy_dir.join(MARKER), target.as_bytes())?;
         Ok(())
     });
@@ -737,7 +737,7 @@ fn adopt_whole_copies(
     st: &mut LibraryState,
     planned: Vec<Planned>,
 ) -> Result<Vec<Planned>, Failure> {
-    let default = &lib.default_location;
+    let default = &lib.default_location();
     let beside = format!(
         ".{}-migrating-",
         default
@@ -1195,6 +1195,7 @@ fn plan(
                 }),
                 ids: BTreeMap::new(),
                 order: BTreeMap::new(),
+                kept_added: false,
             },
             name,
             wanted,

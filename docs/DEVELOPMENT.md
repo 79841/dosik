@@ -15,7 +15,7 @@ pnpm test          # vitest unit tests
 
 Requirements: Node 22.13+ (pnpm 11 engines), Rust (stable), macOS/Windows/Linux.
 
-A development run keeps its library apart from the installed app's: in `Documents/Dosik Dev`, or in the folder `DOSIK_LIBRARY_DIR` names (an absolute path).
+A development run keeps its library apart from the installed app's: in `Documents/Dosik Dev` (or the folder picked in its own Settings), or in the folder `DOSIK_LIBRARY_DIR` names (an absolute path), which wins over both for that run only.
 
 - The installed app's agent bridge listens on `127.0.0.1:4517`, the same port as a development run — if both run at once, the second cannot take the port. Give development runs another port with `DOSIK_PORT`
 - Subscription connections in AI chat look for an installed Claude Code or Codex CLI. If the app cannot find one, set the path with `CLAUDE_CLI_PATH` / `CODEX_CLI_PATH`

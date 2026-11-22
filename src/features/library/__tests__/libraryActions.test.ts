@@ -10,6 +10,8 @@ import { DASHBOARD, type HomeView } from "../homeView";
 import { savedFor } from "../../../test/rustAnswers";
 import { blankDoc, type FolderMeta } from "../libraryApi";
 import {
+  addFolderToLibrary,
+  changeDefaultLocation,
   deleteDiagramAsking,
   deleteFolderAsking,
   locateProjectAsking,
@@ -21,6 +23,7 @@ import {
 import { useLibraryStore } from "../libraryStore";
 import { openDocument, resetTabsForTests } from "../tabActions";
 import { flushAutosave, resetAutosaveForTests, useAutosave } from "../useAutosave";
+import { resetTreeForTests, useTreeStore } from "../../sidebar/treeStore";
 
 const mockedInvoke = vi.mocked(invoke);
 const mockedAsk = vi.mocked(ask);
@@ -365,6 +368,150 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
       });
       expect(await removeFromLibrary(work())).toBe(false);
       expect(toasts()).toEqual(["Error: no such project"]);
+    });
+  });
+
+  describe("folders in the library (#256)", () => {
+    /** Rust's answers to the pickers; `meanwhile` runs while the picker is up */
+    const answer = (command: string, reply: unknown, meanwhile?: () => void) =>
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "list_library") return library();
+        if (cmd === command) {
+          meanwhile?.();
+          if (reply instanceof Error) throw reply;
+          return reply;
+        }
+        return undefined;
+      });
+
+    beforeEach(() => resetTreeForTests());
+
+    it("Add folder… added — listed again, the new project picked on top and scrolled to", async () => {
+      answer("add_library_folder", { kind: "added", id: "home" });
+      expect(await addFolderToLibrary()).toBe("home");
+      const order = mockedInvoke.mock.calls.map(([c]) => c);
+      expect(order).toEqual(["add_library_folder", "list_library"]);
+      expect(useTreeStore.getState().picked).toBe("folder:home");
+      expect(useTreeStore.getState().reveal).toBe("folder:home");
+      expect(toasts()).toEqual([]);
+    });
+
+    it("Add folder… added while the user went elsewhere — listed, nothing picked (#218 D15)", async () => {
+      answer("add_library_folder", { kind: "added", id: "home" }, () =>
+        useAppStore.getState().setHomeView({ kind: "folder", folder: "work" }),
+      );
+      expect(await addFolderToLibrary()).toBe("home");
+      expect(calls("list_library")).toHaveLength(1);
+      expect(useTreeStore.getState().picked).toBeNull();
+      expect(useTreeStore.getState().reveal).not.toBe("folder:home");
+    });
+
+    it("Add folder… on a folder in the library already, or too broad — the toast says which, nothing listed", async () => {
+      answer("add_library_folder", { kind: "already" });
+      expect(await addFolderToLibrary()).toBeUndefined();
+      expect(toasts()).toEqual(["Already in the library"]);
+      useToastStore.getState().dismissAll();
+      answer("add_library_folder", { kind: "invalid" });
+      expect(await addFolderToLibrary()).toBeUndefined();
+      expect(toasts()).toEqual(["Choose another folder"]);
+      expect(calls("list_library")).toHaveLength(0);
+      expect(useTreeStore.getState().picked).toBeNull();
+    });
+
+    it("Add folder… or Change… answered in a way the app cannot read — the toast says so, nothing listed", async () => {
+      answer("add_library_folder", { kind: "moved" });
+      expect(await addFolderToLibrary()).toBeUndefined();
+      expect(toasts()).toEqual(["Error: Couldn't tell whether the folder was added"]);
+      useToastStore.getState().dismissAll();
+      answer("change_default_location", "moved");
+      expect(await changeDefaultLocation()).toBe(false);
+      expect(toasts()).toEqual(["Error: Couldn't tell whether the default location changed"]);
+      expect(calls("list_library")).toHaveLength(0);
+    });
+
+    it("Add folder… cancelled says nothing; one that fails says why", async () => {
+      answer("add_library_folder", { kind: "cancelled" });
+      expect(await addFolderToLibrary()).toBeUndefined();
+      expect(toasts()).toEqual([]);
+      expect(calls("list_library")).toHaveLength(0);
+      answer("add_library_folder", new Error("the library could not be reached"));
+      expect(await addFolderToLibrary()).toBeUndefined();
+      expect(toasts()).toEqual(["Error: the library could not be reached"]);
+    });
+
+    it("one folder picker at a time — a second press while it is up opens none", async () => {
+      let close: (answer: unknown) => void = () => undefined;
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "list_library") return library();
+        if (
+          cmd === "add_library_folder" ||
+          cmd === "change_default_location" ||
+          cmd === "locate_project"
+        ) {
+          return new Promise((resolve) => (close = resolve));
+        }
+        return undefined;
+      });
+      const lost: FolderMeta = { ...personal(), missing: true, added: true };
+      const first = addFolderToLibrary();
+      await vi.waitFor(() => expect(calls("add_library_folder")).toHaveLength(1));
+      // pressed again, or another of the pickers: nothing opens, nothing is said
+      expect(await addFolderToLibrary()).toBeUndefined();
+      expect(await changeDefaultLocation()).toBe(false);
+      expect(await locateProjectAsking(lost)).toBe(false);
+      expect(calls("add_library_folder")).toHaveLength(1);
+      expect(calls("change_default_location")).toHaveLength(0);
+      expect(calls("locate_project")).toHaveLength(0);
+      expect(toasts()).toEqual([]);
+      close({ kind: "cancelled" });
+      expect(await first).toBeUndefined();
+      // closed: the next press opens one again
+      const next = changeDefaultLocation();
+      await vi.waitFor(() => expect(calls("change_default_location")).toHaveLength(1));
+      close("cancelled");
+      expect(await next).toBe(false);
+    });
+
+    it("a picker that fails lets the next one open", async () => {
+      answer("add_library_folder", new Error("no window"));
+      expect(await addFolderToLibrary()).toBeUndefined();
+      answer("add_library_folder", { kind: "cancelled" });
+      await addFolderToLibrary();
+      expect(calls("add_library_folder")).toHaveLength(2);
+    });
+
+    it("Change… changed — listed again, nothing said", async () => {
+      answer("change_default_location", "changed");
+      expect(await changeDefaultLocation()).toBe(true);
+      expect(mockedInvoke.mock.calls.map(([c]) => c)).toEqual([
+        "change_default_location",
+        "list_library",
+      ]);
+      expect(toasts()).toEqual([]);
+    });
+
+    it("Change… changed but the listing after it fails — still changed, the toast says why", async () => {
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "change_default_location") return "changed";
+        if (cmd === "list_library") throw new Error("the library could not be read");
+        return undefined;
+      });
+      expect(await changeDefaultLocation()).toBe(true);
+      expect(toasts()).toEqual(["Error: the library could not be read"]);
+    });
+
+    it("Change… to a folder that cannot hold projects — the toast says so; cancelled says nothing", async () => {
+      answer("change_default_location", "invalid");
+      expect(await changeDefaultLocation()).toBe(false);
+      expect(toasts()).toEqual(["Choose another folder for new projects"]);
+      useToastStore.getState().dismissAll();
+      answer("change_default_location", "cancelled");
+      expect(await changeDefaultLocation()).toBe(false);
+      expect(toasts()).toEqual([]);
+      expect(calls("list_library")).toHaveLength(0);
+      answer("change_default_location", new Error("nope"));
+      expect(await changeDefaultLocation()).toBe(false);
+      expect(toasts()).toEqual(["Error: nope"]);
     });
   });
 

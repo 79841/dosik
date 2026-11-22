@@ -1231,23 +1231,74 @@ describe("sidebar tree (#217 R3)", () => {
       expect(row(/^Work/)).not.toHaveClass("bg-hover");
     });
 
-    it("empty space and the PROJECTS header — just New project; picking it creates one at the top and renames it", async () => {
+    it("empty space and the PROJECTS header — New project · Add folder… (#256 R1); New project creates one at the top and renames it", async () => {
       const user = userEvent.setup();
       renderTree();
       expect(rightClick(tree(), 40, 500)).toBe(false);
-      expect(menuItemsOf("Projects")).toEqual(["New project"]);
+      expect(menuItemsOf("Projects")).toEqual(["New project", "Add folder…"]);
       expect(screen.getByRole("menu", { name: "Projects" })).toHaveStyle({
         left: "42px",
         top: "502px",
       });
       await user.keyboard("{Escape}");
       expect(rightClick(screen.getByRole("heading", { name: "Projects" }))).toBe(false);
-      expect(menuItemsOf("Projects")).toEqual(["New project"]);
+      expect(menuItemsOf("Projects")).toEqual(["New project", "Add folder…"]);
       await user.click(screen.getByRole("menuitem", { name: "New project" }));
       await waitFor(() => expect(calls("create_folder")).toHaveLength(1));
       expect(calls("create_folder")[0]![1]).toMatchObject({ name: "New project" });
       const made = calls("create_folder")[0]![1] as { id: string };
       await waitFor(() => expect(useTreeStore.getState().renaming).toBe(made.id));
+    });
+
+    it("empty space Add folder… — Rust's picker; the folder joins on top, picked and scrolled into view (#256 R1)", async () => {
+      const user = userEvent.setup();
+      const scrolled = vi.fn();
+      Element.prototype.scrollIntoView = scrolled;
+      let listing = library();
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "add_library_folder") {
+          listing = [
+            {
+              folders: [],
+              id: "client",
+              name: "client-diagrams",
+              updatedAt: now,
+              diagrams: [],
+              added: true,
+            },
+            ...library(),
+          ];
+          return { kind: "added", id: "client" };
+        }
+        if (cmd === "list_library") return listing;
+        return undefined;
+      });
+      try {
+        renderTree();
+        rightClick(tree(), 40, 500);
+        await user.click(screen.getByRole("menuitem", { name: "Add folder…" }));
+        await waitFor(() =>
+          expect(item(/^client-diagrams/)).toHaveAttribute("aria-selected", "true"),
+        );
+        expect(calls("add_library_folder")[0]).toEqual(["add_library_folder"]);
+        expect(within(tree()).getAllByRole("treeitem")[0]).toBe(item(/^client-diagrams/));
+        expect(scrolled).toHaveBeenCalled();
+        expect(scrolled.mock.contexts.at(-1)).toBe(item(/^client-diagrams/));
+        expect(toasts()).toEqual([]);
+      } finally {
+        Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+      }
+    });
+
+    it("Add folder… on a folder already in the library — the toast says so and the list stays", async () => {
+      const user = userEvent.setup();
+      serve(library, undefined, { add_library_folder: { kind: "already" } });
+      renderTree();
+      rightClick(screen.getByRole("heading", { name: "Projects" }));
+      await user.click(screen.getByRole("menuitem", { name: "Add folder…" }));
+      await waitFor(() => expect(toasts()).toEqual(["Already in the library"]));
+      expect(within(tree()).getAllByRole("treeitem")).toHaveLength(2);
+      expect(calls("list_library")).toHaveLength(0);
     });
 
     it("moving to another field while a context-menu New project is being created — the name field does not steal focus (#230 D15 rule, #218 D15)", async () => {
@@ -1287,7 +1338,90 @@ describe("sidebar tree (#217 R3)", () => {
     });
   });
 
-  describe("+ New project (D12, T27)", () => {
+  describe("+ menu (D12, T27, #256 R1)", () => {
+    const plus = () => screen.getByRole("button", { name: "Add a project" });
+
+    it("the + opens New project · Add folder… 2 below it, its right end on the +'s — the + shows selected while it is open", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      expect(plus()).toHaveAttribute("aria-haspopup", "menu");
+      expect(plus()).toHaveAttribute("aria-expanded", "false");
+      plus().getBoundingClientRect = () => ({ right: 236, bottom: 143 }) as DOMRect;
+      await user.click(plus());
+      const menu = screen.getByRole("menu", { name: "Add a project" });
+      expect(menu).toHaveStyle({ left: "52px", top: "145px" });
+      expect(
+        within(menu)
+          .getAllByRole("menuitem")
+          .map((i) => i.textContent),
+      ).toEqual(["New project", "Add folder…"]);
+      expect(plus()).toHaveAttribute("aria-expanded", "true");
+      expect(plus()).toHaveClass("bg-selected");
+      // pressed again, it closes
+      await user.click(plus());
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(plus()).toHaveAttribute("aria-expanded", "false");
+      expect(plus()).not.toHaveClass("bg-selected");
+    });
+
+    it("opens and picks from the keyboard; Escape gives the focus back to the +", async () => {
+      const user = userEvent.setup();
+      serve(library, undefined, { add_library_folder: { kind: "cancelled" } });
+      renderTree();
+      act(() => plus().focus());
+      await user.keyboard("{Enter}");
+      expect(screen.getByRole("menuitem", { name: "New project" })).toHaveFocus();
+      await user.keyboard("{ArrowDown}");
+      expect(screen.getByRole("menuitem", { name: "Add folder…" })).toHaveFocus();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(plus()).toHaveFocus();
+      // Add folder… from the keyboard: the picker, and the focus back on the +
+      await user.keyboard("{Enter}{ArrowDown}{Enter}");
+      await waitFor(() => expect(calls("add_library_folder")).toHaveLength(1));
+      expect(plus()).toHaveFocus();
+      expect(toasts()).toEqual([]);
+    });
+
+    it("Add folder… from the + — the new project on top, picked; while the user went to another tab nothing is picked (#218 D15)", async () => {
+      const user = userEvent.setup();
+      let listing = library();
+      let meanwhile: () => void = () => undefined;
+      mockedInvoke.mockImplementation(async (cmd) => {
+        if (cmd === "add_library_folder") {
+          meanwhile();
+          listing = [
+            {
+              folders: [],
+              id: "client",
+              name: "client-diagrams",
+              updatedAt: now,
+              diagrams: [],
+              added: true,
+            },
+            ...library(),
+          ];
+          return { kind: "added", id: "client" };
+        }
+        if (cmd === "list_library") return listing;
+        return undefined;
+      });
+      renderTree();
+      await user.click(plus());
+      await user.click(screen.getByRole("menuitem", { name: "Add folder…" }));
+      await waitFor(() =>
+        expect(item(/^client-diagrams/)).toHaveAttribute("aria-selected", "true"),
+      );
+      act(() => resetTreeForTests());
+      listing = library();
+      meanwhile = () => openDocument({ ...blankDoc(), title: "Other" }, { projectId: "other" });
+      await user.click(plus());
+      await user.click(screen.getByRole("menuitem", { name: "Add folder…" }));
+      await waitFor(() => expect(calls("add_library_folder")).toHaveLength(2));
+      await waitFor(() => expect(item(/^client-diagrams/)).toBeInTheDocument());
+      expect(useTreeStore.getState().picked).toBeNull();
+    });
+
     it("creates and renames right in the tree — the screen stays", async () => {
       const user = userEvent.setup();
       let listing = library();
@@ -1306,7 +1440,8 @@ describe("sidebar tree (#217 R3)", () => {
       );
       openDocument(loginBook(), { projectId: "p1" });
       renderTree();
-      await user.click(screen.getByRole("button", { name: "New project" }));
+      await user.click(plus());
+      await user.click(screen.getByRole("menuitem", { name: "New project" }));
       const input = await screen.findByRole("textbox", { name: "Project name" });
       expect(input).toHaveFocus();
       expect(calls("create_folder")[0]![1]).toMatchObject({ name: "New project" });
@@ -1337,7 +1472,8 @@ describe("sidebar tree (#217 R3)", () => {
         }),
       );
       renderTree();
-      await user.click(screen.getByRole("button", { name: "New project" }));
+      await user.click(plus());
+      await user.click(screen.getByRole("menuitem", { name: "New project" }));
       act(() => (document.activeElement as HTMLElement | null)?.blur());
       act(() => {
         openDocument({ ...blankDoc(), title: "Other" }, { projectId: "other" });
@@ -1365,7 +1501,8 @@ describe("sidebar tree (#217 R3)", () => {
         }),
       );
       renderTree();
-      await user.click(screen.getByRole("button", { name: "New project" }));
+      await user.click(plus());
+      await user.click(screen.getByRole("menuitem", { name: "New project" }));
       const field = document.createElement("input");
       document.body.appendChild(field);
       act(() => field.focus());
