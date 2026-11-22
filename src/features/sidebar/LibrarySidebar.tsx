@@ -124,11 +124,14 @@ export const LibrarySidebar = () => (
 );
 
 /**
- * Hide sidebar, at the right end of the sidebar's top row in the band (R1,
- * D30): its tooltip ends at the button's right edge so it stays over the
- * sidebar. Hiding moves focus to Show sidebar (D29) — the band does that.
+ * Hide sidebar, in the sidebar's top row in the band. On macOS it is at the
+ * row's right end, past the traffic lights (R1, D30), and its tooltip ends at
+ * the button's right edge so it stays over the sidebar. Elsewhere it is at
+ * the window's left edge, where Show sidebar is while the sidebar is hidden,
+ * and its tooltip starts at the button's left edge. Hiding moves focus to
+ * Show sidebar (D29) — the band does that.
  */
-export const HideSidebarButton = () => {
+export const HideSidebarButton = ({ atLeftEdge = false }: { atLeftEdge?: boolean }) => {
   const hide = useSidebarStore((s) => s.hide);
   return (
     <div data-sidebar-region="" className="flex">
@@ -138,7 +141,7 @@ export const HideSidebarButton = () => {
         keyshortcuts={keyshortcuts("\\")}
         onClick={hide}
         size={24}
-        align="end"
+        align={atLeftEdge ? "start" : "end"}
       >
         <PanelLeft {...icon} />
       </IconButton>

@@ -13,7 +13,7 @@ use super::ctx::Library;
 use super::disk::{self, child_rel, split_rel};
 use super::names;
 use super::ops::{self, folder_at};
-use super::removal::{SystemTrash, Trasher};
+use super::removal::{SystemTrash, Trasher, TRASH};
 use super::state::{self, BoardSpot, Found};
 use super::walk::{self, Siblings, MAX_DEPTH};
 
@@ -441,7 +441,7 @@ fn place_copy(
                 // the Trash took part of it: the copy is the only whole one,
                 // and stays — the record with it — beside what is left
                 return Err(format!(
-                    "Couldn't move “{name}” whole — part of it went to the Trash, and the rest stays where it was"
+                    "Couldn't move “{name}” whole — part of it went to {TRASH}, and the rest stays where it was"
                 ));
             }
             // two copies would be listed: the move is undone
@@ -451,7 +451,7 @@ fn place_copy(
             }
             let _ = std::fs::remove_dir_all(&to);
             return Err(format!(
-                "Couldn't move “{name}” — the original can't go to the Trash where it is, so it stays there"
+                "Couldn't move “{name}” — the original can't go to {TRASH} where it is, so it stays there"
             ));
         }
         Ok(Some(()))
@@ -1094,7 +1094,7 @@ mod tests {
         let bin = crate::library::disk::tests::scratch("folders-exdev-partly-bin");
         let error = move_folder_with(&lib, "fa", "fb", None, across_volumes, &Partly(bin.clone()))
             .unwrap_err();
-        assert!(error.contains("Trash"), "{error}");
+        assert!(error.contains(super::super::removal::TRASH), "{error}");
         // the only whole copy stays, and the record follows it
         let copy = p_dir(&lib).join("B/A");
         assert_eq!(names_in(&copy), vec!["Flow.dosik", "notes.txt"]);
@@ -1110,7 +1110,10 @@ mod tests {
         let before = ids_of(&lib);
         let error = move_folder_with(&lib, "fa", "fb", None, across_volumes, &Full).unwrap_err();
         assert!(
-            error.starts_with("Couldn't move “A” — the original can't go to the Trash"),
+            error.starts_with(&format!(
+                "Couldn't move “A” — the original can't go to {}",
+                super::super::removal::TRASH
+            )),
             "{error}"
         );
         assert!(p_dir(&lib).join("A/Flow.dosik").is_file());

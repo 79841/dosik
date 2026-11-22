@@ -185,7 +185,7 @@ export const toolDefinitions = (spec = loadSpec(), { view = false } = {}) => [
       "front; one inside a library project opens as that library diagram). Use it only when the " +
       "user asks to open or show the file in the app — the other tools never need it. " +
       "Afterwards edit without `file`: edits without `file` go to the active tab, which is this " +
-      "document now, and the canvas highlights what changed. macOS only for now.",
+      "document now, and the canvas highlights what changed. macOS and Windows.",
     inputSchema: {
       type: "object",
       properties: {

@@ -9,6 +9,7 @@ mod open_requests;
 mod plugins;
 mod secrets;
 mod tray;
+mod window_frame;
 
 use base64::Engine;
 use tauri::State;
@@ -122,6 +123,94 @@ fn write_binary_file(path: String, base64: String) -> Result<(), String> {
     std::fs::write(&path, bytes).map_err(|e| format!("{path}: {e}"))
 }
 
+/// The window menu off macOS — a right click on the band (`at_pointer`), or
+/// Alt+Space. The menu is tracked on the main thread from the event loop, as
+/// Tauri shows its own context menus: a synchronous command would run inside
+/// the webview's request handler, where a nested message loop is not
+/// supported. While the menu is open the event loop waits, as it does for
+/// Tauri's menus — a bridge op that arrives then is applied when the menu
+/// closes. Nothing elsewhere: macOS has its own window.
+#[cfg(windows)]
+#[tauri::command(async)]
+fn show_window_menu(window: tauri::WebviewWindow, at_pointer: bool) -> Result<(), String> {
+    let target = window.clone();
+    window
+        .run_on_main_thread(move || {
+            if let Err(error) = window_frame::win32::show_system_menu(&target, at_pointer) {
+                eprintln!("dosik: no window menu: {error}");
+            }
+        })
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+#[tauri::command(async)]
+fn show_window_menu(window: tauri::WebviewWindow, at_pointer: bool) -> Result<(), String> {
+    let _ = (window, at_pointer);
+    Ok(())
+}
+
+/// F11 off macOS: full screen on or off. On Windows a maximized window goes
+/// through restored (`window_frame.rs`); it answers once the window has changed,
+/// or after 3 s — so a press never waits on a window that is going away.
+#[cfg(windows)]
+#[tauri::command(async)]
+fn set_window_fullscreen(window: tauri::WebviewWindow, fullscreen: bool) -> Result<(), String> {
+    let target = window.clone();
+    let (done, changed) = std::sync::mpsc::channel();
+    window
+        .run_on_main_thread(move || {
+            window_frame::win32::set_fullscreen(&target, fullscreen);
+            let _ = done.send(());
+        })
+        .map_err(|e| e.to_string())?;
+    changed
+        .recv_timeout(std::time::Duration::from_secs(3))
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(windows))]
+#[tauri::command(async)]
+fn set_window_fullscreen(window: tauri::WebviewWindow, fullscreen: bool) -> Result<(), String> {
+    window.set_fullscreen(fullscreen).map_err(|e| e.to_string())
+}
+
+/// Off macOS on Windows: the webview's browser keys, the Snap layouts spot,
+/// and the first window's place — it was created hidden for this, and ends
+/// shown whatever happens (`window_frame.rs`).
+#[cfg(windows)]
+fn set_up_window_frame(app: &tauri::App) {
+    use tauri::Manager;
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    window_frame::win32::apply_webview_prefs(&window, tauri::is_dev());
+    // Windows 11's round corners while restored, as its own windows have
+    window_frame::win32::set_corners(&window, false);
+    window_frame::win32::install_max_spot(&window);
+    // the spot follows the Maximize button, and leaves in full screen — from
+    // the first placement on
+    let follow = window.clone();
+    window.on_window_event(move |event| {
+        if matches!(
+            event,
+            tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. }
+        ) {
+            window_frame::win32::place_max_spot(&follow);
+        }
+    });
+    let size = app
+        .config()
+        .app
+        .windows
+        .first()
+        .map(|w| (w.width, w.height))
+        .unwrap_or((1440.0, 900.0));
+    window_frame::place_first_window(&window, size);
+    // and the spot to it: the placement's resizes did not move it there
+    window_frame::win32::place_max_spot(&window);
+}
+
 /// Brings the running window forward when a second launch is refused (#109).
 pub(crate) fn focus_existing(app: &tauri::AppHandle) {
     use tauri::Manager;
@@ -178,6 +267,8 @@ pub fn run() {
             // the library before anything asks for it: its older form is
             // moved into the default location off the main thread
             library::setup(app.handle());
+            #[cfg(windows)]
+            set_up_window_frame(app);
             bridge::start_agent_server(app.handle().clone());
             // the bundled MCP server into the app data, where the AI apps are
             // pointed (#252) — off the main thread, and never in the way of startup;
@@ -247,7 +338,9 @@ pub fn run() {
             plugins::plugins_status,
             plugins::plugin_install,
             plugins::plugin_remove,
-            plugins::open_claude
+            plugins::open_claude,
+            show_window_menu,
+            set_window_fullscreen
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application")

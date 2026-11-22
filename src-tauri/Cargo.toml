@@ -41,3 +41,17 @@ notify-debouncer-mini = "0.7"
 # Names are compared in composed form, as macOS opens one file by either form
 unicode-normalization = "0.1"
 
+# The window frame off macOS (window_frame.rs): the window menu, Snap layouts
+# on Maximize, the webview's browser keys. The versions Tauri already uses
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Dwm",
+  "Win32_Graphics_Gdi",
+  "Win32_System_LibraryLoader",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+

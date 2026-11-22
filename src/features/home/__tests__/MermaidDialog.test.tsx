@@ -366,3 +366,18 @@ describe("From Mermaid… dialog (#220 D15, T22)", () => {
     expect(create()).toHaveFocus();
   });
 });
+
+describe("From Mermaid… off macOS: the caption buttons ride above its dim (the canvas's Win-Caption)", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    resetMermaidDraftForTests();
+  });
+
+  it("they are inside the dialog, out of the tab order — the text field keeps the first focus", async () => {
+    renderDialog();
+    await waitFor(() => expect(field()).toHaveFocus());
+    const caption = screen.getByRole("group", { name: "Window" });
+    expect(dialog().contains(caption)).toBe(true);
+    for (const b of caption.querySelectorAll("button")) expect(b).toHaveAttribute("tabindex", "-1");
+  });
+});

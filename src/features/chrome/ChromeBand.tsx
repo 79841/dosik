@@ -1,14 +1,15 @@
-import { useLayoutEffect, useRef } from "react";
+import { type MouseEvent, useLayoutEffect, useRef } from "react";
 
 import { useDockedWidth, useSidebarStore } from "../../shared/lib/sidebarLayout";
 import { SLIDE_TIMING, useSidebarSliding } from "../../shared/lib/sidebarSlide";
 import {
-  BAND_BUTTON,
-  BAND_GAP,
   bandLeading,
+  hideSidebarLeft,
   isMacPlatform,
+  isOnDragRegion,
   tabsLeft,
 } from "../../shared/lib/windowChrome";
+import { showWindowMenu, useWindowFrame } from "../../shared/lib/windowFrame";
 import { WindowControls } from "../../shared/ui/WindowControls";
 import { HideSidebarButton } from "../sidebar/LibrarySidebar";
 import { ShowSidebarButton } from "../sidebar/SidebarPeek";
@@ -19,13 +20,22 @@ import { MoreMenu } from "./MoreMenu";
  * The chrome band (#217 R1, D19): the top 40px of the window, one strip the
  * full width — the window's drag handle (`deep`: Tauri leaves its buttons
  * out). Docked, its left "sidebar width" is the sidebar's top row: the
- * traffic lights' room (20–80) and Hide sidebar. Hidden, it is the whole tab
+ * traffic lights' room (20–80) and Hide sidebar — off macOS, with no lights,
+ * Hide sidebar at the left edge instead, where Show sidebar is while the
+ * sidebar is hidden, so the toggle stays put. Hidden, it is the whole tab
  * strip: lights, Show sidebar, the tabs, and ⋯ More at the right end. The
  * tabs and the band's end share one row, so the strip knows its room.
  * Everything in it is centred on y = 24, the native lights' centre line.
  *
  * It sits outside the content's error boundary, so whatever crashes below,
  * the window can still be dragged — and, off macOS, closed (#127).
+ *
+ * Off macOS it is the window's title bar (the canvas's Win-Caption): the
+ * caption buttons flush with its top-right corner, and a right click on an
+ * empty place opens Windows' window menu. In full screen it stays for the
+ * tabs but stops being a title bar — no caption buttons, no drag, no
+ * double-click maximize, no window menu — and ⋯ More goes back to 12 from the
+ * edge.
  */
 export const ChromeBand = ({ mac = isMacPlatform() }: { mac?: boolean }) => {
   const hidden = useSidebarStore((s) => s.hidden);
@@ -33,6 +43,9 @@ export const ChromeBand = ({ mac = isMacPlatform() }: { mac?: boolean }) => {
   const sliding = useSidebarSliding();
   const focusAfter = useSidebarStore((s) => s.focusAfter);
   const docked = useDockedWidth();
+  const fullscreen = useWindowFrame((s) => s.fullscreen);
+  // off macOS and not in full screen: the band is a title bar, with caption buttons
+  const titleBar = !mac && !fullscreen;
   const hideSlot = useRef<HTMLDivElement>(null);
   const showSlot = useRef<HTMLDivElement>(null);
 
@@ -47,10 +60,17 @@ export const ChromeBand = ({ mac = isMacPlatform() }: { mac?: boolean }) => {
     useSidebarStore.getState().clearFocusAfter();
   }, [focusAfter]);
 
+  const onContextMenu = (e: MouseEvent<HTMLDivElement>) => {
+    if (mac || !isOnDragRegion(e.target)) return;
+    e.preventDefault();
+    if (titleBar) showWindowMenu(true);
+  };
+
   return (
     <div
       data-chrome-band
-      data-tauri-drag-region="deep"
+      data-tauri-drag-region={mac || titleBar ? "deep" : undefined}
+      onContextMenu={onContextMenu}
       // z-20: its menus and tooltips hang over the sheet and the sidebar.
       // nodelete: Backspace here must not delete the canvas selection (D27)
       className="nodelete relative z-20 h-10 flex-none select-none bg-frame"
@@ -68,11 +88,10 @@ export const ChromeBand = ({ mac = isMacPlatform() }: { mac?: boolean }) => {
         <div
           ref={hideSlot}
           data-band-slot
-          // 8px in from the sidebar's right edge
-          style={{ left: docked - BAND_GAP - BAND_BUTTON }}
+          style={{ left: hideSidebarLeft(docked, mac) }}
           className="absolute top-3 flex"
         >
-          <HideSidebarButton />
+          <HideSidebarButton atLeftEdge={!mac} />
         </div>
       )}
       {/* the tabs take what the band's end leaves them (#218 D13) */}
@@ -86,9 +105,14 @@ export const ChromeBand = ({ mac = isMacPlatform() }: { mac?: boolean }) => {
         <DocumentTabs mac={mac} />
         <div
           data-band-end
-          className={`flex flex-none items-start gap-2 pr-3 pt-3 ${hidden || !mac ? "pl-2" : ""}`}
+          // the caption buttons touch the corner; without them the end keeps 12 from the edge
+          className={`flex flex-none items-start ${hidden || titleBar ? "pl-2" : ""} ${titleBar ? "" : "pr-3"}`}
         >
-          {hidden ? <MoreMenu /> : null}
+          {hidden ? (
+            <div data-band-more className={`pt-3 ${titleBar ? "pr-2" : ""}`}>
+              <MoreMenu />
+            </div>
+          ) : null}
           <WindowControls platform={mac ? "mac" : "other"} />
         </div>
       </div>

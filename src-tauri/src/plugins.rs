@@ -9,7 +9,9 @@
 //!   any key the user added to Dosik's table — stays as it was.
 //! - **Claude Desktop** — the bundled `dosik.mcpb`, handed to Claude Desktop,
 //!   which asks the user to confirm. Installed state is read from Claude's
-//!   `extensions-installations.json` (`extensions["local.mcpb.dosik.dosik"]`).
+//!   `extensions-installations.json` (`extensions["local.mcpb.dosik.dosik"]`)
+//!   in its folder: `~/Library/Application Support/Claude` on macOS,
+//!   `%APPDATA%\Claude` on Windows.
 //!
 //! The readers take their folders and probes as arguments, so the tests run on
 //! temp folders and never touch the user's files or start other programs.
@@ -33,6 +35,8 @@ pub const CLAUDE_BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
 pub const MIN_NODE_MAJOR: u32 = 18;
 /// `claude mcp add/remove` may take a moment, never forever
 const CLAUDE_MCP_TIMEOUT: Duration = Duration::from_secs(30);
+/// how the Codex config is named in its errors — swapped for where it is (`config_shown`)
+const CODEX_CONFIG_NAME: &str = "~/.codex/config.toml";
 
 #[derive(Serialize, Debug, Clone, PartialEq, Eq)]
 pub struct Registration {
@@ -251,9 +255,34 @@ pub fn desktop_installed_version(installations_json: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Whether Claude Desktop is on this Mac: where apps go, then Spotlight by
-/// its bundle id. Nothing is opened or revealed.
-pub fn claude_app_present(home: &Path) -> bool {
+/// Claude Desktop's own folder in the user's app data — `data_dir` is
+/// `~/Library/Application Support` on macOS and `%APPDATA%` on Windows
+pub fn claude_support_dir(data_dir: &Path) -> PathBuf {
+    data_dir.join("Claude")
+}
+
+/// Where Claude Desktop's program may be on Windows: its installer puts it
+/// in the user's local app data. An estimate, to be checked on a Windows machine
+pub fn claude_desktop_exe_candidates(local_data: &Path) -> Vec<PathBuf> {
+    vec![
+        local_data.join("AnthropicClaude").join("claude.exe"),
+        local_data
+            .join("Programs")
+            .join("Claude")
+            .join("Claude.exe"),
+    ]
+}
+
+/// Whether Claude Desktop is on this machine. macOS: where apps go, then
+/// Spotlight by its bundle id. Windows: its program where its installer puts
+/// it, or its folder in the app data. Nothing is opened or revealed.
+pub fn claude_app_present(home: &Path, local_data: &Path, support: &Path) -> bool {
+    if cfg!(windows) {
+        return support.is_dir()
+            || claude_desktop_exe_candidates(local_data)
+                .iter()
+                .any(|p| p.exists());
+    }
     if !cfg!(target_os = "macos") {
         return false;
     }
@@ -285,6 +314,64 @@ pub fn node_major(version: &str) -> Option<u32> {
         .ok()
 }
 
+/// the command that lists `node` on the PATH
+pub fn node_finder(windows: bool) -> &'static str {
+    if windows {
+        "where"
+    } else {
+        "which"
+    }
+}
+
+/// the folders under `dir` named for Node versions, newest first
+fn versions_newest_first(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut versions: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    versions.sort_by_key(|p| {
+        std::cmp::Reverse(
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .and_then(node_major)
+                .unwrap_or(0),
+        )
+    });
+    versions
+}
+
+/// Node's usual homes on Windows: the installer's, nvm-windows' versions
+/// (newest first), Volta's and fnm's. Estimates, to be checked on a Windows machine
+pub fn windows_node_candidates(
+    program_files: Option<&Path>,
+    roaming: Option<&Path>,
+    local: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(program_files) = program_files {
+        paths.push(program_files.join("nodejs").join("node.exe"));
+        paths.push(program_files.join("Volta").join("node.exe"));
+    }
+    if let Some(roaming) = roaming {
+        paths.extend(
+            versions_newest_first(&roaming.join("nvm"))
+                .into_iter()
+                .map(|v| v.join("node.exe")),
+        );
+        paths.push(
+            roaming
+                .join("fnm")
+                .join("aliases")
+                .join("default")
+                .join("node.exe"),
+        );
+    }
+    if let Some(local) = local {
+        paths.push(local.join("Volta").join("bin").join("node.exe"));
+    }
+    paths
+}
+
 fn node_candidates(home: &str) -> Vec<PathBuf> {
     let mut paths = vec![
         PathBuf::from("/opt/homebrew/bin/node"),
@@ -297,18 +384,11 @@ fn node_candidates(home: &str) -> Vec<PathBuf> {
         paths.push(home.join(".local/share/fnm/aliases/default/bin/node"));
         paths.push(home.join(".asdf/shims/node"));
         // nvm: newest first
-        if let Ok(entries) = std::fs::read_dir(home.join(".nvm/versions/node")) {
-            let mut versions: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
-            versions.sort_by_key(|p| {
-                std::cmp::Reverse(
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .and_then(node_major)
-                        .unwrap_or(0),
-                )
-            });
-            paths.extend(versions.into_iter().map(|v| v.join("bin/node")));
-        }
+        paths.extend(
+            versions_newest_first(&home.join(".nvm/versions/node"))
+                .into_iter()
+                .map(|v| v.join("bin/node")),
+        );
     }
     paths
 }
@@ -336,14 +416,26 @@ pub fn find_node() -> Option<NodeInfo> {
     if let Ok(path) = std::env::var("DOSIK_NODE") {
         paths.push(PathBuf::from(path));
     }
-    if let Some(output) = output_with_timeout(cli_command("which").arg("node"), CHECK_TIMEOUT) {
+    if let Some(output) = output_with_timeout(
+        cli_command(node_finder(cfg!(windows))).arg("node"),
+        CHECK_TIMEOUT,
+    ) {
         if let Some(path) =
             crate::chat::pick_path_from_finder(&String::from_utf8_lossy(&output.stdout))
         {
             paths.push(path);
         }
     }
-    paths.extend(node_candidates(&crate::chat::home_dir()));
+    if cfg!(windows) {
+        let env = |name: &str| std::env::var_os(name).map(PathBuf::from);
+        paths.extend(windows_node_candidates(
+            env("ProgramFiles").as_deref(),
+            env("APPDATA").as_deref(),
+            env("LOCALAPPDATA").as_deref(),
+        ));
+    } else {
+        paths.extend(node_candidates(&crate::chat::home_dir()));
+    }
     let mut seen = std::collections::HashSet::new();
     let found = paths
         .into_iter()
@@ -396,6 +488,8 @@ pub struct DesktopFacts {
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexFacts {
+    /// where its config is, as Settings names it (`config_shown`)
+    pub config: String,
     pub registered: Option<RegisteredFacts>,
 }
 
@@ -417,10 +511,18 @@ pub struct PluginFacts {
 /// the places Plugins reads and writes, from the app (tests build their own)
 pub struct PluginPlaces {
     pub home: PathBuf,
+    /// the user's local app data (`%LOCALAPPDATA%` on Windows) — where Claude Desktop's program goes
+    pub local_data: PathBuf,
     pub server_dir: PathBuf,
     pub mcpb: PathBuf,
     pub claude_support: PathBuf,
     pub codex_config: PathBuf,
+}
+
+/// The Codex config as Settings names it: from `~` under the home folder on
+/// macOS, whole on Windows — the same rule as the library's paths
+pub fn config_shown(places: &PluginPlaces, windows: bool) -> String {
+    crate::library::shown_path_for(&places.codex_config, Some(&places.home), windows)
 }
 
 /// what had to be asked of the system — found by the app, given by the tests
@@ -442,7 +544,8 @@ fn places<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PluginPlaces, 
             .path()
             .resolve("mcp/dosik.mcpb", BaseDirectory::Resource)
             .map_err(|e| e.to_string())?,
-        claude_support: home.join("Library/Application Support/Claude"),
+        claude_support: claude_support_dir(&app.path().data_dir().map_err(|e| e.to_string())?),
+        local_data: app.path().local_data_dir().map_err(|e| e.to_string())?,
         codex_config: codex_config_path(std::env::var("CODEX_HOME").ok().as_deref(), &home),
         home,
     })
@@ -475,6 +578,7 @@ pub fn facts(places: &PluginPlaces, app_version: &str, probes: Probes) -> Plugin
                 .and_then(desktop_installed_version),
         },
         codex: CodexFacts {
+            config: config_shown(places, cfg!(windows)),
             registered: read(&places.codex_config)
                 .as_deref()
                 .and_then(codex_entry)
@@ -490,7 +594,7 @@ pub fn plugins_status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<Plu
     let probes = Probes {
         node: find_node(),
         claude_cli: crate::chat::find_claude_cli().is_some(),
-        claude_app: claude_app_present(&places.home),
+        claude_app: claude_app_present(&places.home, &places.local_data, &places.claude_support),
         server_problem: app
             .try_state::<crate::mcp_install::McpServerState>()
             .and_then(|s| s.0.lock().unwrap().clone()),
@@ -570,13 +674,15 @@ pub fn plugin_install<R: tauri::Runtime>(
         "codex" => {
             let (server, node) = server_and_node(&app, &places)?;
             let current = read_config(&places.codex_config)?;
-            write_atomically(&places.codex_config, &codex_set(&current, &node, &server)?)
+            codex_set(&current, &node, &server)
+                .and_then(|next| write_atomically(&places.codex_config, &next))
+                .map_err(|e| name_codex_config(e, &places))
         }
         "claude-desktop" => {
             if !places.mcpb.exists() {
                 return Err("This build of Dosik carries no Claude Desktop extension.".into());
             }
-            open_with_claude(Some(&places.mcpb))
+            open_with_claude(&app, &places, Some(&places.mcpb))
         }
         other => Err(format!("unknown plugin target: {other}")),
     }
@@ -593,7 +699,7 @@ pub fn plugin_remove<R: tauri::Runtime>(
         "claude-code" => run_claude(&claude_remove_args()),
         "codex" => {
             let current = read_config(&places.codex_config)?;
-            let next = codex_remove(&current)?;
+            let next = codex_remove(&current).map_err(|e| name_codex_config(e, &places))?;
             if next == current {
                 return Ok(());
             }
@@ -603,7 +709,80 @@ pub fn plugin_remove<R: tauri::Runtime>(
     }
 }
 
-fn open_with_claude(file: Option<&Path>) -> Result<(), String> {
+/// an error about the Codex config, naming the file where it is
+fn name_codex_config(error: String, places: &PluginPlaces) -> String {
+    error.replace(CODEX_CONFIG_NAME, &config_shown(places, cfg!(windows)))
+}
+
+/// Whether Windows has a program to open this file's kind with — without
+/// one, opening it would only ask the user which app to use
+#[cfg(windows)]
+fn has_open_handler(file: &Path) -> bool {
+    use windows::core::{HSTRING, PCWSTR};
+    use windows::Win32::UI::Shell::{AssocQueryStringW, ASSOCF_NONE, ASSOCSTR_EXECUTABLE};
+    let Some(ext) = file.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    let ext = HSTRING::from(format!(".{ext}"));
+    let mut len = 0u32;
+    // asked for the length only: a handler answers with it, none with an error
+    // SAFETY: a lookup with no output buffer; `len` outlives the call
+    unsafe {
+        AssocQueryStringW(
+            ASSOCF_NONE,
+            ASSOCSTR_EXECUTABLE,
+            &ext,
+            PCWSTR::null(),
+            None,
+            &mut len,
+        )
+    }
+    .is_ok()
+        && len > 0
+}
+
+#[cfg(not(windows))]
+fn has_open_handler(_file: &Path) -> bool {
+    false
+}
+
+/// Opens Claude Desktop, handing it `file` (the extension to install) if any.
+/// macOS: `open -b` by its bundle id. Windows: the file through its own
+/// association when there is one (Claude Desktop registers `.mcpb`) — surer
+/// than a guessed program, which may not pass the file on — else Claude
+/// Desktop's program with the file; with no file, the program.
+fn open_with_claude<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    places: &PluginPlaces,
+    file: Option<&Path>,
+) -> Result<(), String> {
+    if cfg!(windows) {
+        use tauri_plugin_opener::OpenerExt;
+        let program = claude_desktop_exe_candidates(&places.local_data)
+            .into_iter()
+            .find(|p| p.exists());
+        let spawn = |file: Option<&Path>| {
+            program.as_ref().is_some_and(|program| {
+                let mut cmd = std::process::Command::new(program);
+                if let Some(file) = file {
+                    cmd.arg(file);
+                }
+                cmd.spawn().is_ok()
+            })
+        };
+        let opened = match file {
+            Some(file) if has_open_handler(file) => app
+                .opener()
+                .open_path(file.to_string_lossy(), None::<&str>)
+                .is_ok(),
+            file => spawn(file),
+        };
+        return if opened {
+            Ok(())
+        } else {
+            Err("Claude Desktop could not be opened.".into())
+        };
+    }
     let mut cmd = std::process::Command::new("open");
     cmd.args(["-b", CLAUDE_BUNDLE_ID]);
     if let Some(file) = file {
@@ -617,8 +796,9 @@ fn open_with_claude(file: Option<&Path>) -> Result<(), String> {
 
 /// Plugins ▸ Claude Desktop ▸ Open Claude
 #[tauri::command(async)]
-pub fn open_claude() -> Result<(), String> {
-    open_with_claude(None)
+pub fn open_claude<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
+    let places = places(&app)?;
+    open_with_claude(&app, &places, None)
 }
 
 #[cfg(test)]
@@ -884,6 +1064,7 @@ mod tests {
             server_dir: root.join("data/mcp/server"),
             mcpb: root.join("res/mcp/dosik.mcpb"),
             claude_support: root.join("home/Library/Application Support/Claude"),
+            local_data: root.join("local"),
             codex_config: root.join("home/.codex/config.toml"),
         };
         std::fs::create_dir_all(&places.claude_support).unwrap();
@@ -917,6 +1098,99 @@ mod tests {
         // the node it points at is gone
         assert!(!registered.command_found);
         assert_eq!(f.claude_desktop.installed_version.as_deref(), Some("0.1.0"));
+        // the config, named as Settings shows it on this platform
+        if cfg!(windows) {
+            assert_eq!(f.codex.config, places.codex_config.to_string_lossy());
+        } else {
+            assert_eq!(f.codex.config, "~/.codex/config.toml");
+        }
         assert_eq!(f.codex.registered, None);
+    }
+
+    #[test]
+    fn claude_desktops_folder_is_in_the_users_app_data() {
+        // macOS: ~/Library/Application Support; Windows: %APPDATA% (roaming)
+        assert_eq!(
+            claude_support_dir(Path::new("/Users/a/Library/Application Support")),
+            PathBuf::from("/Users/a/Library/Application Support/Claude")
+        );
+        assert_eq!(
+            claude_support_dir(Path::new(r"C:\Users\a\AppData\Roaming")),
+            Path::new(r"C:\Users\a\AppData\Roaming").join("Claude")
+        );
+    }
+
+    #[test]
+    fn claude_desktops_program_is_looked_for_in_local_app_data_on_windows() {
+        let local = Path::new(r"C:\Users\a\AppData\Local");
+        assert_eq!(
+            claude_desktop_exe_candidates(local),
+            vec![
+                local.join("AnthropicClaude").join("claude.exe"),
+                local.join("Programs").join("Claude").join("Claude.exe"),
+            ]
+        );
+    }
+
+    #[test]
+    fn node_is_listed_with_where_on_windows_and_which_elsewhere() {
+        assert_eq!(node_finder(true), "where");
+        assert_eq!(node_finder(false), "which");
+    }
+
+    #[test]
+    fn node_on_windows_is_looked_for_where_its_installers_put_it() {
+        let root = temp("win-node");
+        let roaming = root.join("Roaming");
+        let local = root.join("Local");
+        let program_files = root.join("Program Files");
+        // two nvm-windows versions: the newer is tried first
+        std::fs::create_dir_all(roaming.join("nvm/v18.20.0")).unwrap();
+        std::fs::create_dir_all(roaming.join("nvm/v22.18.0")).unwrap();
+        let found = windows_node_candidates(Some(&program_files), Some(&roaming), Some(&local));
+        assert_eq!(found[0], program_files.join("nodejs").join("node.exe"));
+        assert_eq!(found[1], program_files.join("Volta").join("node.exe"));
+        let nvm22 = found
+            .iter()
+            .position(|p| p == &roaming.join("nvm/v22.18.0").join("node.exe"))
+            .unwrap();
+        let nvm18 = found
+            .iter()
+            .position(|p| p == &roaming.join("nvm/v18.20.0").join("node.exe"))
+            .unwrap();
+        assert!(nvm22 < nvm18);
+        assert!(found.contains(&roaming.join("fnm/aliases/default").join("node.exe")));
+        assert!(found.contains(&local.join("Volta/bin").join("node.exe")));
+        // none of the folders known: nothing to try
+        assert!(windows_node_candidates(None, None, None).is_empty());
+    }
+
+    #[test]
+    fn the_codex_config_is_named_where_it_is() {
+        let places = PluginPlaces {
+            home: PathBuf::from("/Users/a"),
+            local_data: PathBuf::from("/Users/a/Library/Application Support"),
+            server_dir: PathBuf::from("/x"),
+            mcpb: PathBuf::from("/x.mcpb"),
+            claude_support: PathBuf::from("/Users/a/Library/Application Support/Claude"),
+            codex_config: PathBuf::from("/Users/a/.codex/config.toml"),
+        };
+        if cfg!(unix) {
+            assert_eq!(config_shown(&places, false), "~/.codex/config.toml");
+        }
+        // Windows: whole
+        assert_eq!(
+            config_shown(&places, true),
+            places.codex_config.to_string_lossy()
+        );
+        // an error names the file where it is
+        let error = codex_set(
+            "[mcp_servers]\nx = 1\n[[mcp_servers]]",
+            Path::new("node"),
+            Path::new("s"),
+        )
+        .unwrap_err();
+        assert!(error.contains(CODEX_CONFIG_NAME));
+        assert!(name_codex_config(error, &places).contains(&config_shown(&places, cfg!(windows))));
     }
 }

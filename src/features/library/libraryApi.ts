@@ -77,7 +77,7 @@ export interface FolderMeta {
   added?: boolean;
   /** a project's folder, whole — what "not found" names */
   path?: string;
-  /** the same from `~` when it is under the home folder, for reading */
+  /** the same from `~` when it is under the home folder, for reading (whole on Windows) */
   shown?: string;
   /**
    * A project's diagrams the listing could not reach (#253): its folder not
@@ -477,7 +477,7 @@ export const libraryDiagramAt = async (path: string): Promise<string | null> => 
 /** what a path is asked of (#238): a folder — a project or one inside one — or a diagram */
 export type ItemKind = "folder" | "diagram";
 
-/** where an item is on disk (#238): `path` whole, for copying; `shown` from `~`, for reading */
+/** where an item is on disk (#238): `path` whole, for copying; `shown` from `~` (whole on Windows), for reading */
 export interface ItemPath {
   path: string;
   shown: string;
@@ -494,7 +494,7 @@ export const libraryPath = (kind: ItemKind, id: string): Promise<ItemPath> =>
 export const showInFinder = (kind: ItemKind, id: string): Promise<void> =>
   invoke("show_in_finder", { kind, id });
 
-/** where new projects go (#253 R6, #256 R2): `path` whole, `shown` from `~` */
+/** where new projects go (#253 R6, #256 R2): `path` whole, `shown` from `~` (whole on Windows) */
 export const libraryRoot = (): Promise<ItemPath> => invoke("library_root");
 
 /** the default location opens in Finder — made first when nothing has made it yet */

@@ -11,7 +11,13 @@ import {
   useAiStatusStore,
 } from "../../ai/aiStatusStore";
 import { useChatStore } from "../../ai/chatStore";
-import { AUTH_LABEL, type AiAuth, type AiVendor } from "../../ai/settings";
+import {
+  AUTH_LABEL,
+  type AiAuth,
+  type AiVendor,
+  authAvailable,
+  effectiveAuth,
+} from "../../ai/settings";
 import {
   Button,
   Caption,
@@ -24,6 +30,7 @@ import {
   Status,
   Steps,
 } from "../parts";
+import { platformCopy } from "../platformCopy";
 import { useSettingsStore } from "../settingsStore";
 
 const AUTHS = [AUTH_LABEL.subscription, AUTH_LABEL["api-key"]] as const;
@@ -35,7 +42,6 @@ interface VendorCopy {
   maker: string;
   cli: string;
   plan: string;
-  install: string;
   login: string;
   keyLabel: string;
   placeholder: string;
@@ -47,7 +53,6 @@ const COPY: Record<AiVendor, VendorCopy> = {
     maker: "Anthropic",
     cli: "Claude Code",
     plan: "Claude",
-    install: "npm i -g @anthropic-ai/claude-code",
     login: "claude",
     keyLabel: "Anthropic API key",
     placeholder: "sk-ant-…",
@@ -57,17 +62,29 @@ const COPY: Record<AiVendor, VendorCopy> = {
     maker: "OpenAI",
     cli: "Codex CLI",
     plan: "ChatGPT",
-    install: "npm i -g @openai/codex",
     login: "codex login",
     keyLabel: "OpenAI API key",
     placeholder: "sk-…",
   },
 };
 
-const connectionLine = (vendor: AiVendor, auth: AiAuth): string =>
-  auth === "subscription"
-    ? `Subscription uses your ${COPY[vendor].plan} plan through ${vendor === "claude" ? "Claude Code" : "the Codex CLI"}.`
-    : `API key is pay-per-use, billed by ${COPY[vendor].maker}.`;
+/**
+ * The install step for the CLI on this machine — Claude Code's installer
+ * differs off macOS; the Codex CLI is shown only on macOS
+ */
+const installCommand = (vendor: AiVendor): string =>
+  vendor === "claude" ? platformCopy().claudeInstall : "npm i -g @openai/codex";
+
+const connectionLine = (vendor: AiVendor, auth: AiAuth): string => {
+  const line =
+    auth === "subscription"
+      ? `Subscription uses your ${COPY[vendor].plan} plan through ${vendor === "claude" ? "Claude Code" : "the Codex CLI"}.`
+      : `API key is pay-per-use, billed by ${COPY[vendor].maker}.`;
+  // GPT's subscription is the Codex CLI's, which Dosik does not run off macOS
+  return authAvailable(vendor, "subscription")
+    ? line
+    : `Subscription is not available on Windows. ${line}`;
+};
 
 /**
  * The subscription CLI's row (the canvas's Settings-AI and Settings-States):
@@ -80,6 +97,7 @@ const CliRow = ({ vendor }: { vendor: AiVendor }) => {
   const status = useAiStatusStore((s) => s.cli[vendor]);
   const checking = useAiStatusStore((s) => s.cliChecking[vendor]);
   const copy = COPY[vendor];
+  const { machine, shell } = platformCopy();
   const slot = useRef<HTMLSpanElement>(null);
   /** the check was pressed from the keyboard's place — give it back once the answer is in */
   const refocus = useRef(false);
@@ -106,7 +124,7 @@ const CliRow = ({ vendor }: { vendor: AiVendor }) => {
   switch (status.state) {
     case "ok":
       return (
-        <Row title={copy.cli} description={`CLI ${status.version} on this Mac`}>
+        <Row title={copy.cli} description={`CLI ${status.version} on ${machine}`}>
           <Status tone="ok">Signed in</Status>
           <span ref={slot} className="contents">
             <IconAction icon={RefreshCw} label="Check again" busy={checking} onClick={again} />
@@ -117,10 +135,10 @@ const CliRow = ({ vendor }: { vendor: AiVendor }) => {
       return (
         <Row
           title={copy.cli}
-          description={`CLI ${status.version} on this Mac`}
+          description={`CLI ${status.version} on ${machine}`}
           below={
             <Steps
-              intro={`In Terminal, sign in with your ${copy.plan} plan, then check again.`}
+              intro={`In ${shell}, sign in with your ${copy.plan} plan, then check again.`}
               commands={[copy.login]}
             />
           }
@@ -133,11 +151,11 @@ const CliRow = ({ vendor }: { vendor: AiVendor }) => {
       return (
         <Row
           title={copy.cli}
-          description="Not found on this Mac"
+          description={`Not found on ${machine}`}
           below={
             <Steps
-              intro={`In Terminal, install it and sign in with your ${copy.plan} plan, then check again.`}
-              commands={[copy.install, copy.login]}
+              intro={`In ${shell}, install it and sign in with your ${copy.plan} plan, then check again.`}
+              commands={[installCommand(vendor), copy.login]}
             />
           }
         >
@@ -147,7 +165,7 @@ const CliRow = ({ vendor }: { vendor: AiVendor }) => {
       );
     default:
       return (
-        <Row title={copy.cli} description={`Looking for ${copy.cli} on this Mac`}>
+        <Row title={copy.cli} description={`Looking for ${copy.cli} on ${machine}`}>
           <Status tone="off">Checking…</Status>
         </Row>
       );
@@ -218,7 +236,7 @@ const KeyRows = ({ vendor }: { vendor: AiVendor }) => {
 
   if (editing) {
     return (
-      <Row title={copy.keyLabel} description="Kept in this Mac's Keychain">
+      <Row title={copy.keyLabel} description={platformCopy().keyStore}>
         <input
           {...PLAIN_TEXT}
           ref={field}
@@ -255,7 +273,7 @@ const KeyRows = ({ vendor }: { vendor: AiVendor }) => {
 
   return (
     <>
-      <Row title={copy.keyLabel} description="Kept in this Mac's Keychain">
+      <Row title={copy.keyLabel} description={platformCopy().keyStore}>
         <span className="text-[12px] font-medium tracking-[0.02em] text-icon tabular-nums">
           {`sk-…${key.slice(-4)}`}
         </span>
@@ -305,7 +323,8 @@ const KeyRows = ({ vendor }: { vendor: AiVendor }) => {
 const VendorGroup = ({ vendor }: { vendor: AiVendor }) => {
   const settings = useChatStore((s) => s.settings);
   const setSettings = useChatStore((s) => s.setSettings);
-  const auth = settings.auths[vendor];
+  // where the stored connection cannot be used here, the API key stands in
+  const auth = effectiveAuth(settings, vendor);
   const copy = COPY[vendor];
   // a subscription row shows what the CLI says — ask once it shows
   useEffect(() => {
@@ -320,6 +339,7 @@ const VendorGroup = ({ vendor }: { vendor: AiVendor }) => {
           label={`${copy.name} connection`}
           value={AUTH_LABEL[auth]}
           options={AUTHS}
+          disabled={authAvailable(vendor, "subscription") ? [] : [AUTH_LABEL.subscription]}
           onChange={(label) =>
             setSettings({ ...settings, auths: { ...settings.auths, [vendor]: authOf(label) } })
           }

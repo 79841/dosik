@@ -131,7 +131,7 @@ describe("handleCanvasKeyDown", () => {
 
   it("Cmd+C does not swallow the event when there is nothing to copy", () => {
     // Cancelling keydown stops the copy command that follows — if the canvas
-    // copied nothing, the event belongs to someone else (spec R7)
+    // copied nothing, the event belongs to someone else
     useDiagramStore.getState().clearSelection();
 
     expect(press("c", { meta: true }).prevented).toBe(false);

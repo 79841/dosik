@@ -10,6 +10,7 @@ import { useChatStore } from "./chatStore";
 import {
   type AiVendor,
   AUTH_LABEL,
+  effectiveAuth,
   MODELS_BY_VENDOR,
   modelShortLabel,
   VENDOR_LABEL,
@@ -86,7 +87,9 @@ export const ModelPicker = () => {
     // a subscription's group shows its models until its CLI is known to be missing
     if (!open) {
       for (const v of VENDORS) {
-        if (settings.auths[v] === "subscription" && cli[v].state === "unknown") void checkCli(v);
+        if (effectiveAuth(settings, v) === "subscription" && cli[v].state === "unknown") {
+          void checkCli(v);
+        }
       }
     }
     setOpen((v) => !v);
@@ -122,7 +125,7 @@ export const ModelPicker = () => {
                 {/* biome-ignore lint/a11y/useSemanticElements: a menu's group is role="group" — a fieldset is a form control's */}
                 <div role="group" aria-labelledby={`${groupId}-${v}`} className="flex flex-col">
                   <GroupLabel id={`${groupId}-${v}`}>
-                    {`${VENDOR_LABEL[v]} · ${connected ? AUTH_LABEL[settings.auths[v]] : "Not connected"}`}
+                    {`${VENDOR_LABEL[v]} · ${connected ? AUTH_LABEL[effectiveAuth(settings, v)] : "Not connected"}`}
                   </GroupLabel>
                   {connected ? (
                     MODELS_BY_VENDOR[v].map((m) => {

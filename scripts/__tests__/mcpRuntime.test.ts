@@ -17,9 +17,11 @@ import {
   HEADLESS_BUNDLE,
   isBundleFresh,
   once,
+  parseInstallLocation,
   REPO,
   shippedBundle,
   VIEW_BUNDLE,
+  windowsAppCandidates,
 } from "../mcp/runtime.mjs";
 
 /**
@@ -360,11 +362,109 @@ describe("MCP server runtime (#2)", () => {
       expect(run).not.toHaveBeenCalled();
     });
 
-    it("says it is not supported yet outside macOS", async () => {
+    it("says it is not supported on other systems — Linux", async () => {
       const run = vi.fn(async () => "");
-      const open = createOpenInApp({ run: run as never, platform: "win32", exists: () => true });
-      await expect(open("/tmp/a.dosik.json")).rejects.toThrow(/macOS only/);
+      const open = createOpenInApp({ run: run as never, platform: "linux", exists: () => true });
+      await expect(open("/tmp/a.dosik.json")).rejects.toThrow(/macOS and Windows/);
       expect(run).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("open_in_dosik on Windows", () => {
+    const LOCAL = "C:\\Users\\someone\\AppData\\Local";
+    const REG_OUT = [
+      "",
+      "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Dosik",
+      // the installer writes the folder in quotes
+      '    InstallLocation    REG_SZ    "D:\\Apps\\Dosik"',
+      "",
+    ].join("\r\n");
+    const FILE = "C:\\Users\\someone\\Documents\\a.dosik.json";
+
+    it("reads where the installer put Dosik from its uninstall entry", () => {
+      expect(parseInstallLocation(REG_OUT)).toBe("D:\\Apps\\Dosik");
+      // written without quotes, the same
+      expect(parseInstallLocation("    InstallLocation    REG_SZ    D:\\Apps\\Dosik")).toBe(
+        "D:\\Apps\\Dosik",
+      );
+      expect(
+        parseInstallLocation("    InstallLocation    REG_EXPAND_SZ    %LOCALAPPDATA%\\Dosik"),
+      ).toBe("%LOCALAPPDATA%\\Dosik");
+      expect(
+        parseInstallLocation("ERROR: The system was unable to find the specified registry key"),
+      ).toBeNull();
+    });
+
+    it("looks in the installed place, then the per-user default", () => {
+      expect(
+        windowsAppCandidates({ installLocation: "D:\\Apps\\Dosik", localAppData: LOCAL }),
+      ).toEqual(["D:\\Apps\\Dosik\\Dosik.exe", `${LOCAL}\\Dosik\\Dosik.exe`]);
+      expect(windowsAppCandidates({ installLocation: null, localAppData: LOCAL })).toEqual([
+        `${LOCAL}\\Dosik\\Dosik.exe`,
+      ]);
+      expect(windowsAppCandidates({ installLocation: null, localAppData: undefined })).toEqual([]);
+    });
+
+    it("starts the installed app with the file, and does not wait for it — a running one takes the file over", async () => {
+      const run = vi.fn(async () => REG_OUT);
+      const spawnDetached = vi.fn(async () => {});
+      const open = createOpenInApp({
+        run: run as never,
+        platform: "win32",
+        exists: (p: unknown) => p === FILE || p === "D:\\Apps\\Dosik\\Dosik.exe",
+        spawnDetached,
+        env: { LOCALAPPDATA: LOCAL },
+      });
+      await expect(open(FILE)).resolves.toEqual({ opened: FILE });
+      expect(callsOf(run)[0]).toEqual([
+        "reg",
+        [
+          "query",
+          "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Dosik",
+          "/v",
+          "InstallLocation",
+        ],
+      ]);
+      expect(spawnDetached).toHaveBeenCalledWith("D:\\Apps\\Dosik\\Dosik.exe", [FILE]);
+    });
+
+    it("no uninstall entry: the per-user default", async () => {
+      const run = vi.fn(async () => {
+        throw new Error(
+          "ERROR: The system was unable to find the specified registry key or value.",
+        );
+      });
+      const spawnDetached = vi.fn(async () => {});
+      const open = createOpenInApp({
+        run: run as never,
+        platform: "win32",
+        exists: (p: unknown) => p === FILE || p === `${LOCAL}\\Dosik\\Dosik.exe`,
+        spawnDetached,
+        env: { LOCALAPPDATA: LOCAL },
+      });
+      await open(FILE);
+      expect(spawnDetached).toHaveBeenCalledWith(`${LOCAL}\\Dosik\\Dosik.exe`, [FILE]);
+    });
+
+    it("says so when Dosik is not installed, and does not hand over a missing file", async () => {
+      const spawnDetached = vi.fn(async () => {});
+      const notInstalled = createOpenInApp({
+        run: vi.fn(async () => "") as never,
+        platform: "win32",
+        exists: (p: unknown) => p === FILE,
+        spawnDetached,
+        env: { LOCALAPPDATA: LOCAL },
+      });
+      await expect(notInstalled(FILE)).rejects.toThrow(/Dosik is not installed/);
+      const missing = createOpenInApp({
+        run: vi.fn(async () => REG_OUT) as never,
+        platform: "win32",
+        exists: () => false,
+        spawnDetached,
+        env: { LOCALAPPDATA: LOCAL },
+      });
+      await expect(missing(FILE)).rejects.toThrow(/No such file/);
+      expect(spawnDetached).not.toHaveBeenCalled();
     });
   });
 

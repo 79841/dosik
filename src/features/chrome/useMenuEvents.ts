@@ -12,11 +12,12 @@ export const CLOSE_TAB_EVENT = "menu:close-tab";
 export const SETTINGS_EVENT = "menu:settings";
 
 /**
- * ⌘W on macOS (#218 D12): the active document tab closes; on Home, where
- * there is no tab to close, the window does — through close-requested, so the
- * unsaved-file question and the autosave flush still run (`useFlushOnClose`).
+ * ⌘W on macOS (#218 D12), Ctrl+W elsewhere (`appKeymap.ts`): the active
+ * document tab closes; on Home, where there is no tab to close, the window
+ * does — through close-requested, so the unsaved-file question and the
+ * autosave flush still run (`useFlushOnClose`).
  */
-const closeTabOrWindow = async (): Promise<void> => {
+export const closeTabOrWindow = async (): Promise<void> => {
   // ⌘W with Settings up closes Settings, as a settings window would (#252);
   // with another dialog up (From Mermaid…) it waits — the menu's key never
   // passes the keymap's check for an open dialog, so it is made here

@@ -4,6 +4,7 @@ import { writeClipboardText } from "../../shared/lib/systemClipboard";
 import { toastError, useToastStore } from "../../shared/lib/toastStore";
 import { showProjectRow } from "../sidebar/treeStore";
 import { useAppStore } from "./appStore";
+import { trashName } from "./fileManager";
 import { DASHBOARD } from "./homeView";
 import {
   type BoardSpot,
@@ -119,7 +120,7 @@ export const renameFolderTo = (folder: FolderMeta, name: string): Promise<void> 
 const tabIds = () => new Set(useAppStore.getState().tabs.map((t) => t.id));
 
 /** what every delete's question ends with: it goes to the Trash, never for good (#253 D14) */
-const TO_TRASH = "It will be moved to the Trash.";
+const toTrash = (): string => `It will be moved to ${trashName()}.`;
 
 /**
  * Asks, and resolves whether to go ahead. The dialog is async and the bridge
@@ -177,7 +178,7 @@ export const deleteFolderAsking = (folder: FolderMeta): Promise<boolean> =>
     const others = await countOtherFiles(folder.id).catch(() => null);
     const go = await confirmDelete(
       folder.name,
-      `Delete the ${kind} “${folder.name}”${weightOf(folder, others)}? ${TO_TRASH}`,
+      `Delete the ${kind} “${folder.name}”${weightOf(folder, others)}? ${toTrash()}`,
       kind === "folder" ? "Delete folder" : "Delete project",
     );
     if (!go) return false;
@@ -390,7 +391,7 @@ export const deleteDiagramAsking = (diagram: ProjectMeta): Promise<boolean> =>
   guarded(async () => {
     const go = await confirmDelete(
       diagram.title,
-      `Delete “${diagram.title}”? ${TO_TRASH}`,
+      `Delete “${diagram.title}”? ${toTrash()}`,
       "Delete diagram",
     );
     if (!go) return false;

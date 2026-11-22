@@ -2,6 +2,8 @@ import { Info, type LucideIcon, Plug, SlidersHorizontal, Sparkles, X } from "luc
 import { useId, useLayoutEffect, useRef } from "react";
 
 import { FOCUS_RING } from "../../shared/lib/palette";
+import { isMacPlatform } from "../../shared/lib/windowChrome";
+import { DialogCaption } from "../../shared/ui/DialogCaption";
 import { Toaster } from "../../shared/ui/Toaster";
 import { IconAction } from "./parts";
 import { AboutSection } from "./sections/AboutSection";
@@ -66,6 +68,9 @@ const SettingsShell = () => {
   }, []);
 
   const Body = BODY[section];
+  // off macOS it keeps 56 clear above and below — the band's 40 and 16 — so a
+  // small window never puts its corner under the caption buttons (Win-Caption)
+  const height = isMacPlatform() ? "max-h-[calc(100vh-32px)]" : "max-h-[calc(100vh-112px)]";
   return (
     <dialog
       ref={shell}
@@ -91,7 +96,7 @@ const SettingsShell = () => {
         // the scrim is the dialog element itself, outside its box
         if (e.target === shell.current) close();
       }}
-      className="m-auto h-[600px] max-h-[calc(100vh-32px)] w-[880px] max-w-[calc(100vw-32px)] overflow-hidden rounded-(--radius-panel) border-0 bg-surface p-0 text-ink shadow-overlay outline-none backdrop:bg-scrim"
+      className={`m-auto h-[600px] ${height} w-[880px] max-w-[calc(100vw-32px)] overflow-hidden rounded-(--radius-panel) border-0 bg-surface p-0 text-ink shadow-overlay outline-none backdrop:bg-scrim`}
     >
       <div className="flex h-full">
         <div className="flex w-[200px] flex-none flex-col gap-2.5 bg-frame px-2 py-3.5">
@@ -136,6 +141,8 @@ const SettingsShell = () => {
       <div className="pointer-events-none fixed inset-0 [--dsk-toast-board-lift:0px] [--dsk-toast-editor-lift:0px] [--dsk-toast-lift:0px] [--dsk-toast-right:0px]">
         <Toaster />
       </div>
+      {/* off macOS, the window's caption buttons above the scrim */}
+      <DialogCaption />
     </dialog>
   );
 };

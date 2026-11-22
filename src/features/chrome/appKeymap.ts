@@ -1,14 +1,10 @@
 import { useSidebarStore } from "../../shared/lib/sidebarLayout";
 import { isMacPlatform } from "../../shared/lib/windowChrome";
-import {
-  closeActiveDocumentTab,
-  cycleTabs,
-  goToNthTab,
-  newDiagram,
-  openFileAnywhere,
-} from "../library/navigation";
+import { showWindowMenu, toggleFullscreen, useWindowFrame } from "../../shared/lib/windowFrame";
+import { cycleTabs, goToNthTab, newDiagram, openFileAnywhere } from "../library/navigation";
 import { saveActiveDocument } from "../library/saveDocument";
 import { openSettings } from "../settings/settingsStore";
+import { closeTabOrWindow } from "./useMenuEvents";
 
 /**
  * ⌘\ — or `₩` where a Korean layout puts the won sign on that key, which is
@@ -100,14 +96,45 @@ const handleTabKeys = (e: KeyboardEvent, mac: boolean): boolean => {
     return true;
   }
   // ⌘W on macOS is File ▸ Close Tab — the menu's own, so it fires once
-  // whatever WebKit does with the key (`app_menu.rs`)
+  // whatever WebKit does with the key (`app_menu.rs`). Ctrl+W does what it
+  // does: closes Settings when it is up, the tab, or on Home the window — so
+  // it is let through an open dialog, which it handles itself
   if (!mac && isLetter(e, "w")) {
-    take(e, closeActiveDocumentTab);
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.repeat) void closeTabOrWindow();
     return true;
   }
   // ⌘, on macOS is Dosik ▸ Settings… — the menu's own, the same way (#252)
   if (!mac && (e.code === "Comma" || e.key === ",")) {
     take(e, () => openSettings());
+    return true;
+  }
+  return false;
+};
+
+/** a key with none of the modifiers */
+const bare = (e: KeyboardEvent): boolean => !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey;
+
+/**
+ * Off macOS, the keys a window frame answers there (the canvas's Win-Caption)
+ * — on macOS the native window has them. F11: full screen on or off, with a
+ * dialog open too. Alt+Space: the window menu, as a title bar opens it —
+ * nothing in full screen, where the band is no title bar. `true` when the key
+ * was one of them.
+ */
+const handleWindowKeys = (e: KeyboardEvent, mac: boolean): boolean => {
+  if (mac) return false;
+  if (e.key === "F11" && bare(e)) {
+    e.preventDefault();
+    if (!e.repeat) void toggleFullscreen();
+    return true;
+  }
+  const altOnly = e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
+  if (altOnly && (e.code === "Space" || e.key === " ")) {
+    if (useWindowFrame.getState().fullscreen) return true;
+    e.preventDefault();
+    if (!e.repeat) showWindowMenu(false);
     return true;
   }
   return false;
@@ -124,8 +151,9 @@ const handleTabKeys = (e: KeyboardEvent, mac: boolean): boolean => {
  * - ⌘O (Ctrl+O): Open file…
  * - ⌘S (Ctrl+S): Save — the active document; nothing on Home (#219 D5)
  * - ⌘T / ⌘N: New diagram. ⌃Tab / ⌃⇧Tab, ⌘⇧] / ⌘⇧[: next / previous tab.
- *   ⌘1 Home, ⌘2–⌘8 a document tab, ⌘9 the last. Ctrl+W off macOS: close the
- *   tab. Ctrl+, off macOS: Settings (#252).
+ *   ⌘1 Home, ⌘2–⌘8 a document tab, ⌘9 the last. Ctrl+W off macOS: close
+ *   Settings, the tab, or on Home the window. Ctrl+, off macOS: Settings (#252).
+ * - Off macOS: F11 full screen, Alt+Space the window menu.
  *
  * A held key acts once: its repeats are swallowed, not acted on. While a
  * modal dialog is open they are swallowed too, and do nothing.
@@ -133,6 +161,7 @@ const handleTabKeys = (e: KeyboardEvent, mac: boolean): boolean => {
 export const handleAppKeyDown = (e: KeyboardEvent, mac: boolean = isMacPlatform()): void => {
   // a key that finishes a Hangul syllable is the input method's, not ours
   if (e.isComposing) return;
+  if (handleWindowKeys(e, mac)) return;
   if (handleTabKeys(e, mac)) return;
   if (e.shiftKey || e.altKey) return;
   const mod = mac ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey;

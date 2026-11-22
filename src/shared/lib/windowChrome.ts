@@ -56,6 +56,13 @@ const SHOW_TO_TABS = 12;
  */
 export const BAND_EDGE_INSET = 12;
 
+/**
+ * Off macOS, a caption button (Minimize, Maximize or Restore, Close) is this
+ * wide and as tall as the band (`caption-button` × `chrome-height`); the three
+ * sit flush with the window's top-right corner, no gap between them
+ */
+export const CAPTION_BUTTON = 46;
+
 /** a tab is this tall, flush with the band's bottom (`tab-height`) */
 export const TAB_HEIGHT = 32;
 /** a document tab (`tab-width`) */
@@ -63,9 +70,58 @@ export const TAB_WIDTH = 176;
 /** the pinned Home tab, icon only (`tab-pinned-width`) */
 export const TAB_PINNED_WIDTH = 36;
 
+const CLICKABLE_TAGS = new Set(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "LABEL", "SUMMARY"]);
+const INTERACTIVE_ROLES = new Set([
+  "button",
+  "link",
+  "menuitem",
+  "tab",
+  "checkbox",
+  "radio",
+  "switch",
+  "option",
+]);
+
+const isClickable = (el: HTMLElement): boolean =>
+  CLICKABLE_TAGS.has(el.tagName) ||
+  (el.hasAttribute("contenteditable") && el.getAttribute("contenteditable") !== "false") ||
+  (el.hasAttribute("tabindex") && el.getAttribute("tabindex") !== "-1") ||
+  INTERACTIVE_ROLES.has(el.getAttribute("role") ?? "");
+
+/**
+ * Whether a pointer on `target` would drag the window — Tauri's own rule
+ * (`drag.js`): walking up, a clickable element without a drag region of its
+ * own stops it, `"false"` stops it, `"deep"` takes the subtree, a bare region
+ * only itself. The band's empty places, and nothing else, are its title bar.
+ */
+export const isOnDragRegion = (target: EventTarget | null): boolean => {
+  for (let el = target instanceof Element ? target : null; el; el = el.parentElement) {
+    // what is not an HTML element (an icon's SVG) is passed over, as drag.js does
+    if (!(el instanceof HTMLElement)) continue;
+    const attr = el.getAttribute("data-tauri-drag-region");
+    if (attr === null) {
+      if (isClickable(el)) return false;
+      continue;
+    }
+    if (attr === "false") return false;
+    if (attr === "deep") return true;
+    return el === target;
+  }
+  return false;
+};
+
 /** the window's own controls are the OS's on macOS and the app's everywhere else */
 export const isMacPlatform = (userAgent: string = navigator.userAgent): boolean =>
   userAgent.includes("Mac");
+
+/**
+ * A ctrl+click that is macOS's right click — the row and the card leave it to
+ * the context menu. Off macOS a ctrl+click is a click.
+ */
+export const isMacContextClick = (
+  e: { ctrlKey: boolean },
+  mac: boolean = isMacPlatform(),
+): boolean => mac && e.ctrlKey;
 
 /**
  * Where the hidden band's first control (Show sidebar) starts: past the
@@ -74,6 +130,15 @@ export const isMacPlatform = (userAgent: string = navigator.userAgent): boolean 
  */
 export const bandLeading = (mac: boolean = isMacPlatform()): number =>
   mac ? LIGHTS_END + BAND_GAP : BAND_EDGE_INSET;
+
+/**
+ * Where Hide sidebar sits in the docked sidebar's top row: 8 in from the
+ * sidebar's right edge on macOS (the traffic lights take the left), and
+ * elsewhere at the left edge, where Show sidebar is while the sidebar is
+ * hidden (`bandLeading`), so the toggle does not move.
+ */
+export const hideSidebarLeft = (docked: number, mac: boolean = isMacPlatform()): number =>
+  mac ? docked - BAND_GAP - BAND_BUTTON : bandLeading(false);
 
 /**
  * Where the tabs start: past the docked sidebar (its width + 8), or — hidden,

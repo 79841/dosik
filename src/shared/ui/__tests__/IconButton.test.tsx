@@ -125,6 +125,17 @@ describe("IconButton (#158)", () => {
     expect(screen.getByRole("tooltip")).toHaveClass("left-1/2", "-translate-x-1/2");
   });
 
+  it("With align='start' the tooltip starts at the button's left edge — a button at the window's left edge", () => {
+    render(
+      <IconButton label="Hide sidebar" onClick={() => {}} align="start">
+        <svg />
+      </IconButton>,
+    );
+    expect(screen.getByRole("tooltip")).toHaveClass("left-0");
+    expect(screen.getByRole("tooltip")).not.toHaveClass("-translate-x-1/2");
+    expect(screen.getByRole("tooltip")).not.toHaveClass("right-0");
+  });
+
   it("A button that opened a menu also has the selected background — only while the menu is open (#219)", () => {
     render(
       <IconButton label="Arrange" onClick={() => {}} expanded={false} popup="menu">

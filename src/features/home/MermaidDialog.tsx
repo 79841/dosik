@@ -3,6 +3,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { FOCUS_RING } from "../../shared/lib/palette";
 import { readClipboardText } from "../../shared/lib/systemClipboard";
 import { isMacPlatform } from "../../shared/lib/windowChrome";
+import { DialogCaption } from "../../shared/ui/DialogCaption";
 import { PLAIN_TEXT } from "../../shared/ui/plainText";
 import { MermaidImportError } from "../mermaid/import/plan";
 import { mermaidSource } from "../mermaid/mermaidSource";
@@ -235,6 +236,8 @@ export const MermaidDialog = ({
           </button>
         </div>
       </div>
+      {/* off macOS, the window's caption buttons above the dim */}
+      <DialogCaption />
     </dialog>
   );
 };

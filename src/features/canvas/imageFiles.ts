@@ -11,18 +11,42 @@ export const isImagePath = (path: string): boolean => {
   return dot >= 0 && IMAGE_EXTENSIONS.includes(path.slice(dot + 1).toLowerCase());
 };
 
+/** a dropped file past this is not read — the limit `images.rs` reads Finder's paths with */
+export const IMAGE_FILE_MAX_BYTES = 25 * 1024 * 1024;
+const MB = 1024 * 1024;
+
 /**
- * The pictures among dropped files. When there were files but none of them a
- * picture (a PDF, a HEIC), says so — a drop that silently did nothing left the
- * user unsure whether dropping works at all (#155).
+ * The pictures among dropped files, by name. When there were files but none
+ * of them a picture (a PDF, a HEIC), says so — a drop that silently did
+ * nothing left the user unsure whether dropping works at all (#155).
  */
-export const droppedImagePaths = (paths: string[]): string[] => {
-  const images = paths.filter(isImagePath);
-  if (paths.length > 0 && images.length === 0) {
+const pickPictures = <T>(items: T[], name: (item: T) => string): T[] => {
+  const images = items.filter((item) => isImagePath(name(item)));
+  if (items.length > 0 && images.length === 0) {
     toastError(new Error(`Only ${IMAGE_EXTENSIONS.join(", ")} pictures can be dropped here`));
   }
   return images;
 };
+
+/** the pictures among files Tauri took from a drop, as paths (macOS) */
+export const droppedImagePaths = (paths: string[]): string[] => pickPictures(paths, (p) => p);
+
+/**
+ * The pictures among files dropped on the page itself — on Windows, where the
+ * webview keeps file drops so HTML5 drags work (`dragDropEnabled: false`).
+ * The same rule as the paths, and the size limit Rust has for those, said in
+ * its words.
+ */
+export const droppedImageFiles = (files: File[]): File[] =>
+  pickPictures(files, (f) => f.name).filter((file) => {
+    if (file.size <= IMAGE_FILE_MAX_BYTES) return true;
+    toastError(
+      new Error(
+        `${file.name}: the image is too large (${Math.floor(file.size / MB)} MB; the limit is ${IMAGE_FILE_MAX_BYTES / MB} MB)`,
+      ),
+    );
+    return false;
+  });
 
 /** reads a picture file through Rust — the webview cannot open a path itself (#8) */
 export const readImageFile = async (path: string): Promise<Blob> => {

@@ -20,6 +20,13 @@ const TOOLTIP_PLACE = {
   right: "left-full ml-2 top-1/2 -translate-y-1/2",
 } as const;
 
+/** where a tooltip below or above lines up with its button */
+const TOOLTIP_ALIGN = {
+  center: "left-1/2 -translate-x-1/2",
+  end: "right-0",
+  start: "left-0",
+} as const;
+
 /**
  * A toolbar button that is an icon (#158). The label is a tooltip that shows
  * on hover and keyboard focus, and the button is named by it
@@ -71,8 +78,12 @@ export const IconButton = ({
    * "right" for the vertical shape strip on its left
    */
   tooltip?: keyof typeof TOOLTIP_PLACE;
-  /** "end" lines the tooltip up with the button's right edge — a button near a column's edge */
-  align?: "center" | "end";
+  /**
+   * "end" lines the tooltip up with the button's right edge — a button near a
+   * column's right edge; "start" with its left edge — a button at the window's
+   * left edge
+   */
+  align?: keyof typeof TOOLTIP_ALIGN;
   size?: IconButtonSize;
   /** shown in the tooltip, e.g. `⌘\` */
   shortcut?: string;
@@ -104,7 +115,7 @@ export const IconButton = ({
         id={labelId}
         role="tooltip"
         // the design's tooltip: 22 tall, 7 in, radius 5, 11px
-        className={`pointer-events-none absolute z-40 ${tooltip === "right" ? "" : align === "end" ? "right-0" : "left-1/2 -translate-x-1/2"} ${TOOLTIP_PLACE[tooltip]} flex h-[22px] items-center whitespace-nowrap rounded-(--radius-control) bg-ink-surface px-[7px] text-[11px] font-medium text-surface opacity-0 transition-opacity group-hover/icon:opacity-100 group-hover/icon:delay-300 group-focus-visible/icon:opacity-100 group-aria-expanded/icon:hidden`}
+        className={`pointer-events-none absolute z-40 ${tooltip === "right" ? "" : TOOLTIP_ALIGN[align]} ${TOOLTIP_PLACE[tooltip]} flex h-[22px] items-center whitespace-nowrap rounded-(--radius-control) bg-ink-surface px-[7px] text-[11px] font-medium text-surface opacity-0 transition-opacity group-hover/icon:opacity-100 group-hover/icon:delay-300 group-focus-visible/icon:opacity-100 group-aria-expanded/icon:hidden`}
       >
         {label}
         {shortcut ? (

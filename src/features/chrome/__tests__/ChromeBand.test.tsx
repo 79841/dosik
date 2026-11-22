@@ -1,11 +1,13 @@
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useSidebarStore } from "../../../shared/lib/sidebarLayout";
 import { useSidebarSlideStore } from "../../../shared/lib/sidebarSlide";
 import { useDiagramStore } from "../../../shared/lib/store";
+import { resetWindowFrame, useWindowFrame } from "../../../shared/lib/windowFrame";
 import { useAppStore } from "../../library/appStore";
 import { blankDoc } from "../../library/libraryApi";
 import { useLibraryStore } from "../../library/libraryStore";
@@ -30,6 +32,7 @@ describe("window band (#217 R1, D19~D21)", () => {
       focusAfter: null,
     });
     vi.mocked(getCurrentWindow).mockClear();
+    resetWindowFrame();
   });
 
   it("a 40px band across the window — the window drag handle; keys do not leak to the canvas (T4)", () => {
@@ -86,22 +89,48 @@ describe("window band (#217 R1, D19~D21)", () => {
     ).toEqual(["More", "Minimize", "Maximize", "Close"]);
   });
 
+  it("docked (other): Hide sidebar at x=12, where Show sidebar is when hidden — the toggle stays put", () => {
+    const { unmount } = render(<ChromeBand mac={false} />);
+    const hide = screen.getByRole("button", { name: "Hide sidebar" });
+    expect(placeOf(hide).style.left).toBe("12px");
+    // its tooltip opens to the right, from the button's left edge: it stays inside the window
+    expect(within(placeOf(hide)).getByRole("tooltip")).toHaveClass("left-0");
+    expect(placeOf(tablist()).style.left).toBe("256px");
+    unmount();
+    useSidebarStore.setState({ hidden: true });
+    render(<ChromeBand mac={false} />);
+    expect(placeOf(screen.getByRole("button", { name: "Show sidebar" })).style.left).toBe("12px");
+  });
+
+  it("docked (macOS): Hide sidebar's tooltip ends at the button's right edge, over the sidebar", () => {
+    render(<ChromeBand mac />);
+    const hide = screen.getByRole("button", { name: "Hide sidebar" });
+    expect(within(placeOf(hide)).getByRole("tooltip")).toHaveClass("right-0");
+  });
+
   it("on other platforms the window controls sit at the right end of the band even when docked (T3)", () => {
     render(<ChromeBand mac={false} />);
     expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
   });
 
-  it("Hide → hides and focus goes to Show; clicking Show → docks and focus goes to Hide (T29)", async () => {
-    const user = userEvent.setup();
-    render(<ChromeBand mac />);
-    await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
-    expect(useSidebarStore.getState().hidden).toBe(true);
-    expect(screen.getByRole("button", { name: "Show sidebar" })).toHaveFocus();
-    await user.click(screen.getByRole("button", { name: "Show sidebar" }));
-    expect(useSidebarStore.getState().hidden).toBe(false);
-    expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveFocus();
-    expect(useSidebarStore.getState().focusAfter).toBeNull();
-  });
+  // off macOS the two buttons take turns in the same spot at x = 12
+  it.each([
+    ["macOS", true],
+    ["other", false],
+  ])(
+    "Hide → hides and focus goes to Show; clicking Show → docks and focus goes to Hide (T29, %s)",
+    async (_, mac) => {
+      const user = userEvent.setup();
+      render(<ChromeBand mac={mac} />);
+      await user.click(screen.getByRole("button", { name: "Hide sidebar" }));
+      expect(useSidebarStore.getState().hidden).toBe(true);
+      expect(screen.getByRole("button", { name: "Show sidebar" })).toHaveFocus();
+      await user.click(screen.getByRole("button", { name: "Show sidebar" }));
+      expect(useSidebarStore.getState().hidden).toBe(false);
+      expect(screen.getByRole("button", { name: "Hide sidebar" })).toHaveFocus();
+      expect(useSidebarStore.getState().focusAfter).toBeNull();
+    },
+  );
 
   it("does not move focus when hiding or showing if focus was outside the sidebar", () => {
     render(
@@ -116,5 +145,104 @@ describe("window band (#217 R1, D19~D21)", () => {
     expect(field).toHaveFocus();
     act(() => useSidebarStore.getState().show());
     expect(field).toHaveFocus();
+  });
+});
+
+describe("the band off macOS, as a title bar (the canvas's Win-Home, Win-Hidden, Win-Caption)", () => {
+  const end = () => band().querySelector("[data-band-end]") as HTMLElement;
+  const captions = () => band().querySelector("[data-window-controls]") as HTMLElement | null;
+  const windowMenuCalls = () =>
+    vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "show_window_menu");
+
+  beforeEach(() => {
+    localStorage.clear();
+    useDiagramStore.getState().loadDoc(blankDoc(), null);
+    useAppStore.setState({ view: "home", homeView: { kind: "dashboard" } });
+    useLibraryStore.setState({ folders: [], readFailed: false });
+    useSidebarStore.setState({
+      hidden: false,
+      width: 248,
+      hinted: true,
+      peek: false,
+      focusAfter: null,
+    });
+    resetWindowFrame();
+    vi.mocked(invoke).mockClear();
+  });
+
+  it("docked: only the caption buttons at the band's end, flush with the window's corner", () => {
+    render(<ChromeBand mac={false} />);
+    expect(
+      within(end())
+        .getAllByRole("button")
+        .map((b) => b.getAttribute("aria-label")),
+    ).toEqual(["Minimize", "Maximize", "Close"]);
+    // no right or top inset: the buttons touch the corner
+    expect(end().className).not.toMatch(/\bpr-|\bpt-/);
+  });
+
+  it("hidden: ⋯ More sits 8 left of the caption buttons, on the centre line", () => {
+    useSidebarStore.setState({ hidden: true });
+    render(<ChromeBand mac={false} />);
+    const more = screen
+      .getByRole("button", { name: "More" })
+      .closest("[data-band-more]") as HTMLElement;
+    expect(more).toHaveClass("pt-3", "pr-2");
+    expect(more.nextElementSibling).toBe(captions());
+  });
+
+  it("full screen: no caption buttons, ⋯ More back 12 from the right edge, and the band is no drag handle", () => {
+    useSidebarStore.setState({ hidden: true });
+    useWindowFrame.setState({ fullscreen: true });
+    render(<ChromeBand mac={false} />);
+    expect(captions()).toBeNull();
+    expect(end()).toHaveClass("pr-3");
+    const more = screen
+      .getByRole("button", { name: "More" })
+      .closest("[data-band-more]") as HTMLElement;
+    expect(more).not.toHaveClass("pr-2");
+    // no drag and no double-click maximize while the window fills the screen
+    expect(band()).not.toHaveAttribute("data-tauri-drag-region");
+  });
+
+  it("macOS keeps the drag handle in full screen — the native window manages it", () => {
+    useWindowFrame.setState({ fullscreen: true });
+    render(<ChromeBand mac />);
+    expect(band()).toHaveAttribute("data-tauri-drag-region", "deep");
+  });
+
+  it("a right click on the empty band opens the window menu at the pointer, once, instead of the browser's", () => {
+    render(<ChromeBand mac={false} />);
+    const e = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    band().dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+    expect(windowMenuCalls()).toEqual([["show_window_menu", { atPointer: true }]]);
+  });
+
+  it("not on a tab or a button — those keep their own menu, or none", () => {
+    useSidebarStore.setState({ hidden: true });
+    render(<ChromeBand mac={false} />);
+    fireEvent.contextMenu(screen.getByRole("button", { name: "More" }));
+    fireEvent.contextMenu(screen.getByRole("button", { name: "Close" }));
+    fireEvent.contextMenu(screen.getByRole("tab", { name: "Library" }));
+    expect(windowMenuCalls()).toHaveLength(0);
+  });
+
+  it("not on macOS, and not in full screen", () => {
+    const { unmount } = render(<ChromeBand mac />);
+    fireEvent.contextMenu(band());
+    unmount();
+    useWindowFrame.setState({ fullscreen: true });
+    render(<ChromeBand mac={false} />);
+    fireEvent.contextMenu(band());
+    expect(windowMenuCalls()).toHaveLength(0);
+  });
+
+  it("a refused window menu is quiet", async () => {
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("no such command"));
+    render(<ChromeBand mac={false} />);
+    fireEvent.contextMenu(band());
+    await new Promise((r) => setTimeout(r, 0));
+    expect(windowMenuCalls()).toHaveLength(1);
   });
 });

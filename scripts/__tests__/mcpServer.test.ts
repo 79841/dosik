@@ -25,6 +25,7 @@ const connect = async (ui: boolean) => {
       bundleId: "app.test",
       env: { DOSIK_APP_DATA: "/nonexistent-dosik-test" },
       home: "/nonexistent-dosik-test-home",
+      documents: "",
     }),
   };
   const server = createMcpServer({ deps, viewBundle: async () => "window.view = 1;" });

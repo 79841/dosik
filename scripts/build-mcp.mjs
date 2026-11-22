@@ -47,7 +47,7 @@ export const mcpbManifest = ({ version }) => ({
     entry_point: SERVER_ENTRY,
     mcp_config: { command: "node", args: [`\${__dirname}/${SERVER_ENTRY}`] },
   },
-  compatibility: { platforms: ["darwin"], runtimes: { node: ">=18.0.0" } },
+  compatibility: { platforms: ["darwin", "win32"], runtimes: { node: ">=18.0.0" } },
 });
 
 /**

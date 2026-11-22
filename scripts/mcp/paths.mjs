@@ -96,11 +96,31 @@ export const libraryRecordDir = (appData, dev, platform) =>
 /**
  * The library folder by the app's own rule, for when its record does not
  * name it yet: the folder `DOSIK_LIBRARY_DIR` names, when whole; else `Dosik`
- * in Documents — `Dosik Dev` for a development run. (The app asks the OS for
- * Documents; here it is the one in the home folder, which it is unless moved.)
+ * in Documents — `Dosik Dev` for a development run. The app asks the OS for
+ * Documents: `documents` is that answer where the server has it
+ * (Windows, `windowsDocuments`), else the one in the home folder, which it is
+ * unless moved.
  */
-export const libraryLocation = (env, dev, home, platform) => {
+export const libraryLocation = (env, dev, home, platform, documents) => {
   const told = absolute(env.DOSIK_LIBRARY_DIR, platform);
   if (told) return told;
-  return pathsOf(platform).join(home, "Documents", dev ? "Dosik Dev" : "Dosik");
+  const paths = pathsOf(platform);
+  const docs = absolute(documents, platform) ?? paths.join(home, "Documents");
+  return paths.join(docs, dev ? "Dosik Dev" : "Dosik");
+};
+
+/**
+ * Windows' own Documents folder, as `ask` answers it — the server asks the
+ * same API the app does (`ask` runs PowerShell; tests pass their own) — or
+ * undefined when the answer is not a whole path whose letters came through,
+ * or the asking fails.
+ */
+export const windowsDocuments = (ask) => {
+  try {
+    const answer = String(ask()).trim();
+    if (answer.includes("\uFFFD")) return undefined;
+    return absolute(answer, "win32") ?? undefined;
+  } catch {
+    return undefined;
+  }
 };

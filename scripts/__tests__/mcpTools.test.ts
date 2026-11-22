@@ -461,6 +461,11 @@ describe("MCP tools (#2)", () => {
       expect(d.openInApp).not.toHaveBeenCalled();
     });
 
+    it("no longer says it is macOS only — it opens the app on Windows too", () => {
+      const tool = toolDefinitions().find((t) => t.name === "open_in_dosik");
+      expect(tool?.description).not.toMatch(/macOS only/);
+    });
+
     it("says in the description that other tools must not call it as a side effect — only when the user asks", () => {
       const tool = toolDefinitions().find((t) => t.name === "open_in_dosik");
       expect(tool?.description).toMatch(/only when the user asks/);

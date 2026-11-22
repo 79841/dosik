@@ -154,7 +154,8 @@ export const nodeLabelColor = (
  * for an SVG attribute. The interface is Manrope; the diagram never is, since
  * label sizes assume this monospaced face (`textLayout.ts`).
  */
-export const FONT_MONO = "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace";
+export const FONT_MONO =
+  "'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, 'Apple SD Gothic Neo', Consolas, 'Malgun Gothic', 'Segoe UI Emoji', monospace";
 
 /** Default edge color when no palette color is set (light theme): the ink (#210). */
 export const EDGE_STROKE = INK_LIGHT;
@@ -203,6 +204,13 @@ export const ACCENT_SOFT = "bg-selected text-ink";
  */
 export const FOCUS_RING =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
+/**
+ * The same outline drawn inside the control — for one that touches the
+ * window's edge (the Windows caption buttons), where an outline outside it
+ * would be cut off.
+ */
+export const FOCUS_RING_INSET =
+  "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus";
 /**
  * Keyboard focus on a menu item: the hover wash, no outline — an outline is
  * clipped by a scrolling menu and reads heavy in a list (#178).

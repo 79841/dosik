@@ -56,6 +56,8 @@ const sandbox = ({ env = {}, fs }: { env?: Record<string, string>; fs?: Partial<
     bundleId: "app.test",
     env: { DOSIK_APP_DATA: appData, ...env },
     home,
+    // never the machine's own Documents, on Windows either
+    documents: "",
     now: () => 1000,
     fs: { ...nodeLibraryFs, ...fs },
   });
@@ -93,6 +95,46 @@ const notes = (inbox: string) =>
 
 const noteName = (path: string) =>
   `${createHash("sha256").update(path).digest("hex").slice(0, 32)}.json`;
+
+describe("the library on Windows", () => {
+  it("looks for the library in Documents where Windows keeps it — OneDrive's backup moves it", () => {
+    const lib = createLibrary({
+      bundleId: "app.dosik.desktop",
+      platform: "win32",
+      env: {},
+      home: "C:\\Users\\a",
+      documents: "C:\\Users\\a\\OneDrive\\Documents",
+    });
+    expect(lib.fallbackLocation).toBe("C:\\Users\\a\\OneDrive\\Documents\\Dosik");
+    // Documents that could not be read (no registry asked here): the home folder's
+    const plain = createLibrary({
+      bundleId: "app.dosik.desktop",
+      platform: "win32",
+      env: {},
+      home: "C:\\Users\\a",
+      documents: "",
+    });
+    expect(plain.fallbackLocation).toBe("C:\\Users\\a\\Documents\\Dosik");
+  });
+
+  it("asks Windows for Documents only when the record does not name the library folder, and once", () => {
+    let asked = 0;
+    const lib = createLibrary({
+      bundleId: "app.dosik.desktop",
+      platform: "win32",
+      env: {},
+      home: "C:\\Users\\a",
+      askDocuments: () => {
+        asked += 1;
+        return "E:\\Docs";
+      },
+    });
+    expect(asked).toBe(0);
+    expect(lib.fallbackLocation).toBe("E:\\Docs\\Dosik");
+    expect(lib.fallbackLocation).toBe("E:\\Docs\\Dosik");
+    expect(asked).toBe(1);
+  });
+});
 
 describe("list_projects", () => {
   it("lists nothing in an empty library, and makes nothing", () => {

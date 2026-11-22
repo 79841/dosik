@@ -72,6 +72,7 @@ pub struct FolderMeta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// the same from `~` when it is under the home folder, for reading
+    /// (whole on Windows, as File Explorer shows it)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shown: Option<String>,
     /// A project's diagrams the record keeps but the listing could not
@@ -81,9 +82,18 @@ pub struct FolderMeta {
     pub held: Vec<String>,
 }
 
-/// `path` from `~` when it is under `home` — by whole components, so
-/// `/Users/a2` is not under `/Users/a`. `/` between names on every platform.
+/// How a library path is shown: [`shown_path_for`] on this platform.
 pub fn shown_path(path: &Path, home: Option<&Path>) -> String {
+    shown_path_for(path, home, cfg!(windows))
+}
+
+/// `path` from `~` when it is under `home` — by whole components, so
+/// `/Users/a2` is not under `/Users/a`, with `/` between names. On Windows
+/// the whole path, as File Explorer shows it: `~` is no Windows idiom.
+pub fn shown_path_for(path: &Path, home: Option<&Path>, windows: bool) -> String {
+    if windows {
+        return path.to_string_lossy().into_owned();
+    }
     match home.and_then(|home| path.strip_prefix(home).ok()) {
         Some(rest) if rest.as_os_str().is_empty() => "~".to_string(),
         Some(rest) => {
@@ -823,7 +833,13 @@ pub(crate) mod tests {
             alpha.path.as_deref(),
             Some(at.join("Alpha").to_str().unwrap())
         );
-        assert_eq!(alpha.shown.as_deref(), Some("~/Docs/Dosik/Alpha"));
+        // from ~ under the home folder; whole on Windows, as File Explorer shows it
+        let shown = if cfg!(windows) {
+            at.join("Alpha").to_string_lossy().into_owned()
+        } else {
+            "~/Docs/Dosik/Alpha".to_string()
+        };
+        assert_eq!(alpha.shown.as_deref(), Some(shown.as_str()));
         assert_eq!(
             record(&lib).default_location.as_deref(),
             Some(at.to_str().unwrap())
@@ -1614,19 +1630,37 @@ pub(crate) mod tests {
     #[test]
     fn a_path_under_the_home_folder_is_shown_from_a_tilde() {
         let home = Path::new("/Users/a");
-        assert_eq!(shown_path(Path::new("/Users/a"), Some(home)), "~");
         assert_eq!(
-            shown_path(
+            shown_path_for(Path::new("/Users/a"), Some(home), false),
+            "~"
+        );
+        assert_eq!(
+            shown_path_for(
                 &Path::new("/Users/a").join("Work").join("Dosik"),
-                Some(home)
+                Some(home),
+                false
             ),
             "~/Work/Dosik"
         );
         assert_eq!(
-            shown_path(Path::new("/Users/a2/x"), Some(home)),
+            shown_path_for(Path::new("/Users/a2/x"), Some(home), false),
             "/Users/a2/x"
         );
-        assert_eq!(shown_path(Path::new("/tmp/x"), None), "/tmp/x");
+        assert_eq!(shown_path_for(Path::new("/tmp/x"), None, false), "/tmp/x");
+    }
+
+    #[test]
+    fn a_path_on_windows_is_shown_whole_as_file_explorer_shows_it() {
+        let path = Path::new(r"C:\Users\someone\Documents\Dosik");
+        assert_eq!(
+            shown_path_for(path, Some(Path::new(r"C:\Users\someone")), true),
+            r"C:\Users\someone\Documents\Dosik"
+        );
+        // with no home folder known, the same
+        assert_eq!(
+            shown_path_for(path, None, true),
+            r"C:\Users\someone\Documents\Dosik"
+        );
     }
 
     #[test]

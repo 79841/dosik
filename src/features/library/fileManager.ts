@@ -19,3 +19,10 @@ export const showInLabel = (userAgent: string = navigator.userAgent): string => 
  */
 export const showNamedInLabel = (name: string, userAgent: string = navigator.userAgent): string =>
   showInLabel(userAgent).replace(/^Show /, `Show ${name} `);
+
+/**
+ * Where a delete puts things, as the OS calls it — macOS's Trash, Windows'
+ * Recycle Bin.
+ */
+export const trashName = (userAgent: string = navigator.userAgent): string =>
+  !isMacPlatform(userAgent) && userAgent.includes("Windows") ? "the Recycle Bin" : "the Trash";

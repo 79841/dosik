@@ -31,6 +31,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use ctx::Library;
+/// a path as Settings shows it, for one platform or the other (`plugins.rs`)
+pub(crate) use listing::shown_path_for;
 use listing::{shown_path, FolderMeta};
 use ops::{ItemKind, Loaded, SaveOutcome};
 use removal::{BoardFailure, FolderBoard, LocateOutcome, SystemTrash};
@@ -551,15 +553,29 @@ fn last_place(lib: &Library, id: &str) -> Result<Option<PathBuf>, String> {
 
 /// Locate…: the system's folder picker — opened from here, so no path ever
 /// comes from the webview — and the folder picked takes the project's place.
+/// The folder picker Locate…, Add folder… and Change… open. On Windows it
+/// belongs to the window, so the window waits for it as for the app's other
+/// dialogs — unowned, a second click could open another. macOS keeps its
+/// own panel.
+fn folder_picker(app: &AppHandle) -> tauri_plugin_dialog::FileDialogBuilder<tauri::Wry> {
+    use tauri_plugin_dialog::DialogExt;
+    #[allow(unused_mut)]
+    let mut picker = app.dialog().file();
+    #[cfg(windows)]
+    if let Some(window) = app.get_webview_window("main") {
+        picker = picker.set_parent(&window);
+    }
+    picker
+}
+
 #[tauri::command]
 pub async fn locate_project(
     app: AppHandle,
     shelf: Shelf<'_>,
     id: String,
 ) -> Result<LocateAnswer, String> {
-    use tauri_plugin_dialog::DialogExt;
     blocking(&shelf, move |shelf, lib| {
-        let mut picker = app.dialog().file();
+        let mut picker = folder_picker(&app);
         if let Some(start) = last_place(lib, &id)? {
             picker = picker.set_directory(start);
         }
@@ -599,9 +615,8 @@ pub async fn add_library_folder(
     app: AppHandle,
     shelf: Shelf<'_>,
 ) -> Result<AddFolderAnswer, String> {
-    use tauri_plugin_dialog::DialogExt;
     blocking(&shelf, move |shelf, lib| {
-        let Some(picked) = app.dialog().file().blocking_pick_folder() else {
+        let Some(picked) = folder_picker(&app).blocking_pick_folder() else {
             return Ok(AddFolderAnswer::Cancelled);
         };
         let path = picked.into_path().map_err(|e| e.to_string())?;
@@ -637,9 +652,8 @@ pub async fn change_default_location(
     app: AppHandle,
     shelf: Shelf<'_>,
 ) -> Result<ChangeAnswer, String> {
-    use tauri_plugin_dialog::DialogExt;
     blocking(&shelf, move |shelf, lib| {
-        let mut picker = app.dialog().file();
+        let mut picker = folder_picker(&app);
         let now = lib.default_location();
         if disk::is_real_dir(&now) {
             picker = picker.set_directory(now);
@@ -692,7 +706,8 @@ pub async fn take_left_behind(shelf: Shelf<'_>) -> Result<usize, String> {
 }
 
 /// Where an item is on disk: `path` whole, for copying and opening;
-/// `shown` the same from `~` when it is under the home folder, for reading.
+/// `shown` the same from `~` when it is under the home folder, for reading
+/// (whole on Windows).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ItemPath {
     pub path: String,
@@ -733,7 +748,8 @@ pub fn show_in_finder(
     .map_err(|e| e.to_string())
 }
 
-/// The default location, for Settings ▸ General, shown with `~` — the one
+/// The default location, for Settings ▸ General, shown with `~` (whole on
+/// Windows) — the one
 /// chosen there last.
 #[tauri::command]
 pub fn library_root(shelf: Shelf<'_>) -> Result<ItemPath, String> {

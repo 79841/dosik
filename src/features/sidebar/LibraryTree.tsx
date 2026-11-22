@@ -5,6 +5,7 @@ import { DROP_RING, DROP_TARGET, FOCUS_RING, FOCUS_TREE_ROW } from "../../shared
 import { usePointerDrag } from "../../shared/lib/pointerDrag";
 import { useDiagramStore } from "../../shared/lib/store";
 import { toastError } from "../../shared/lib/toastStore";
+import { isMacContextClick } from "../../shared/lib/windowChrome";
 import { useAppStore } from "../library/appStore";
 import { type FolderMeta, type ItemKey, parseItemKey } from "../library/libraryApi";
 import {
@@ -427,14 +428,15 @@ const TreeBody = ({
 
   /**
    * A row's click: a pick — but not the click a drag's release makes (#230
-   * D9), nor the one a macOS ctrl+click (its right-click) may make (#230).
+   * D9), nor the one a macOS ctrl+click (its right-click) may make (#230) —
+   * off macOS a ctrl+click is a click.
    */
   const onRowClick = (node: TreeNode, e: React.MouseEvent) => {
     if (swallowClick.current) {
       swallowClick.current = false;
       return;
     }
-    if (e.ctrlKey) return;
+    if (isMacContextClick(e)) return;
     pickRow(node);
   };
 
@@ -627,7 +629,7 @@ const TreeBody = ({
   const onRowPointerDown = (node: TreeNode, e: React.PointerEvent) => {
     swallowClick.current = false;
     // the primary button only — a ctrl+click is macOS's right-click (#230 D9)
-    if (e.button !== 0 || e.ctrlKey) return;
+    if (e.button !== 0 || isMacContextClick(e)) return;
     if ((e.target as Element).closest(ROW_CONTROLS)) return;
     // a project not found keeps its place (#253 R7); a row whose name is
     // being edited stays put (#230)

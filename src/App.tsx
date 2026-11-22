@@ -30,6 +30,8 @@ import { Toolbar } from "./features/toolbar/Toolbar";
 import { EDITOR_TOAST_BOTTOM, TOAST_BOTTOM } from "./shared/lib/editorLayout";
 import { useSidebarStore } from "./shared/lib/sidebarLayout";
 import { useSidebarSlideStore, useSidebarSliding } from "./shared/lib/sidebarSlide";
+import { useWebviewGuards } from "./shared/lib/webviewGuards";
+import { useWindowFrameWatch } from "./shared/lib/windowFrame";
 import { ErrorBoundary } from "./shared/ui/ErrorBoundary";
 import { Toaster } from "./shared/ui/Toaster";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
@@ -158,6 +160,11 @@ const Frame = () => {
   }, []);
   // File ▸ Close Tab (⌘W) on macOS
   useMenuEvents();
+  // off macOS, the caption buttons and the band follow the window: maximized,
+  // focused, full screen
+  useWindowFrameWatch();
+  // off macOS, no browser menu on a right click and no file opened by a stray drop
+  useWebviewGuards();
 
   return (
     <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-frame">

@@ -26,7 +26,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** the platforms whose dependencies are bundled — the release builds */
-export const TARGETS = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+export const TARGETS = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-pc-windows-msvc"];
 
 /**
  * Dev dependencies whose code still ends up in the bundle: Tailwind's base

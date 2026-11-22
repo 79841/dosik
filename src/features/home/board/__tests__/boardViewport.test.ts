@@ -88,11 +88,29 @@ describe("wheel — same constants as React Flow (@xyflow/system 0.0.82) (#221 D
   it("pinch (ctrlKey wheel) is 2^(−deltaY × 0.002 × 10) around the pointer — ×10 on macOS", () => {
     const mac = applyWheel(vp(0, 0, 1), wheel({ deltaY: -10, ctrlKey: true }), true);
     expect(mac.zoom).toBeCloseTo(2 ** (10 * 0.002 * 10));
-    const other = applyWheel(vp(0, 0, 1), wheel({ deltaY: -10, ctrlKey: true }), false);
-    expect(other.zoom).toBeCloseTo(2 ** (10 * 0.002));
+    // a mouse's Ctrl+wheel notch off macOS (100 a notch): the plain rate
+    const other = applyWheel(vp(0, 0, 1), wheel({ deltaY: -100, ctrlKey: true }), false);
+    expect(other.zoom).toBeCloseTo(2 ** (100 * 0.002));
     // the pointer stays on the same board point
     const p = { x: 500, y: 400 };
     expect(toScreen(mac, toWorld(vp(0, 0, 1), p)).x).toBeCloseTo(500);
+  });
+
+  it("a touchpad pinch off macOS — Ctrl+wheel in small pixel steps — zooms as fast as on macOS", () => {
+    const pinch = applyWheel(vp(0, 0, 1), wheel({ deltaY: -10, ctrlKey: true }), false);
+    expect(pinch.zoom).toBeCloseTo(2 ** (10 * 0.002 * 10));
+    // fractional steps are a touchpad's too
+    const fine = applyWheel(vp(0, 0, 1), wheel({ deltaY: -2.5, ctrlKey: true }), false);
+    expect(fine.zoom).toBeCloseTo(2 ** (2.5 * 0.002 * 10));
+    // a step of 50 or more is a mouse notch, and lines or pages are a mouse's
+    const notch = applyWheel(vp(0, 0, 1), wheel({ deltaY: -50, ctrlKey: true }), false);
+    expect(notch.zoom).toBeCloseTo(2 ** (50 * 0.002));
+    const lines = applyWheel(
+      vp(0, 0, 1),
+      wheel({ deltaY: -2, deltaMode: 1, ctrlKey: true }),
+      false,
+    );
+    expect(lines.zoom).toBeCloseTo(2 ** (2 * 0.05));
   });
 
   it("deltaMode 1 is 0.05, 2 is 1", () => {

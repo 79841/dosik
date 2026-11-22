@@ -10,6 +10,7 @@ import {
   libraryLocation,
   libraryRecordDir,
   MCP_PATHS,
+  windowsDocuments,
   PACKAGE_INFO,
   resolveMcpPaths,
 } from "../mcp/paths.mjs";
@@ -137,5 +138,31 @@ describe("the app's data and library folders (#253)", () => {
     expect(libraryLocation({}, false, "C:\\Users\\a", "win32")).toBe(
       "C:\\Users\\a\\Documents\\Dosik",
     );
+    // Documents where Windows keeps it — moved into OneDrive, say — as the app asks the OS for it
+    expect(
+      libraryLocation({}, false, "C:\\Users\\a", "win32", "C:\\Users\\a\\OneDrive\\Documents"),
+    ).toBe("C:\\Users\\a\\OneDrive\\Documents\\Dosik");
+    expect(
+      libraryLocation({ DOSIK_LIBRARY_DIR: "D:\\Lib" }, false, "C:\\Users\\a", "win32", "E:\\Docs"),
+    ).toBe("D:\\Lib");
+  });
+
+  it("asks Windows for its Documents folder as the app does, and trusts only a whole, readable path", () => {
+    const answering = (text: string) => () => text;
+    // a Korean Windows names OneDrive's Documents in Korean (written as code points)
+    expect(windowsDocuments(answering("C:\\Users\\a\\OneDrive\\\uBB38\uC11C\r\n"))).toBe(
+      "C:\\Users\\a\\OneDrive\\\uBB38\uC11C",
+    );
+    expect(windowsDocuments(answering("D:\\Docs"))).toBe("D:\\Docs");
+    // not a whole path, letters that did not come through, or nothing: not used
+    expect(windowsDocuments(answering("Documents"))).toBeUndefined();
+    expect(windowsDocuments(answering("D:\\\uFFFD\\Documents"))).toBeUndefined();
+    expect(windowsDocuments(answering(""))).toBeUndefined();
+    // the asking fails — PowerShell missing, too slow: the home folder's Documents stands
+    expect(
+      windowsDocuments(() => {
+        throw new Error("spawn powershell ENOENT");
+      }),
+    ).toBeUndefined();
   });
 });

@@ -9,7 +9,7 @@ Built with Tauri 2, React 19, React Flow, zustand, and Tailwind CSS 4.
 ```bash
 pnpm install
 pnpm tauri dev     # development run
-pnpm tauri build   # build installers — src-tauri/target/release/bundle/ (macOS: .app, .dmg)
+pnpm tauri build   # build installers — src-tauri/target/release/bundle/ (macOS: .app, .dmg; Windows: NSIS setup .exe)
 pnpm test          # vitest unit tests
 ```
 
@@ -32,7 +32,7 @@ Open **Settings ▸ Integrations** (⌘,) and install Dosik into:
 - **Claude Desktop** — a Dosik extension; Claude Desktop asks you to confirm
 - **ChatGPT and Codex** — one entry in `~/.codex/config.toml`, which the ChatGPT desktop app and the Codex CLI share
 
-The app carries its MCP server and keeps a copy in its app data, refreshed when Dosik updates, so moving or updating Dosik keeps the AI apps working. Claude Code and Codex start it with Node.js 18 or later (the Claude Desktop extension uses Claude's own). Restart the AI app after a change. Dosik writes to `~/.codex/config.toml` and registers with Claude Code's user scope; a `CODEX_HOME` or `CLAUDE_CONFIG_DIR` set only in a shell profile is not seen by an app opened from Finder.
+The app carries its MCP server and keeps a copy in its app data, refreshed when Dosik updates, so moving or updating Dosik keeps the AI apps working. Claude Code and Codex start it with Node.js 18 or later (the Claude Desktop extension uses Claude's own). Restart the AI app after a change. Dosik writes to `~/.codex/config.toml` and registers with Claude Code's user scope; a `CODEX_HOME` or `CLAUDE_CONFIG_DIR` set only in a shell profile is not seen by an app opened from Finder or the Start menu.
 
 From a checkout, for development:
 
@@ -50,7 +50,7 @@ This adds eleven tools: six for diagrams and five for the library.
 | `apply_ops` | Applies edit ops — in the app, the canvas updates immediately |
 | `describe_ops` | Lists the available ops, shapes, and colors — answers from the spec even without the app |
 | `export_diagram` | Exports to a file (`md`, `mmd`, `dosik`, `svg`) |
-| `open_in_dosik` | Opens a `.dosik` file in the installed app (macOS) |
+| `open_in_dosik` | Opens a `.dosik` file in the installed app (macOS and Windows) |
 | `render_diagram` | Draws a diagram — as an in-conversation app on hosts that render apps, otherwise as SVG |
 | `list_projects` | Lists the library's projects — their names, folders, and whether the app can find them |
 | `add_project` | Adds a folder to the library as a project, making it when it does not exist yet |

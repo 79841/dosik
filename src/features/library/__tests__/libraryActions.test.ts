@@ -7,6 +7,7 @@ import { useDiagramStore } from "../../../shared/lib/store";
 import { useToastStore } from "../../../shared/lib/toastStore";
 import { useAppStore } from "../appStore";
 import { DASHBOARD, type HomeView } from "../homeView";
+import { forgetPlatform, pretendWindows } from "../../../test/platform";
 import { savedFor } from "../../../test/rustAnswers";
 import { blankDoc, type FolderMeta } from "../libraryApi";
 import {
@@ -123,6 +124,17 @@ describe("library actions (#161, #217 D11, #218 D20)", () => {
       expect(mockedAsk.mock.calls[2]![0]).toBe(
         "Delete the project “Personal” and everything in it? It will be moved to the Trash.",
       );
+    });
+
+    it("on Windows the question names the Recycle Bin", async () => {
+      pretendWindows();
+      try {
+        others = 0;
+        await deleteFolderAsking(personal());
+        expect(mockedAsk.mock.calls[0]![0]).toMatch(/\? It will be moved to the Recycle Bin\.$/);
+      } finally {
+        forgetPlatform();
+      }
     });
 
     it("asks with the diagram count, and leaves it when declined", async () => {

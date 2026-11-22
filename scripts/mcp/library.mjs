@@ -13,6 +13,7 @@ import {
   rmSync,
   writeSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import nodePath from "node:path";
 
@@ -32,7 +33,13 @@ import {
   UNTITLED_PROJECT,
   uniqueName,
 } from "./names.mjs";
-import { appDataDir, isDevRun, libraryLocation, libraryRecordDir } from "./paths.mjs";
+import {
+  appDataDir,
+  isDevRun,
+  libraryLocation,
+  libraryRecordDir,
+  windowsDocuments,
+} from "./paths.mjs";
 import { ToolError } from "./toolError.mjs";
 
 /**
@@ -110,6 +117,22 @@ export const nodeLibraryFs = {
 };
 
 /**
+ * Windows' Documents folder by the API the app asks (the known folder, which
+ * OneDrive's backup may have moved), printed in UTF-8 so any letters survive
+ */
+const askWindowsDocuments = () =>
+  execFileSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "[Console]::OutputEncoding = [Text.Encoding]::UTF8; [Environment]::GetFolderPath('MyDocuments')",
+    ],
+    { encoding: "utf8", timeout: 10000, windowsHide: true },
+  );
+
+/**
  * The library as this server reaches it: where the app keeps its record and
  * where its library folder is when the record does not say — the app's own
  * rules (`paths.mjs`), `DOSIK_APP_DATA`, `DOSIK_DEV` and `DOSIK_LIBRARY_DIR`
@@ -123,6 +146,8 @@ export const nodeLibraryFs = {
  *   fs?: typeof nodeLibraryFs;
  *   now?: () => number;
  *   pid?: number;
+ *   documents?: string;
+ *   askDocuments?: () => string;
  * }} options
  */
 export const createLibrary = ({
@@ -133,9 +158,15 @@ export const createLibrary = ({
   fs = nodeLibraryFs,
   now = Date.now,
   pid = process.pid,
+  // Documents as the OS has it, when it must be asked: on Windows it may have
+  // moved, into OneDrive. Asked only when the record does not name the
+  // library folder, and once (`fallbackLocation`)
+  documents,
+  askDocuments = askWindowsDocuments,
 }) => {
   const dev = isDevRun(env);
   const appData = appDataDir(bundleId, platform, env, home);
+  let fallback;
   return {
     fs,
     path: nodePath,
@@ -143,7 +174,14 @@ export const createLibrary = ({
     now,
     pid,
     recordDir: libraryRecordDir(appData, dev, platform),
-    fallbackLocation: libraryLocation(env, dev, home, platform),
+    get fallbackLocation() {
+      if (fallback === undefined) {
+        const docs =
+          documents ?? (platform === "win32" ? windowsDocuments(askDocuments) : undefined);
+        fallback = libraryLocation(env, dev, home, platform, docs);
+      }
+      return fallback;
+    },
     // notes go out in order, even two in one millisecond: a project's note
     // must be taken in before the note of a folder made in it
     lastAt: 0,

@@ -70,6 +70,9 @@
   --color-badge-green-soft: var(--badge-green-soft);
   --color-badge-violet: var(--badge-violet);
   --color-badge-violet-soft: var(--badge-violet-soft);
+  --color-caption-close: var(--caption-close);
+  --color-caption-close-pressed: var(--caption-close-pressed);
+  --color-on-caption-close: var(--on-caption-close);
   --color-primary: var(--ink);
   --color-primary-fg: var(--surface);
   --color-primary-hover: color-mix(in oklab, var(--ink) 82%, var(--surface));

@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
 
 import { checkApiKey } from "./keyCheck";
-import type { AiSettings, AiVendor } from "./settings";
+import { type AiSettings, type AiVendor, effectiveAuth } from "./settings";
 
 export type CliState =
   | { state: "unknown" }
@@ -111,7 +111,7 @@ export const isConnected = (
   cli: Record<AiVendor, CliState>,
   vendor: AiVendor,
 ): boolean => {
-  if (settings.auths[vendor] === "api-key") return settings.keys[vendor] !== "";
+  if (effectiveAuth(settings, vendor) === "api-key") return settings.keys[vendor] !== "";
   const state = cli[vendor].state;
   return state !== "missing" && state !== "signed-out";
 };

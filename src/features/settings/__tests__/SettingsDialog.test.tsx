@@ -15,6 +15,7 @@ const { clipboardMock } = vi.hoisted(() => ({
 }));
 vi.mock("../../../shared/lib/systemClipboard", () => ({ writeClipboardText: clipboardMock }));
 
+const { forgetPlatform, pretendMac, pretendWindows } = await import("../../../test/platform");
 const { SettingsDialog } = await import("../SettingsDialog");
 const { useSettingsStore, openSettings } = await import("../settingsStore");
 const { useChatStore } = await import("../../ai/chatStore");
@@ -35,7 +36,9 @@ const answer = (command: string, value: unknown) => {
   answers[command] = value;
 };
 
+// the suite reads as on a Mac; the Windows blocks say Windows
 beforeEach(() => {
+  pretendMac();
   localStorage.clear();
   // a stored key is checked as its group shows: no test may reach a vendor — the ones that look at a check stub their own
   vi.stubGlobal(
@@ -83,6 +86,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  forgetPlatform();
 });
 
 const dialog = () => screen.getByRole("dialog", { name: "Settings" });
@@ -99,7 +103,10 @@ const facts = (over: Record<string, unknown> = {}) => ({
     registered: { command: "/usr/local/bin/node", args: [SERVER], commandFound: true },
   },
   claudeDesktop: { app: true, installedVersion: null },
-  codex: { registered: { command: "node", args: ["/old/server.mjs"], commandFound: true } },
+  codex: {
+    config: "~/.codex/config.toml",
+    registered: { command: "node", args: ["/old/server.mjs"], commandFound: true },
+  },
   ...over,
 });
 
@@ -956,6 +963,7 @@ describe("Integrations", () => {
           "plugins_status",
           facts({
             codex: {
+              config: "~/.codex/config.toml",
               registered: { command: "/usr/local/bin/node", args: [SERVER], commandFound: true },
             },
           }),
@@ -997,6 +1005,7 @@ describe("Integrations", () => {
       reread(
         facts({
           codex: {
+            config: "~/.codex/config.toml",
             registered: { command: "/usr/local/bin/node", args: [SERVER], commandFound: true },
           },
         }),
@@ -1016,6 +1025,7 @@ describe("Integrations", () => {
           "plugins_status",
           facts({
             codex: {
+              config: "~/.codex/config.toml",
               registered: { command: "/usr/local/bin/node", args: [SERVER], commandFound: true },
             },
           }),
@@ -1046,6 +1056,7 @@ describe("Integrations", () => {
       "plugins_status",
       facts({
         codex: {
+          config: "~/.codex/config.toml",
           registered: { command: "/usr/local/bin/node", args: [SERVER], commandFound: true },
         },
       }),
@@ -1080,5 +1091,150 @@ describe("Integrations", () => {
     const rows = await within(dialog()).findByRole("region", { name: "AI apps" });
     await user.click(await within(rows).findByRole("button", { name: "Remove" }));
     expect(await within(dialog()).findByText(/claude mcp failed: nope/)).toBeInTheDocument();
+  });
+});
+
+describe("Settings off macOS: the caption buttons ride above the scrim (the canvas's Win-Settings)", () => {
+  beforeEach(pretendWindows);
+
+  it("they are inside the dialog, and pressing one neither closes Settings nor moves its first focus", async () => {
+    const { getCurrentWindow } = await import("@tauri-apps/api/window");
+    const close = vi.fn(async () => {});
+    vi.mocked(getCurrentWindow).mockReturnValue({ close } as never);
+    const user = userEvent.setup();
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(dialog()).toHaveFocus();
+    const caption = within(dialog()).getByRole("group", { name: "Window" });
+    await user.click(within(caption).getByRole("button", { name: "Close" }));
+    expect(close).toHaveBeenCalledTimes(1);
+    // the press was on a button, not the scrim: Settings stays
+    expect(useSettingsStore.getState().open).toBe(true);
+    expect(dialog()).toHaveAttribute("open");
+  });
+
+  it("in a small window the dialog keeps 56 clear above and below — off the band and the caption buttons", () => {
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(dialog()).toHaveClass("max-h-[calc(100vh-112px)]");
+    expect(dialog()).not.toHaveClass("max-h-[calc(100vh-32px)]");
+  });
+
+  it("not on macOS", () => {
+    pretendMac();
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(within(dialog()).queryByRole("group", { name: "Window" })).toBeNull();
+    // macOS keeps its 16 margin
+    expect(dialog()).toHaveClass("max-h-[calc(100vh-32px)]");
+  });
+});
+
+describe("Settings on Windows: Windows' words and paths (the canvas's Win-Settings, Win-Settings-States, Win-Settings-Panes)", () => {
+  beforeEach(() => {
+    pretendWindows();
+    answer("library_root", {
+      path: "C:\\Users\\someone\\Documents\\Dosik",
+      shown: "C:\\Users\\someone\\Documents\\Dosik",
+    });
+  });
+
+  it("General: follow Windows, the whole path, Show in File Explorer", async () => {
+    const user = userEvent.setup();
+    render(<SettingsDialog />);
+    act(() => openSettings("General"));
+    expect(within(dialog()).getByText("Follow Windows, or pick one")).toBeInTheDocument();
+    const library = within(dialog()).getByRole("region", { name: "Library" });
+    expect(
+      await within(library).findByText("C:\\Users\\someone\\Documents\\Dosik"),
+    ).toBeInTheDocument();
+    const folders = within(dialog()).getByRole("region", { name: "Folders in the library" });
+    await user.click(within(folders).getByRole("button", { name: "Show Dosik in File Explorer" }));
+    expect(invokeMock).toHaveBeenCalledWith("show_library_in_finder");
+  });
+
+  it("a found CLI is on this PC; the key is kept in Windows Credential Manager", async () => {
+    useChatStore.setState((s) => ({
+      settings: { ...s.settings, auths: { claude: "subscription", openai: "api-key" } },
+    }));
+    render(<SettingsDialog />);
+    act(() => openSettings("AI assistant"));
+    const claude = within(dialog()).getByRole("region", { name: "Claude" });
+    expect(await within(claude).findByText("CLI 2.1.4 on this PC")).toBeInTheDocument();
+    const gpt = within(dialog()).getByRole("region", { name: "GPT" });
+    expect(within(gpt).getByText("Kept in Windows Credential Manager")).toBeInTheDocument();
+  });
+
+  it("Claude Code missing: install it in PowerShell with the native installer, then sign in", async () => {
+    answer("claude_cli_status", { version: null, signed_in: null });
+    render(<SettingsDialog />);
+    act(() => openSettings("AI assistant"));
+    const claude = within(dialog()).getByRole("region", { name: "Claude" });
+    expect(await within(claude).findByText("Not found on this PC")).toBeInTheDocument();
+    expect(
+      within(claude).getByText(
+        "In PowerShell, install it and sign in with your Claude plan, then check again.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(claude).getByText("irm https://claude.ai/install.ps1 | iex")).toBeInTheDocument();
+    expect(within(claude).getByText("claude")).toBeInTheDocument();
+    expect(within(claude).queryByText(/npm/)).toBeNull();
+  });
+
+  it("signed out: sign in in PowerShell", async () => {
+    answer("claude_cli_status", { version: "2.1.4", signed_in: false });
+    render(<SettingsDialog />);
+    act(() => openSettings("AI assistant"));
+    const claude = within(dialog()).getByRole("region", { name: "Claude" });
+    expect(
+      await within(claude).findByText(
+        "In PowerShell, sign in with your Claude plan, then check again.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("GPT's Subscription cannot be picked, and a stored one works as the API key", async () => {
+    useChatStore.setState((s) => ({
+      settings: { ...s.settings, auths: { claude: "subscription", openai: "subscription" } },
+    }));
+    render(<SettingsDialog />);
+    act(() => openSettings("AI assistant"));
+    const gpt = within(dialog()).getByRole("region", { name: "GPT" });
+    const subscription = within(gpt).getByRole("radio", { name: "Subscription" });
+    expect(subscription).toBeDisabled();
+    expect(within(gpt).getByRole("radio", { name: "API key" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(
+      within(gpt).getByText(
+        "Subscription is not available on Windows. API key is pay-per-use, billed by OpenAI.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(gpt).getByText("Kept in Windows Credential Manager")).toBeInTheDocument();
+    expect(within(gpt).queryByText("Codex CLI")).toBeNull();
+    // the stored choice is not written over
+    expect(useChatStore.getState().settings.auths.openai).toBe("subscription");
+    expect(invokeMock).not.toHaveBeenCalledWith("codex_cli_status");
+  });
+
+  it("the arrow keys do not land on the Subscription it cannot pick", async () => {
+    const user = userEvent.setup();
+    useChatStore.setState((s) => ({
+      settings: { ...s.settings, auths: { claude: "subscription", openai: "api-key" } },
+    }));
+    render(<SettingsDialog />);
+    act(() => openSettings("AI assistant"));
+    const gpt = within(dialog()).getByRole("region", { name: "GPT" });
+    within(gpt).getByRole("radio", { name: "API key" }).focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(useChatStore.getState().settings.auths.openai).toBe("api-key");
+  });
+
+  it("Claude's Subscription stays — Claude Code runs on Windows", async () => {
+    render(<SettingsDialog />);
+    act(() => openSettings("AI assistant"));
+    const claude = within(dialog()).getByRole("region", { name: "Claude" });
+    expect(within(claude).getByRole("radio", { name: "Subscription" })).toBeEnabled();
   });
 });

@@ -1,4 +1,6 @@
+import { isMacPlatform } from "../../shared/lib/windowChrome";
 import type { StatusTone } from "./parts";
+import { platformCopy } from "./platformCopy";
 
 /** what Rust reports for Settings ▸ Integrations (`plugins.rs`, PluginFacts) */
 export interface Registration {
@@ -16,7 +18,8 @@ export interface PluginFacts {
   appVersion: string;
   claudeCode: { cli: boolean; registered: Registration | null };
   claudeDesktop: { app: boolean; installedVersion: string | null };
-  codex: { registered: Registration | null };
+  /** `config`: where its config.toml is, as Settings names it — `~/…` on macOS, whole on Windows */
+  codex: { config: string; registered: Registration | null };
 }
 
 export type PluginTarget = "claude-code" | "claude-desktop" | "codex";
@@ -43,8 +46,9 @@ const MIN_NODE_MAJOR = 18;
 
 const DESC_CODE = "Registered with claude mcp add, for every project";
 const DESC_DESKTOP = "A Dosik extension in Claude Desktop";
-const DESC_CODEX = "The ChatGPT desktop app and Codex CLI share ~/.codex/config.toml";
-const DESC_NODE = "The MCP server runs on Node.js, which this Mac does not have";
+const descCodex = (config: string) => `The ChatGPT desktop app and Codex CLI share ${config}`;
+const descNode = (mac: boolean) =>
+  `The MCP server runs on Node.js, which ${platformCopy(mac).machine} does not have`;
 const DESC_NO_SERVER = "This build of Dosik carries no MCP server.";
 
 const INSTALL: PluginAction = { label: "Install", kind: "primary", does: "install" };
@@ -73,6 +77,7 @@ const nodeRow = (
   title: string,
   description: string,
   registered: Registration | null,
+  mac: boolean,
 ): PluginRow => {
   if (registered?.commandFound && facts.server !== null && registered.args.includes(facts.server)) {
     return {
@@ -99,7 +104,7 @@ const nodeRow = (
     return {
       target,
       title,
-      description: DESC_NODE,
+      description: descNode(mac),
       tone: "bad",
       status: "Needs Node.js",
       action: { label: "Get Node.js", kind: "secondary", does: "get-node", external: true },
@@ -159,9 +164,9 @@ const desktopRow = ({ claudeDesktop, appVersion }: PluginFacts): PluginRow => {
 };
 
 /** Settings ▸ Integrations, row by row (#252) — the facts decide; the section only draws */
-export const pluginRows = (facts: PluginFacts): PluginRow[] => {
+export const pluginRows = (facts: PluginFacts, mac: boolean = isMacPlatform()): PluginRow[] => {
   const code = facts.claudeCode.cli
-    ? nodeRow(facts, "claude-code", "Claude Code", DESC_CODE, facts.claudeCode.registered)
+    ? nodeRow(facts, "claude-code", "Claude Code", DESC_CODE, facts.claudeCode.registered, mac)
     : {
         target: "claude-code" as const,
         title: "Claude Code",
@@ -174,6 +179,13 @@ export const pluginRows = (facts: PluginFacts): PluginRow[] => {
   return [
     code,
     desktopRow(facts),
-    nodeRow(facts, "codex", "ChatGPT and Codex", DESC_CODEX, facts.codex.registered),
+    nodeRow(
+      facts,
+      "codex",
+      "ChatGPT and Codex",
+      descCodex(facts.codex.config),
+      facts.codex.registered,
+      mac,
+    ),
   ];
 };

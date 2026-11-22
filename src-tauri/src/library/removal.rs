@@ -27,6 +27,14 @@ pub trait Trasher {
     fn trash(&self, path: &Path) -> Result<(), String>;
 }
 
+/// Where a delete goes, in the words of the OS — macOS's Trash, Windows'
+/// Recycle Bin — for what the library says about it
+pub(crate) const TRASH: &str = if cfg!(windows) {
+    "the Recycle Bin"
+} else {
+    "the Trash"
+};
+
 /// The system Trash. On macOS by the file manager's own call, not by
 /// asking Finder: that would need the right to control Finder.
 pub struct SystemTrash;
@@ -42,7 +50,7 @@ impl Trasher for SystemTrash {
         }
         context
             .delete(path)
-            .map_err(|e| format!("{}: could not be moved to the Trash: {e}", path.display()))
+            .map_err(|e| format!("{}: could not be moved to {TRASH}: {e}", path.display()))
     }
 }
 
@@ -339,6 +347,15 @@ mod tests {
         let listed = list(&lib).unwrap();
         let id = listed[0].id.clone();
         (lib, id, repo)
+    }
+
+    #[test]
+    fn the_trash_has_the_name_the_os_gives_it() {
+        if cfg!(windows) {
+            assert_eq!(TRASH, "the Recycle Bin");
+        } else {
+            assert_eq!(TRASH, "the Trash");
+        }
     }
 
     #[test]

@@ -9,6 +9,7 @@ import {
   npmComponents,
   render,
   shippedCrates,
+  TARGETS,
 } from "../notices.mjs";
 
 function pkgDir(files: Record<string, string>): string {
@@ -234,5 +235,15 @@ describe("dedupe", () => {
     expect(
       dedupe([c, { ...c }, { ...c, version: "0.2.1" }, { ...c, ecosystem: "npm" }]),
     ).toHaveLength(3);
+  });
+});
+
+describe("TARGETS", () => {
+  it("covers every release build — the two Macs and Windows x64, whose crates (the Win32 bindings) ship only there", () => {
+    expect(TARGETS).toEqual([
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+    ]);
   });
 });
