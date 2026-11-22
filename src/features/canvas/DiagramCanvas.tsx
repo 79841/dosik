@@ -34,7 +34,7 @@ import { connectDrag, useCanvasUiStore } from "./canvasUiStore";
 import { liftForView } from "./canvasLifts";
 import { ConnectionLine } from "./ConnectionLine";
 import { connectionLanding, isDot } from "./connectionLanding";
-import { inAutoPanZone, snapDrop } from "./dragSnap";
+import { alignDragMoves, inAutoPanZone, snapDropAligned } from "./dragSnap";
 import { DropNodeMenu } from "./DropNodeMenu";
 import { EdgeContextMenu } from "./EdgeContextMenu";
 import { NodeContextMenu } from "./NodeContextMenu";
@@ -64,6 +64,11 @@ const anchorOtherEnd = (anchorId: string): { x: number; y: number } | undefined 
   if (!other) return undefined;
   const b = nodeBounds(other);
   return { x: b.x + b.width / 2, y: b.y + b.height / 2 };
+};
+/** what lining a drag up with its connectors reads (`alignDragMoves`) */
+const alignContext = () => {
+  const { nodes, edges, dragRiders } = useDiagramStore.getState();
+  return { nodes, edges, riders: dragRiders };
 };
 const edgeTypes = { labeled: LabeledEdge };
 
@@ -233,8 +238,26 @@ export const DiagramCanvas = () => {
     },
     [screenToFlowPosition],
   );
+  const rf = useStoreApi();
+  /*
+   * The node drag in progress, from its start to its end — a fresh token per
+   * drag. Every end clears the same state (`endDrag`): the pause in snapping,
+   * what rides on the drag, the snap dot an anchor drag shows. Most drags end
+   * at React Flow's stop, but one whose shape was deleted mid-drag (Delete,
+   * ⌘X, a bridge op) is aborted and gets none — left behind, its riders
+   * would steer the next arrow-key nudge and its dot would stay on the box
+   * (#228).
+   */
+  const openDrag = useRef<object | null>(null);
   const handleNodesChange = useCallback(
-    (changes: NodeChange<DiagramNode>[]) => {
+    (raw: NodeChange<DiagramNode>[]) => {
+      // a drag on the grid also lands where a connector to a shape left
+      // behind runs straight, a few px off (`alignDragMoves`) — not while
+      // snapping is paused at the view's edge. The release turns snapping
+      // back on before React Flow's last move, so that one is lined up from
+      // off the grid; the stop then puts the drop right (`snapDropAligned`)
+      const changes =
+        openDrag.current && rf.getState().snapToGrid ? alignDragMoves(raw, alignContext()) : raw;
       const box = boxTo(lastPointer.current);
       if (!box) return onNodesChange(changes);
       const { nodes, enteredGroup } = useDiagramStore.getState();
@@ -248,7 +271,7 @@ export const DiagramCanvas = () => {
         ),
       );
     },
-    [boxTo, onNodesChange],
+    [boxTo, onNodesChange, rf],
   );
   // the box is anchored where the button went down, as React Flow anchors it
   // — the start event arrives with the first move, already away from there
@@ -293,7 +316,6 @@ export const DiagramCanvas = () => {
   );
 
   /** while a new connection is dragged over a box, show where it would land */
-  const rf = useStoreApi();
   const previewLanding = useCallback(
     (client: { x: number; y: number }) => {
       const c = rf.getState().connection;
@@ -436,16 +458,6 @@ export const DiagramCanvas = () => {
     },
     [setSnap],
   );
-  /*
-   * The node drag in progress, from its start to its end — a fresh token per
-   * drag. Every end clears the same state (`endDrag`): the pause in snapping,
-   * what rides on the drag, the snap dot an anchor drag shows. Most drags end
-   * at React Flow's stop, but one whose shape was deleted mid-drag (Delete,
-   * ⌘X, a bridge op) is aborted and gets none — left behind, its riders
-   * would steer the next arrow-key nudge and its dot would stay on the box
-   * (#228).
-   */
-  const openDrag = useRef<object | null>(null);
   const endDrag = useCallback(() => {
     openDrag.current = null;
     dragPane.current = null;
@@ -534,9 +546,10 @@ export const DiagramCanvas = () => {
     // `node` can be missing: a shape deleted mid-drag and let go without a
     // move is never aborted, and React Flow's stop then has none to pass
     (_: MouseEvent | TouchEvent, node: Node | undefined, dragged: Node[]) => {
-      // a drop after a pause in snapping lands on the grid (#228) — a plain
-      // move, no commit: the drag opened its undo step, and riders still ride
-      const moves = leftGrid.current ? snapDrop(dragged, SNAP_GRID) : [];
+      // a drop after a pause in snapping lands on the grid (#228), or where a
+      // connector runs straight as on a drag — a plain move, no commit: the
+      // drag opened its undo step, and riders still ride
+      const moves = leftGrid.current ? snapDropAligned(dragged, SNAP_GRID, alignContext()) : [];
       if (moves.length > 0) {
         useDiagramStore
           .getState()
