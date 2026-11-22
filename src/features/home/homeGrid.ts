@@ -1,3 +1,5 @@
+import { SLIDE_TIMING } from "../../shared/lib/sidebarSlide";
+
 /**
  * Home's 12-column grid (#220 D12, design-system `layout-and-grid.md`): 72px
  * columns (88 with the sidebar hidden) and 16px gutters make 1040 (1232),
@@ -22,11 +24,14 @@ export const CONTINUE_SPAN = 12;
 
 /**
  * The content column: the wide grid while the sidebar is hidden — peeking
- * included, since the peek moves nothing (#217 D16). Tailwind needs the
- * classes spelled out whole.
+ * included, since the peek moves nothing (#217 D16). While the sidebar slides
+ * out or in, its cap eases with it (canvas TabsCollapse-Toggle). Tailwind
+ * needs the classes spelled out whole.
  */
-export const contentColumn = (sidebarHidden: boolean): string =>
-  `@container w-full ${sidebarHidden ? "max-w-[1232px]" : "max-w-[1040px]"}`;
+export const contentColumn = (sidebarHidden: boolean, sliding = false): string =>
+  `@container w-full ${sidebarHidden ? "max-w-[1232px]" : "max-w-[1040px]"}${
+    sliding ? ` motion-safe:transition-[max-width] ${SLIDE_TIMING}` : ""
+  }`;
 
 /** six across; under 752px of content, where "Blank diagram" would be cut, three in two rows */
 export const START_GRID = "grid grid-cols-3 gap-4 @min-[752px]:grid-cols-6";

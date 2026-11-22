@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useSidebarStore } from "../../../shared/lib/sidebarLayout";
+import { useSidebarSlideStore } from "../../../shared/lib/sidebarSlide";
 import { useDiagramStore } from "../../../shared/lib/store";
 import { useAppStore } from "../../library/appStore";
 import { blankDoc } from "../../library/libraryApi";
@@ -45,6 +46,21 @@ describe("window band (#217 R1, D19~D21)", () => {
     expect(placeOf(tablist()).style.left).toBe("256px");
     expect(screen.queryByRole("button", { name: "Show sidebar" })).toBeNull();
     expect(screen.queryByRole("button", { name: "More" })).toBeNull();
+  });
+
+  it("the tabs glide with the docked sidebar's slide — 200ms, the slide's ease — and only then (canvas TabsCollapse-Toggle)", () => {
+    render(<ChromeBand mac />);
+    const glide = ["motion-safe:transition-[left]", "motion-safe:duration-200"];
+    expect(placeOf(tablist())).not.toHaveClass(glide[0]!);
+    act(() => {
+      useSidebarStore.setState({ hidden: true });
+      useSidebarSlideStore.setState({ phase: "closing" });
+    });
+    expect(placeOf(tablist())).toHaveClass(...glide);
+    expect(placeOf(tablist()).style.left).toBe("124px");
+    act(() => useSidebarSlideStore.setState({ phase: "closed" }));
+    // a resize drag moves them with the pointer, not after it
+    expect(placeOf(tablist())).not.toHaveClass(glide[0]!);
   });
 
   it("hidden (macOS): traffic lights → Show sidebar (x=88) → tabs (124) … ⋯ More (T2)", () => {

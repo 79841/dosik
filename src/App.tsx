@@ -22,12 +22,14 @@ import { useOpenRequests } from "./features/library/useOpenRequests";
 import { useTabSession } from "./features/library/tabSession";
 import { useTrayActions } from "./features/library/useTrayActions";
 import { ShapePalette } from "./features/palette/ShapePalette";
+import { DockedSidebarSlot } from "./features/sidebar/DockedSidebarSlot";
 import { LibrarySidebar } from "./features/sidebar/LibrarySidebar";
 import { SidebarPeek } from "./features/sidebar/SidebarPeek";
 import { SidebarResizeEdge } from "./features/sidebar/SidebarResizeEdge";
 import { Toolbar } from "./features/toolbar/Toolbar";
 import { EDITOR_TOAST_BOTTOM, TOAST_BOTTOM } from "./shared/lib/editorLayout";
-import { useDockedWidth, useSidebarStore } from "./shared/lib/sidebarLayout";
+import { useSidebarStore } from "./shared/lib/sidebarLayout";
+import { useSidebarSlideStore, useSidebarSliding } from "./shared/lib/sidebarSlide";
 import { ErrorBoundary } from "./shared/ui/ErrorBoundary";
 import { Toaster } from "./shared/ui/Toaster";
 import { SettingsDialog } from "./features/settings/SettingsDialog";
@@ -122,7 +124,10 @@ const Shell = () => {
 const Frame = () => {
   const hidden = useSidebarStore((s) => s.hidden);
   const resizing = useSidebarStore((s) => s.resizing);
-  const docked = useDockedWidth();
+  // hiding and showing slide the docked sidebar (canvas TabsCollapse-Toggle)
+  const sliding = useSidebarSliding();
+  /** the docked sidebar is on screen — sliding out included */
+  const slotted = useSidebarSlideStore((s) => s.phase !== "closed");
   const view = useAppStore((s) => s.view);
   const activeTab = useAppStore((s) => s.activeTab);
   // the Settings dialog shows the toasts while it is up — the sheet's would sit under it (#252)
@@ -158,15 +163,11 @@ const Frame = () => {
     <div className="relative flex h-screen w-screen flex-col overflow-hidden bg-frame">
       <ChromeBand />
       <div className="relative flex min-h-0 flex-1">
-        {hidden ? null : (
-          // the sidebar's width is set here and only here: the sidebar, or its
-          // crash screen, fills the slot
-          <div style={{ width: docked }} className="flex h-full min-h-0 flex-none">
-            <ErrorBoundary>
-              <LibrarySidebar />
-            </ErrorBoundary>
-          </div>
-        )}
+        <DockedSidebarSlot>
+          <ErrorBoundary>
+            <LibrarySidebar />
+          </ErrorBoundary>
+        </DockedSidebarSlot>
         <div
           id={DOC_PANEL_ID}
           role="tabpanel"
@@ -179,7 +180,7 @@ const Frame = () => {
           // peek. Only the sheet — the sidebar's menus (fixed, z-50) cross the
           // edge (z-30) and must draw over it, so they stay out of it.
           className={`relative isolate min-w-0 flex-1 overflow-hidden bg-surface ${
-            !hidden && view === "editor" ? "rounded-tl-lg" : ""
+            slotted && view === "editor" ? "rounded-tl-lg" : ""
           }`}
         >
           <ErrorBoundary>
@@ -189,8 +190,9 @@ const Frame = () => {
           {settingsOpen ? null : <Toaster />}
         </div>
       </div>
-      {/* mounted through a drag that hides the sidebar, so the same gesture can bring it back */}
-      {!hidden || resizing ? <SidebarResizeEdge /> : null}
+      {/* mounted through a drag that hides the sidebar, so the same gesture can
+          bring it back; back from a slide only once the sidebar has landed */}
+      {(!hidden && !sliding) || resizing ? <SidebarResizeEdge /> : null}
       <SidebarPeek />
       <SettingsDialog />
     </div>

@@ -26,12 +26,21 @@ import { resetUnsavedGuardForTests } from "../../library/unsavedGuard";
 import { resetAutosaveForTests, useAutosave } from "../../library/useAutosave";
 import { DROP_RING, DROP_TARGET } from "../../../shared/lib/palette";
 import { badgeColour } from "../../../shared/lib/projectBadge";
+import { FOLD_MS } from "../FoldGroup";
 import { ProjectsSection } from "../LibraryTree";
+import { dropAt } from "../treeDrop";
 import { folderKey } from "../treeModel";
 import { resetTreeForTests, useTreeStore } from "../treeStore";
 import { badgeIn } from "../../../test/badges";
 import { showInLabel } from "../../library/fileManager";
 import { likeRust } from "../../../test/rustAnswers";
+
+// the tree's drop targets as they are, counted (#260)
+vi.mock("../treeDrop", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../treeDrop")>();
+  return { ...actual, dropAt: vi.fn(actual.dropAt) };
+});
+const dropAtCalls = vi.mocked(dropAt);
 
 /** "Show in …" as this web view names its file manager (#238 D10) */
 const SHOW_IN = showInLabel();
@@ -174,6 +183,102 @@ describe("sidebar tree (#217 R3)", () => {
       await user.click(chevron(/^My Diagrams/));
       expect(item(/^Old one/)).not.toHaveAttribute("aria-expanded");
       expect(chevron(/^Old one/)).toBeNull();
+    });
+  });
+
+  describe("fold motion (#260 R1)", () => {
+    const icons = (name: RegExp) =>
+      [...chevron(name).querySelectorAll("svg")].map((svg) => svg.getAttribute("class"));
+    const groupOf = (name: RegExp) =>
+      item(name).querySelector(":scope > [data-fold]") as HTMLElement | null;
+
+    it("the chevron is one ChevronRight that turns 90° while unfolded, 180ms ease-out, only when motion is allowed", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      expect(icons(/^Work/)).toHaveLength(1);
+      const svg = chevron(/^Work/).querySelector("svg")!;
+      expect(svg).toHaveClass("lucide-chevron-right");
+      expect(svg).not.toHaveClass("rotate-90");
+      expect(
+        svg
+          .getAttribute("class")!
+          .split(/\s+/)
+          .filter((c) => /transition|duration|ease/.test(c)),
+      ).toEqual([
+        "motion-safe:transition-transform",
+        "motion-safe:duration-180",
+        "motion-safe:ease-[cubic-bezier(0.2,0,0,1)]",
+      ]);
+      await user.click(chevron(/^Work/));
+      expect(chevron(/^Work/).querySelector("svg")).toBe(svg);
+      expect(svg).toHaveClass("rotate-90");
+      expect(tree().querySelector(".lucide-chevron-down")).toBeNull();
+    });
+
+    it("folding: aria-expanded at once, the rows fold out of the screen reader's and the focus' reach, then go", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.click(chevron(/^Work/));
+      const group = groupOf(/^Work/)!;
+      expect(group).toHaveClass("grid-rows-[1fr]");
+      await user.click(chevron(/^Work/));
+      expect(item(/^Work/)).toHaveAttribute("aria-expanded", "false");
+      expect(groupOf(/^Work/)).toBe(group);
+      expect(group).toHaveClass("grid-rows-[0fr]", "opacity-0");
+      expect(group).toHaveAttribute("inert");
+      expect(within(tree()).queryByRole("treeitem", { name: /^Login flow/ })).toBeNull();
+      expect(within(tree()).queryByRole("group")).toBeNull();
+      fireEvent.transitionEnd(group);
+      expect(groupOf(/^Work/)).toBeNull();
+    });
+
+    it("→ and ← fold the same way as the chevron — a second press turns the motion back", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.tab();
+      await user.tab();
+      await user.keyboard("{ArrowRight}");
+      const group = groupOf(/^Work/)!;
+      expect(group).toHaveClass("grid-rows-[1fr]");
+      await user.keyboard("{ArrowLeft}");
+      expect(group).toHaveClass("grid-rows-[0fr]");
+      expect(item(/^Work/)).toHaveFocus();
+      // before the motion ends: the same rows turn back
+      await user.keyboard("{ArrowRight}");
+      expect(groupOf(/^Work/)).toBe(group);
+      expect(group).toHaveClass("grid-rows-[1fr]");
+      expect(group).not.toHaveAttribute("inert");
+      expect(item(/^Login flow/)).toBeInTheDocument();
+    });
+
+    it("the focus that went into rows still unfolding is scrolled into view again once they have (#260)", () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const scroll = vi.fn();
+      Element.prototype.scrollIntoView = scroll;
+      try {
+        renderTree();
+        act(() => item(/^Work/).focus());
+        fireEvent.keyDown(item(/^Work/), { key: "ArrowRight" });
+        fireEvent.keyDown(item(/^Work/), { key: "ArrowRight" });
+        expect(item(/^Login flow/)).toHaveFocus();
+        expect(scroll).not.toHaveBeenCalled();
+        act(() => vi.advanceTimersByTime(FOLD_MS + 50));
+        expect(scroll.mock.contexts).toEqual([item(/^Login flow/)]);
+      } finally {
+        Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+        vi.useRealTimers();
+      }
+    });
+
+    it("the rows stand 31 apart from 2 below the list's top — the pitch a drag works out (30 tall, 1 between)", async () => {
+      const user = userEvent.setup();
+      renderTree();
+      await user.click(chevron(/^Work/));
+      expect(tree()).toHaveClass("pt-0.5", "gap-y-px");
+      expect(row(/^Work/)).toHaveClass("h-[30px]");
+      // the 1px between a row and its first child, and between children, is inside the group
+      expect(item(/^Work/)).not.toHaveClass("gap-px");
+      expect(within(item(/^Work/)).getByRole("group")).toHaveClass("[&>li]:mt-px");
     });
   });
 
@@ -425,6 +530,28 @@ describe("sidebar tree (#217 R3)", () => {
       expect(item(/^Login v2/)).toHaveAttribute("aria-selected", "false");
     });
 
+    it("scrolls it into view again once its folders have unfolded — the list was shorter while they grew (#260)", () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const scroll = vi.fn();
+      Element.prototype.scrollIntoView = scroll;
+      try {
+        renderTree();
+        act(() => {
+          openDocument({ ...blankDoc(), title: "Sequence" }, { projectId: "p2" });
+        });
+        expect(scroll).toHaveBeenCalledTimes(1);
+        act(() => vi.advanceTimersByTime(FOLD_MS + 49));
+        expect(scroll).toHaveBeenCalledTimes(1);
+        act(() => vi.advanceTimersByTime(1));
+        expect(scroll).toHaveBeenCalledTimes(2);
+        expect(scroll.mock.contexts[1]).toBe(item(/^Sequence, diagram/));
+        expect(scroll).toHaveBeenLastCalledWith({ block: "nearest" });
+      } finally {
+        Reflect.deleteProperty(Element.prototype, "scrollIntoView");
+        vi.useRealTimers();
+      }
+    });
+
     it("scrolls the open diagram's row into view (D7)", () => {
       const scroll = vi.fn();
       Element.prototype.scrollIntoView = scroll;
@@ -657,7 +784,20 @@ describe("sidebar tree (#217 R3)", () => {
       firePointer("pointermove", x, y);
     };
     const lifted = () => document.body.querySelector("[data-drag-row]") as HTMLElement | null;
-    const dropLine = () => tree().querySelector("[data-drop-line]") as HTMLElement | null;
+    /** the drop's preview row (#260 R2) — on the list, over the rows */
+    const preview = () => tree().querySelector("[data-drop-preview]") as HTMLElement | null;
+    /** its row line — at 40%, at the spot's depth */
+    const previewRow = () => preview()?.firstElementChild as HTMLElement | null;
+    /** each row's line moved out of the preview's way, by name */
+    const moved = () =>
+      Object.fromEntries(
+        [...tree().querySelectorAll<HTMLElement>("[data-row]")]
+          .filter((line) => line.style.transform)
+          .map((line) => [
+            line.closest("[role=treeitem]")!.getAttribute("aria-label")!.split(",")[0],
+            line.style.transform,
+          ]),
+      );
     const ring = (name: RegExp) => row(name).querySelector(":scope > [data-drop-ring]");
 
     const ordered = (): FolderMeta[] => [
@@ -674,21 +814,229 @@ describe("sidebar tree (#217 R3)", () => {
       useTreeStore.getState().expand([folderKey("work")]);
     });
 
-    it("drags past 4px — a ghost in place, a lifted row following the pointer, a 2px line at the spot", () => {
+    it("drags past 4px — the row turns into its preview where it stands, nothing moves, the lifted row follows the pointer (#260 R2)", () => {
       renderTree();
-      // Work: Archive (unlisted, on top), Login flow, Sequence
-      dragTo(/^Sequence, diagram/, 70, rowTop(/^Login flow/) + 3);
-      expect(item(/^Sequence, diagram/)).toHaveClass("opacity-40");
+      act(() => item(/^Sequence, diagram/).focus());
+      // Work, Archive, Login flow, Sequence (row 3): still over itself
+      dragTo(/^Sequence, diagram/, 70, rowTop(/^Sequence/) + 20);
+      expect(item(/^Sequence, diagram/)).toHaveClass("opacity-0");
+      expect(item(/^Sequence, diagram/)).toHaveFocus();
+      expect(preview()).toHaveStyle({ top: `${2 + 3 * 31}px` });
+      expect(previewRow()).toHaveClass("pl-5");
+      expect(moved()).toEqual({});
       expect(lifted()).toHaveTextContent("Sequence");
-      expect(lifted()).toHaveStyle({ left: "78px", top: `${rowTop(/^Login flow/) + 13}px` });
+      expect(lifted()).toHaveStyle({ left: "78px", top: `${rowTop(/^Sequence/) + 30}px` });
       expect(lifted()).toHaveAttribute("aria-hidden", "true");
       // the lifted row stays 26 in 12px; its glyph is the row's, coloured (#236 R1, T8)
       expect(lifted()).toHaveClass("h-[26px]", "text-[12px]");
       const glyph = lifted()!.querySelector("svg.lucide-workflow");
       expect(glyph).toHaveClass("text-glyph-diagram");
       expect(glyph).toHaveAttribute("width", "16");
-      expect(dropLine()?.closest("[data-row]")).toBe(row(/^Login flow/));
-      expect(dropLine()).toHaveClass("left-5", "-top-[1.5px]");
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("between siblings: the preview stands at the slot at its depth, the rows between make room by 31px — no line (#260 R2)", () => {
+      renderTree();
+      dragTo(/^Sequence, diagram/, 70, rowTop(/^Login flow/) + 3);
+      // Work, Archive, [Sequence], Login flow, Personal
+      expect(preview()).toHaveStyle({ top: `${2 + 2 * 31}px` });
+      expect(moved()).toEqual({ "Login flow": "translateY(31px)" });
+      expect(tree().querySelector("[data-drop-line]")).toBeNull();
+      // the row itself at 40%: its glyph and name, no fill, no `…`
+      expect(previewRow()).toHaveClass("opacity-40", "pl-5", "h-[30px]", "font-medium");
+      expect(previewRow()).not.toHaveClass("bg-selected");
+      expect(previewRow()).toHaveTextContent(/^Sequence$/);
+      expect(previewRow()!.querySelector("svg.lucide-workflow")).toHaveClass("text-glyph-diagram");
+      expect(within(preview()!).queryByRole("button")).toBeNull();
+      // not a tree item: screen readers hear the move from the tree
+      expect(preview()).toHaveAttribute("aria-hidden", "true");
+      expect(preview()).not.toHaveAttribute("role");
+      expect(preview()).toHaveClass("pointer-events-none", "absolute");
+      expect(tree()).toHaveClass("relative");
+      expect(within(tree()).getAllByRole("treeitem")).toHaveLength(5);
+      // the rows glide 150ms ease-out, only when motion is allowed; the preview jumps
+      expect(
+        row(/^Login flow/)
+          .getAttribute("class")!
+          .split(/\s+/)
+          .filter((c) => /transition|duration|ease/.test(c)),
+      ).toEqual([
+        "motion-safe:transition-transform",
+        "motion-safe:duration-150",
+        "motion-safe:ease-[cubic-bezier(0.2,0,0,1)]",
+      ]);
+      expect(preview()!.className).not.toMatch(/transition/);
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("dragging down: the rows between move up", () => {
+      renderTree();
+      dragTo(/^Login flow/, 70, rowTop(/^Sequence/) + 20);
+      // Work, Archive, Sequence, [Login flow], Personal
+      expect(preview()).toHaveStyle({ top: `${2 + 3 * 31}px` });
+      expect(moved()).toEqual({ Sequence: "translateY(-31px)" });
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("the same pointer y gives the same preview — the preview and the gliding rows do not move what is under it (#260)", () => {
+      renderTree();
+      const y = rowTop(/^Login flow/) + 3;
+      dragTo(/^Sequence, diagram/, 70, y);
+      const top = preview()!.style.top;
+      // the rows on screen where the glide took them
+      for (const line of tree().querySelectorAll<HTMLElement>("[data-row]")) {
+        const shift = Number.parseFloat(line.style.transform.slice(11)) || 0;
+        const { top: t, bottom: b } = line.getBoundingClientRect();
+        line.getBoundingClientRect = () =>
+          ({ top: t + shift, bottom: b + shift, left: 8, right: 240 }) as DOMRect;
+      }
+      firePointer("pointermove", 70, y);
+      expect(preview()!.style.top).toBe(top);
+      firePointer("pointermove", 71, y);
+      expect(preview()!.style.top).toBe(top);
+      expect(moved()).toEqual({ "Login flow": "translateY(31px)" });
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("into an unfolded folder: the preview is its first item, one level deeper — no fill, no ring on the folder (#260 R2)", () => {
+      renderTree();
+      // the middle of Work's row (a project row is all "into")
+      dragTo(/^Login flow/, 70, rowTop(/^Work/) + 15);
+      expect(preview()).toHaveStyle({ top: `${2 + 31}px` });
+      expect(previewRow()).toHaveClass("pl-5");
+      expect(moved()).toEqual({ Archive: "translateY(31px)" });
+      expect(row(/^Work/)).not.toHaveClass("bg-selected");
+      expect(ring(/^Work/)).toBeNull();
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("an unfolded folder is never ringed — not even when the dragged row has left the rows some other way (#260 R2)", () => {
+      renderTree();
+      dragTo(/^Login flow/, 70, rowTop(/^Sequence/) + 20);
+      // a listing lands with Login flow moved into the collapsed Archive elsewhere
+      const elsewhere = (): FolderMeta[] => {
+        const [work, personal] = ordered();
+        return [
+          {
+            ...work!,
+            order: ["diagram:p2"],
+            diagrams: work!.diagrams.filter((d) => d.id !== "p1"),
+            folders: [{ ...work!.folders[0]!, diagrams: [work!.diagrams[0]!] }],
+          },
+          personal!,
+        ];
+      };
+      act(() => useLibraryStore.setState({ folders: elsewhere() }));
+      expect(lifted()).not.toBeNull();
+      // Work, Archive, Sequence, Personal: into Work, unfolded
+      firePointer("pointermove", 70, 102 + 15);
+      expect(ring(/^Work/)).toBeNull();
+      expect(row(/^Work/)).not.toHaveClass("bg-selected");
+      firePointer("pointercancel", 0, 0);
+    });
+
+    it("into a collapsed folder: no preview, the folder row filled and ringed, no row moves — the dragged row's place stays empty (#260 R2)", () => {
+      renderTree();
+      dragTo(/^Login flow/, 70, rowTop(/^Archive/) + 13);
+      expect(preview()).toBeNull();
+      expect(row(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
+      expect(ring(/^Archive/)).not.toBeNull();
+      expect(moved()).toEqual({});
+      expect(item(/^Login flow/)).toHaveClass("opacity-0");
+      firePointer("pointercancel", 70, 0);
+    });
+
+    it("a project goes by blocks: its preview is its row folded at level 1 — chevron, badge, name, count — and the projects make room (#260 R2)", () => {
+      renderTree();
+      expect(item(/^Work/)).toHaveAttribute("aria-expanded", "true");
+      // Work is unfolded: dragging it folds it — Work 102, Personal 133
+      dragTo(/^Work/, 70, 133 + 20);
+      expect(item(/^Work/)).toHaveAttribute("aria-expanded", "false");
+      expect(item(/^Work/).querySelector(":scope > [data-fold]")).toHaveClass("grid-rows-[0fr]");
+      expect(within(tree()).queryByRole("treeitem", { name: /^Login flow/ })).toBeNull();
+      // Personal, [Work]
+      expect(preview()).toHaveStyle({ top: `${2 + 31}px` });
+      expect(moved()).toEqual({ Personal: "translateY(-31px)" });
+      const line = previewRow()!;
+      expect(line).toHaveClass("pl-1");
+      const chevronSvg = line.querySelector("svg.lucide-chevron-right");
+      expect(chevronSvg).not.toBeNull();
+      expect(chevronSvg).not.toHaveClass("rotate-90");
+      expect(badgeIn(line)).not.toBeNull();
+      expect(line).toHaveTextContent("Work");
+      expect(line).toHaveTextContent("3");
+      // the drag ends: unfolded again — the fold was the drag's, not the tree's
+      firePointer("pointercancel", 70, 0);
+      expect(useTreeStore.getState().expanded.has(folderKey("work"))).toBe(true);
+      expect(item(/^Work/)).toHaveAttribute("aria-expanded", "true");
+      expect(item(/^Work/).querySelector(":scope > [data-fold]")).toHaveClass("grid-rows-[1fr]");
+      expect(item(/^Login flow/)).toBeInTheDocument();
+    });
+
+    /** the rows that glide when they move — all but while a drop lands */
+    const gliding = () =>
+      [...tree().querySelectorAll<HTMLElement>("[data-row]")].filter((line) =>
+        line.classList.contains("motion-safe:transition-transform"),
+      ).length;
+    const labels = () =>
+      within(tree())
+        .getAllByRole("treeitem")
+        .map((i) => i.getAttribute("aria-label")!.split(",")[0]);
+
+    it("a drop lands where its preview stood, at once — no row glides from where the drag had it, then the glide is back (#260 R4)", async () => {
+      vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });
+      try {
+        renderTree();
+        const y = rowTop(/^Login flow/) + 3;
+        dragTo(/^Sequence, diagram/, 70, y);
+        expect(moved()).toEqual({ "Login flow": "translateY(31px)" });
+        firePointer("pointerup", 70, y);
+        // the same commit: the rows in their new order, none moved, none gliding
+        expect(preview()).toBeNull();
+        expect(moved()).toEqual({});
+        expect(gliding()).toBe(0);
+        expect(labels()).toEqual(["Work", "Archive", "Sequence", "Login flow", "Personal"]);
+        expect(item(/^Sequence, diagram/)).not.toHaveClass("opacity-0");
+        act(() => {
+          vi.advanceTimersToNextFrame();
+        });
+        expect(gliding()).toBe(labels().length);
+      } finally {
+        vi.useRealTimers();
+      }
+      await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
+    });
+
+    it("Escape, a release off the tree or the window losing focus calls it off: the preview goes, the rows glide back, the row is where it was (#260 R4)", () => {
+      renderTree();
+      const y = rowTop(/^Login flow/) + 3;
+      const calledOff = (end: () => void) => {
+        act(() => item(/^Sequence, diagram/).focus());
+        dragTo(/^Sequence, diagram/, 70, y);
+        expect(moved()).toEqual({ "Login flow": "translateY(31px)" });
+        end();
+        expect(preview()).toBeNull();
+        expect(lifted()).toBeNull();
+        expect(moved()).toEqual({});
+        // back to its place with the glide
+        expect(gliding()).toBe(labels().length);
+        expect(item(/^Sequence, diagram/)).not.toHaveClass("opacity-0");
+        expect(item(/^Sequence, diagram/)).toHaveFocus();
+        expect(labels()).toEqual(["Work", "Archive", "Login flow", "Sequence", "Personal"]);
+      };
+      calledOff(() =>
+        act(() => {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+        }),
+      );
+      calledOff(() => firePointer("pointerup", 400, y));
+      calledOff(() =>
+        act(() => {
+          window.dispatchEvent(new Event("blur"));
+        }),
+      );
+      expect(calls("reorder_item")).toHaveLength(0);
+      expect(calls("move_project")).toHaveLength(0);
     });
 
     it("dragging a folder shows a blue folder icon on the lifted row, a project only its name (#236 T8)", () => {
@@ -722,21 +1070,21 @@ describe("sidebar tree (#217 R3)", () => {
         index: 1,
       });
       expect(lifted()).toBeNull();
-      expect(dropLine()).toBeNull();
-      expect(item(/^Sequence, diagram/)).not.toHaveClass("opacity-40");
+      expect(preview()).toBeNull();
+      expect(item(/^Sequence, diagram/)).not.toHaveClass("opacity-0");
       expect(screen.getByRole("status")).toHaveTextContent(
         "Moved “Sequence” to position 2 of 3 in Work",
       );
       expect(item(/^Sequence, diagram/)).toHaveFocus();
     });
 
-    it("middle of a folder row — that row gets the selection background, no line, dropping puts it at the top of that folder (collapsed), focus on the folder row", async () => {
+    it("middle of a folder row — that row gets the selection background, no preview, dropping puts it at the top of that folder (collapsed), focus on the folder row", async () => {
       renderTree();
       const archive = rowTop(/^Archive/);
       dragTo(/^Login flow/, 70, archive + 13);
       expect(row(/^Archive/)).toHaveClass("bg-selected", ...DROP_TARGET.split(" "));
       expect(item(/^Archive/)).toHaveAttribute("aria-selected", "false");
-      expect(dropLine()).toBeNull();
+      expect(preview()).toBeNull();
       firePointer("pointerup", 70, archive + 13);
       await waitFor(() => expect(calls("move_project")).toHaveLength(1));
       expect(calls("move_project")[0]![1]).toEqual({ id: "p1", folder: "arc", index: 0 });
@@ -782,10 +1130,19 @@ describe("sidebar tree (#217 R3)", () => {
       expect(ring(/^Archive/)).toHaveAttribute("aria-hidden", "true");
     });
 
-    it("the line before the top row is not clipped at the list's top edge — the list's inner padding (#230)", () => {
+    it("the gap above the first row is the list's padding, inside its scroll box — the 2px a drag works out (#230, #260)", () => {
       renderTree();
       expect(tree()).toHaveClass("pt-0.5");
       expect(tree()).not.toHaveClass("mt-0.5");
+    });
+
+    it("the list draws no scrollbar on either axis — the wheel, the trackpad and the keys still scroll it (Sidebar-Deep)", () => {
+      renderTree();
+      expect(tree()).toHaveClass(
+        "overflow-auto",
+        "[scrollbar-width:none]",
+        "[&::-webkit-scrollbar]:hidden",
+      );
     });
 
     it("Escape cancels — writes nothing and clears the drawing", () => {
@@ -804,7 +1161,9 @@ describe("sidebar tree (#217 R3)", () => {
     it("dropping outside the tree (sideways) does nothing", () => {
       renderTree();
       dragTo(/^Sequence, diagram/, 400, rowTop(/^Login flow/) + 3);
-      expect(dropLine()).toBeNull();
+      // no target: the preview stays in the row's own place
+      expect(preview()).toHaveStyle({ top: `${2 + 3 * 31}px` });
+      expect(moved()).toEqual({});
       firePointer("pointerup", 400, rowTop(/^Login flow/) + 3);
       expect(calls("reorder_item")).toHaveLength(0);
       expect(calls("move_project")).toHaveLength(0);
@@ -870,35 +1229,70 @@ describe("sidebar tree (#217 R3)", () => {
       tryDrag(row(/^Personal/), { button: 0, ctrlKey: true });
     });
 
-    it("does not target rows hidden by scrolling when the pointer leaves above the list — the row at the visible edge (#230)", () => {
+    it("does not target rows hidden by scrolling when the pointer leaves above the list — the row at the visible edge (#230)", async () => {
       renderTree();
-      // scrolled by 54: Work and Archive sit above the list's top edge (100), hidden
-      const scrolled = () => {
-        layout();
-        [...tree().querySelectorAll<HTMLElement>("[data-row]")].forEach((line, i) => {
-          line.getBoundingClientRect = () =>
-            ({ top: 46 + i * 27, bottom: 72 + i * 27, left: 8, right: 240 }) as DOMRect;
-        });
-      };
-      scrolled();
-      const start = row(/^Sequence, diagram/).getBoundingClientRect().top + 13;
+      layout();
+      // scrolled by 62: Work (40) and Archive (71) sit above the list's top edge (100), hidden
+      tree().scrollTop = 62;
+      const start = 195 - 62 + 15;
       fireEvent.pointerDown(row(/^Sequence, diagram/), { button: 0, clientX: 60, clientY: start });
       firePointer("pointermove", 60, start + 6);
-      scrolled();
-      // over the hidden Work row, above the list
+      // over the hidden Work row, above the list: Login flow, at the visible edge
       firePointer("pointermove", 70, 60);
       expect(row(/^Work/)).not.toHaveClass("bg-selected");
-      expect(dropLine()?.closest("[data-row]")).toBe(row(/^Login flow/));
       firePointer("pointerup", 70, 60);
+      await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
+      expect(calls("reorder_item")[0]![1]).toEqual({
+        parent: "work",
+        item: "diagram:p2",
+        index: 1,
+      });
+    });
+
+    it("works the slot out from the list's top and the rows' order — not the rows' boxes on screen, which glide in a drag (#260)", async () => {
+      renderTree();
+      layout();
+      // every row drawn somewhere else, as in the middle of a glide
+      for (const line of tree().querySelectorAll<HTMLElement>("[data-row]")) {
+        line.getBoundingClientRect = () =>
+          ({ top: 500, bottom: 530, left: 8, right: 240 }) as DOMRect;
+      }
+      // worked out: Work 102, Archive 133, Login flow 164, Sequence 195
+      fireEvent.pointerDown(row(/^Sequence, diagram/), { button: 0, clientX: 60, clientY: 210 });
+      firePointer("pointermove", 60, 216);
+      firePointer("pointermove", 70, 167);
+      firePointer("pointerup", 70, 167);
+      await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
+      expect(calls("reorder_item")[0]![1]).toEqual({
+        parent: "work",
+        item: "diagram:p2",
+        index: 1,
+      });
+    });
+
+    it("the rows changing under a still pointer (a listing landing) moves the target with them (#260)", () => {
+      renderTree();
+      // Login flow over the lower half of Sequence: after it
+      dragTo(/^Login flow/, 70, rowTop(/^Sequence/) + 20);
+      expect(row(/^Personal/)).not.toHaveClass(...DROP_TARGET.split(" "));
+      // Archive is gone: the same y is now over Personal
+      act(() =>
+        useLibraryStore.setState({
+          folders: ordered().map((f) => ({ ...f, folders: [] })),
+        }),
+      );
+      expect(row(/^Personal/)).toHaveClass(...DROP_TARGET.split(" "));
+      firePointer("pointercancel", 70, 215);
     });
 
     it("the first row is the target when the pointer leaves above a list scrolled to the top — it does not fall into the list's top padding (pt-0.5) (#230)", async () => {
       renderTree();
       const start = rowTop(/^Sequence, diagram/) + 13;
       dragTo(/^Sequence, diagram/, 70, start + 30);
-      // above the list (the PROJECTS heading): the first row, Work, at the visible top edge
+      // above the list (the PROJECTS heading): the first row, Work, at the visible top edge —
+      // into it, unfolded: the preview is its first item
       firePointer("pointermove", 70, 80);
-      expect(row(/^Work/)).toHaveClass(...DROP_TARGET.split(" "));
+      expect(preview()).toHaveStyle({ top: `${2 + 31}px` });
       firePointer("pointerup", 70, 80);
       await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
       expect(calls("reorder_item")[0]![1]).toEqual({
@@ -938,26 +1332,188 @@ describe("sidebar tree (#217 R3)", () => {
         scrollRange();
         tree().scrollTop = 700;
         dragTo(/^Sequence, diagram/, 70, 396);
-        // every row's box is read when the slot is worked out again
-        let reads = 0;
-        for (const line of tree().querySelectorAll<HTMLElement>("[data-row]")) {
-          const read = line.getBoundingClientRect;
-          line.getBoundingClientRect = () => {
-            reads += 1;
-            return read();
-          };
-        }
+        const worked = dropAtCalls.mock.calls.length;
         act(() => {
           vi.advanceTimersToNextFrame();
           vi.advanceTimersToNextFrame();
           vi.advanceTimersToNextFrame();
         });
         expect(tree().scrollTop).toBe(700);
-        expect(reads).toBe(0);
+        expect(dropAtCalls.mock.calls.length).toBe(worked);
       } finally {
         firePointer("pointerup", 70, 396);
         vi.useRealTimers();
       }
+    });
+
+    describe("resting on a collapsed folder unfolds it (#260 R3)", () => {
+      const drafts = (): FolderMeta[] => {
+        const [work, personal] = ordered();
+        return [
+          {
+            ...work!,
+            folders: [
+              {
+                id: "arc",
+                name: "Archive",
+                updatedAt: 1,
+                order: ["folder:deep", "diagram:a1"],
+                diagrams: [{ id: "a1", title: "Old", updatedAt: 1, readable: true }],
+                folders: [
+                  {
+                    id: "deep",
+                    name: "Deep",
+                    updatedAt: 1,
+                    diagrams: [{ id: "d1", title: "Deeper", updatedAt: 1, readable: true }],
+                    folders: [],
+                  },
+                ],
+              },
+            ],
+          },
+          personal!,
+        ];
+      };
+      /** row `n`'s top + `dy`, worked out — Work, Archive, Login flow, Sequence, Personal while Archive is collapsed */
+      const at = (n: number, dy: number) => 102 + n * 31 + dy;
+      const unfolded = (id: string) => useTreeStore.getState().expanded.has(folderKey(id));
+      const wait = (ms: number) =>
+        act(() => {
+          vi.advanceTimersByTime(ms);
+        });
+      const pressEscape = () =>
+        act(() => {
+          window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true }));
+        });
+
+      beforeEach(() => {
+        useLibraryStore.setState({ folders: drafts() });
+        serve(drafts);
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it("600ms on its middle: it unfolds and the preview stands at its top, a level deeper — dropped there, it stays open", async () => {
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        expect(row(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
+        wait(599);
+        expect(item(/^Archive/)).toHaveAttribute("aria-expanded", "false");
+        wait(1);
+        expect(item(/^Archive/)).toHaveAttribute("aria-expanded", "true");
+        expect(row(/^Archive/)).not.toHaveClass("bg-selected");
+        // Work, Archive, [Sequence], Deep, Old
+        expect(preview()).toHaveStyle({ top: `${2 + 2 * 31}px` });
+        expect(previewRow()).toHaveClass("pl-9");
+        firePointer("pointerup", 70, at(1, 15));
+        expect(unfolded("arc")).toBe(true);
+        vi.useRealTimers();
+        await waitFor(() => expect(calls("move_project")).toHaveLength(1));
+        expect(calls("move_project")[0]![1]).toEqual({ id: "p2", folder: "arc", index: 0 });
+      });
+
+      it("moving off it before 600ms calls the wait off", () => {
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(599);
+        firePointer("pointermove", 70, at(2, 3));
+        wait(1000);
+        expect(unfolded("arc")).toBe(false);
+        firePointer("pointercancel", 0, 0);
+      });
+
+      it("a folder inside one it unfolded unfolds the same way — called off, both fold back; one the user unfolded stays", () => {
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(600);
+        // Work, Archive, Deep, Old, Login flow, Sequence, Personal
+        firePointer("pointermove", 70, at(2, 15));
+        expect(row(/^Deep,/)).toHaveClass(...DROP_TARGET.split(" "));
+        wait(600);
+        expect(item(/^Deep,/)).toHaveAttribute("aria-expanded", "true");
+        expect(preview()).toHaveStyle({ top: `${2 + 3 * 31}px` });
+        expect(previewRow()).toHaveClass("pl-13");
+        pressEscape();
+        expect(unfolded("arc")).toBe(false);
+        expect(unfolded("deep")).toBe(false);
+        expect(item(/^Archive/)).toHaveAttribute("aria-expanded", "false");
+        expect(unfolded("work")).toBe(true);
+        expect(calls("move_project")).toHaveLength(0);
+      });
+
+      it("dropped somewhere else: what it unfolded folds back", async () => {
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(600);
+        // Work, Archive, Deep, Old, Login flow (row 4)
+        firePointer("pointermove", 70, at(4, 3));
+        firePointer("pointerup", 70, at(4, 3));
+        expect(unfolded("arc")).toBe(false);
+        vi.useRealTimers();
+        await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
+        expect(calls("reorder_item")[0]![1]).toEqual({
+          parent: "work",
+          item: "diagram:p2",
+          index: 1,
+        });
+      });
+
+      it("dropped anywhere under it: it stays open", async () => {
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(600);
+        // into Deep (collapsed), before it unfolds
+        firePointer("pointermove", 70, at(2, 15));
+        firePointer("pointerup", 70, at(2, 15));
+        expect(unfolded("arc")).toBe(true);
+        expect(unfolded("deep")).toBe(false);
+        vi.useRealTimers();
+        await waitFor(() => expect(calls("move_project")).toHaveLength(1));
+        expect(calls("move_project")[0]![1]).toEqual({ id: "p2", folder: "deep", index: 0 });
+      });
+
+      it("a folder the user unfolded stays open when the drag is called off", () => {
+        act(() => useTreeStore.getState().expand([folderKey("arc")]));
+        renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(1000);
+        pressEscape();
+        expect(unfolded("arc")).toBe(true);
+      });
+
+      it("the tree going away mid-drag (the sidebar hidden, the peek closed): what the drag unfolded folds back, the wait is called off", () => {
+        const first = renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(600);
+        expect(unfolded("arc")).toBe(true);
+        first.unmount();
+        expect(unfolded("arc")).toBe(false);
+        expect(lifted()).toBeNull();
+
+        const second = renderTree();
+        dragTo(/^Sequence, diagram/, 70, at(1, 15));
+        wait(300);
+        second.unmount();
+        wait(1000);
+        expect(unfolded("arc")).toBe(false);
+      });
+
+      it("never the dragged folder itself, nor one with nothing in it", () => {
+        renderTree();
+        dragTo(/^Archive/, 70, at(1, 15));
+        wait(1000);
+        expect(unfolded("arc")).toBe(false);
+        firePointer("pointercancel", 0, 0);
+        // Personal holds nothing
+        dragTo(/^Login flow/, 70, at(4, 15));
+        expect(row(/^Personal/)).toHaveClass(...DROP_TARGET.split(" "));
+        wait(1000);
+        expect(item(/^Personal/)).not.toHaveAttribute("aria-expanded");
+        expect(unfolded("home")).toBe(false);
+        firePointer("pointercancel", 0, 0);
+      });
     });
 
     it("cancels the drag when the dragged item disappears from the listing", () => {

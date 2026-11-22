@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Ellipsis, Plus } from "lucide-react";
+import { ChevronRight, Ellipsis, Plus } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import { DROP_RING, DROP_TARGET, FOCUS_RING, FOCUS_TREE_ROW } from "../../shared/lib/palette";
@@ -44,11 +44,24 @@ import {
   type TreeNode,
   visibleRows,
 } from "./treeModel";
-import { DiagramGlyph, FolderGlyph } from "../../shared/ui/KindGlyph";
 import { belowRightOf, besidePointer, Menu, type MenuItem } from "../../shared/ui/Menu";
-import { ProjectBadge } from "../../shared/ui/ProjectBadge";
-import { type DropTarget, dropAt, keyboardStep, placementNotice, type RowBox } from "./treeDrop";
+import { FOLD_MS, FoldGroup } from "./FoldGroup";
+import {
+  AUTO_UNFOLD_MS,
+  autoUnfoldKey,
+  type DropTarget,
+  dragView,
+  dropAt,
+  keyboardStep,
+  LIST_PAD_TOP,
+  placementNotice,
+  ROW_PITCH,
+  refoldAfterDrag,
+  rowBoxes,
+} from "./treeDrop";
 import { TreeDragLayer } from "./TreeDragLayer";
+import { TreePreviewRow } from "./TreePreviewRow";
+import { NodeGlyph, shownName } from "./treeRowParts";
 import { unfoldedFolders, useTreeStore } from "./treeStore";
 
 type Point = { x: number; y: number };
@@ -239,9 +252,6 @@ const rowName = (node: TreeNode): string =>
     ? `${node.title}, diagram, edited ${relativeTime(node.diagram.updatedAt)}`
     : `${node.folder.name}, ${node.kind}, ${notFound(node) ? "not found" : plural(node.count, "item")}`;
 
-const shownName = (node: TreeNode): string =>
-  node.kind === "diagram" ? node.title : node.folder.name;
-
 /**
  * Shows the row's `…` in place of its count while the row has keyboard focus
  * — hover does it on the row itself. Its own row only: the treeitem holds its
@@ -258,29 +268,22 @@ const MORE_ON_FOCUS =
 const TAIL =
   "sticky right-0 flex-none self-stretch items-center rounded-r-[5px] bg-[linear-gradient(to_right,transparent,var(--row-bg)_12px)] pl-3 pr-2";
 
+/**
+ * The chevron's turn with the fold (canvas `Sidebar-Drag` ③): 90°, 180ms,
+ * ease-out — snapped under reduced motion (#260 R1)
+ */
+const CHEVRON_MOTION =
+  "motion-safe:transition-transform motion-safe:duration-180 motion-safe:ease-[cubic-bezier(0.2,0,0,1)]";
+
 /** a row's own controls — a double click on them does not open the row (#220), nor does a press there drag it (#230 D9) */
 const ROW_CONTROLS = "[data-chevron],[data-more],input";
 
 /**
- * The 2px insertion line's left end — the slot's level's indent (#230 D9):
- * 4 + 16 per level after the first, as the rows' own. Static classes, for
- * Tailwind.
+ * A row's glide out of a drag's preview's way, and back (canvas
+ * `Sidebar-Drag` ①): 150ms, ease-out — none under reduced motion (#260 R2)
  */
-const LINE_LEFT = [
-  "left-1",
-  "left-5",
-  "left-9",
-  "left-13",
-  "left-17",
-  "left-21",
-  "left-25",
-  "left-29",
-  "left-33",
-  "left-37",
-  "left-41",
-] as const;
-const lineLeft = (level: number): string =>
-  LINE_LEFT[Math.min(Math.max(level, 1), LINE_LEFT.length) - 1]!;
+const ROW_GLIDE =
+  "motion-safe:transition-transform motion-safe:duration-150 motion-safe:ease-[cubic-bezier(0.2,0,0,1)]";
 
 /** the tree scrolls by itself while a drag is this near its top or bottom edge (#230 D9) */
 const SCROLL_EDGE = 24;
@@ -331,7 +334,17 @@ const TreeBody = ({
     return projectId ? [{ id: projectId, title }, ...kept] : kept;
   }, [tabs, projectId, title]);
   const tree = useMemo(() => buildTree(folders, opens), [folders, opens]);
-  const rows = useMemo(() => visibleRows(tree, expanded), [tree, expanded]);
+  const [drag, setDrag] = useState<Drag | null>(null);
+  const draggedKey = drag?.node.key ?? null;
+  // the unfolded rows as shown: a folder being dragged folds while it is,
+  // and unfolds again when the drag ends — the tree's own state stays (#260 R2)
+  const shownExpanded = useMemo(() => {
+    if (draggedKey === null || !expanded.has(draggedKey)) return expanded;
+    const shown = new Set(expanded);
+    shown.delete(draggedKey);
+    return shown;
+  }, [expanded, draggedKey]);
+  const rows = useMemo(() => visibleRows(tree, shownExpanded), [tree, shownExpanded]);
   // what a click picked, else where the app is (#230 D8)
   const selected = picked ?? selectedKey({ view, homeView, folders, projectId });
 
@@ -343,10 +356,17 @@ const TreeBody = ({
   /** the `…` (or row) the menu opened from — pressing it again closes it (#220) */
   const menuOpener = useRef<HTMLElement | null>(null);
   const items = useRef(new Map<TreeKey, HTMLLIElement>());
-  const [drag, setDrag] = useState<Drag | null>(null);
   const startDrag = usePointerDrag();
   /** drops the drag under way without a word — the item went from the listing */
   const dropDrag = useRef<() => void>(() => undefined);
+  /**
+   * A drop is landing (#260 R4): the rows take their new places without the
+   * glide — in the drop's commit their offsets go as the order changes, so
+   * the screen stays as it was — and get it back a frame later.
+   */
+  const [settling, setSettling] = useState(false);
+  /** the folders this drag unfolded by resting on them, first to last (#260 R3) */
+  const autoOpened = useRef<TreeKey[]>([]);
   /** the click after a drag is no pick (#230 D9) */
   const swallowClick = useRef(false);
   /** what the drag reads between renders: the pointer, the rows, the listing */
@@ -377,6 +397,9 @@ const TreeBody = ({
     focusNext.current = null;
   });
 
+  /** the reveal's second scroll — kept past the reveal, which is cleared at once */
+  const revealAgain = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(revealAgain.current), []);
   // the diagram just opened scrolls into view (D7), whichever tree is mounted
   // biome-ignore lint/correctness/useExhaustiveDependencies: rows is the trigger — the row appears once its project unfolds
   useEffect(() => {
@@ -384,6 +407,12 @@ const TreeBody = ({
     const el = items.current.get(reveal);
     if (!el) return;
     el.scrollIntoView?.({ block: "nearest" });
+    // the folders it unfolded are still growing, the list shorter than it
+    // will be: once more when they have grown, or this may fall short (#260)
+    clearTimeout(revealAgain.current);
+    revealAgain.current = setTimeout(() => {
+      if (el.isConnected) el.scrollIntoView?.({ block: "nearest" });
+    }, FOLD_MS + 50);
     useTreeStore.getState().clearReveal();
   }, [reveal, rows]);
 
@@ -540,27 +569,45 @@ const TreeBody = ({
    * list's width; above or below the list, at its visible edge, never on a row
    * the scroll hides there (#230) — while it scrolls by itself, the
    * slot follows the edge. Scrolled to the top, the edge is the first row's,
-   * under the list's top padding (#230)
+   * under the list's top padding (#230). The rows' boxes are worked out from
+   * the list's top and their order, not read from the screen: the preview and
+   * the rows gliding out of its way must not move what is under the pointer
+   * (#260)
    */
   const targetAt = (dragged: TreeNode, at: Point): DropTarget | null => {
-    const box = treeBox.current?.getBoundingClientRect();
-    if (!box || at.x < box.left || at.x > box.right) return null;
-    const boxes = new Map<TreeKey, RowBox>();
-    for (const row of live.current.rows) {
-      const line = items.current.get(row.key)?.querySelector(":scope > [data-row]");
-      if (!line) continue;
-      const { top, bottom } = line.getBoundingClientRect();
-      boxes.set(row.key, { top, bottom });
-    }
-    const first = boxes.values().next().value;
+    const list = treeBox.current;
+    const box = list?.getBoundingClientRect();
+    if (!list || !box || at.x < box.left || at.x > box.right) return null;
+    const { rows } = live.current;
+    const boxes = rowBoxes(rows, box.top + LIST_PAD_TOP - list.scrollTop);
+    const first = rows[0] ? boxes.get(rows[0].key) : undefined;
     const top = Math.max(box.top, first?.top ?? box.top) + 1;
     return dropAt({
-      rows: live.current.rows,
+      rows,
       boxes,
       y: Math.min(Math.max(at.y, top), box.bottom - 1),
       dragged: dragged.key as ItemKey,
       folders: live.current.folders,
     });
+  };
+
+  // the rows changed under a drag — a folder unfolded, a listing landed: the
+  // pointer that has not moved may be over another slot now (#260)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: rows is the trigger; the drag reads the live pointer
+  useLayoutEffect(() => {
+    const at = live.current.at;
+    if (!at) return;
+    setDrag((now) => (now ? { ...now, target: targetAt(now.node, at) } : now));
+  }, [rows]);
+
+  /**
+   * The drag is over (#260 R3): what it unfolded folds back — but a folder
+   * the drop went into, or under, stays open. `null`: called off.
+   */
+  const refold = (dropParent: string | null) => {
+    const keys = refoldAfterDrag(autoOpened.current, dropParent, live.current.folders);
+    autoOpened.current = [];
+    for (const key of keys) useTreeStore.getState().collapse(key);
   };
 
   /** the drop (#230 D9, D13): the item goes, the screen first; focus to it, or to the folder it went into */
@@ -597,6 +644,7 @@ const TreeBody = ({
         swallowClick.current = true;
         setMenu(null);
         live.current.at = at;
+        autoOpened.current = [];
         setDrag({ node, at, target: null });
       },
       onMove: (at) => {
@@ -606,14 +654,18 @@ const TreeBody = ({
       onEnd: (at) => {
         const target = targetAt(node, at);
         live.current.at = null;
+        // no target (off the tree, in place): called off — the rows glide back
+        if (target) setSettling(true);
         setDrag(null);
         forgetSwallow();
+        refold(target?.placement.parent ?? null);
         if (target) drop(node, target);
       },
       onCancel: () => {
         live.current.at = null;
         setDrag(null);
         forgetSwallow();
+        refold(null);
       },
     });
   };
@@ -651,6 +703,34 @@ const TreeBody = ({
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [dragging]);
+
+  useLayoutEffect(() => {
+    if (!settling) return;
+    // laid out once without the glide before it is back, or the rows would
+    // glide in from where the drag had them
+    void treeBox.current?.offsetHeight;
+    const frame = requestAnimationFrame(() => setSettling(false));
+    return () => cancelAnimationFrame(frame);
+  }, [settling]);
+
+  // resting on a collapsed folder unfolds it (#260 R3); moving off it
+  // before then, or the drag ending, calls the wait off
+  const unfoldKey = drag ? autoUnfoldKey(drag.target, rows) : null;
+  useEffect(() => {
+    if (!unfoldKey) return;
+    const timer = setTimeout(() => {
+      autoOpened.current.push(unfoldKey);
+      useTreeStore.getState().expand([unfoldKey]);
+    }, AUTO_UNFOLD_MS);
+    return () => clearTimeout(timer);
+  }, [unfoldKey]);
+
+  /** the rows as the drag shows them: its preview and the rows moved out of its way (#260 R2) */
+  const dragTarget = drag?.target ?? null;
+  const shownDrag = useMemo(
+    () => (draggedKey ? dragView({ rows, dragged: draggedKey, target: dragTarget }) : null),
+    [rows, draggedKey, dragTarget],
+  );
 
   // the item dragged went from the listing (deleted elsewhere): the drag is over
   useEffect(() => {
@@ -727,7 +807,7 @@ const TreeBody = ({
 
   const renderItem = (node: TreeNode, level: number) => {
     const expandable = node.kind !== "diagram" && node.expandable;
-    const open = expandable && expanded.has(node.key);
+    const open = expandable && shownExpanded.has(node.key);
     const isSelected = node.key === selected;
     const actions = menuItems(node);
     const menuOpen = menu?.node.key === node.key;
@@ -738,11 +818,13 @@ const TreeBody = ({
     const tinted = pointerOpen && !isSelected;
     /** the `…` shows only on hover — not while a drag or a right-click menu holds the row */
     const quiet = drag !== null || pointerOpen;
-    // a drag: the row it would fill (into a folder) and the row its line is drawn on (#230 D9)
-    const dropInto = drag?.target?.kind === "into" && drag.target.row === node.key;
-    const line =
-      drag?.target?.kind === "slot" && drag.target.line.row === node.key ? drag.target.line : null;
-    const ghost = drag?.node.key === node.key;
+    // a drag: the collapsed folder it would go into, filled — an unfolded one
+    // shows the preview as its first item instead (#230 D9, #260 R2) — and
+    // the dragged row, which has left its place: its preview stands in for it
+    const dropInto = drag?.target?.kind === "into" && drag.target.row === node.key && !open;
+    const leaving = draggedKey === node.key;
+    /** how far the row stands out of the preview's way */
+    const offset = shownDrag?.offsets.get(node.key) ?? 0;
     // a folder counts what is in it — none shows no number (#229 D6); a diagram has no count;
     // a project not found says so in its place (#253 R7)
     const missing = notFound(node);
@@ -772,7 +854,7 @@ const TreeBody = ({
         onFocus={(e) => {
           if (e.target === e.currentTarget) setFocusKey(node.key);
         }}
-        className={`flex flex-col gap-px ${FOCUS_TREE_ROW} ${MORE_ON_FOCUS} ${ghost ? "opacity-40" : ""}`}
+        className={`flex flex-col ${FOCUS_TREE_ROW} ${MORE_ON_FOCUS} ${leaving ? "opacity-0" : ""}`}
       >
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: the keyboard reaches the row through its treeitem (roving tabindex, Enter/Space) */}
         <div
@@ -789,9 +871,12 @@ const TreeBody = ({
           // as wide as the widest row: names are never cut, the list scrolls
           // sideways instead (Sidebar-Deep); --row-bg is the fill the tail fades into
           // select-none: a press that turns into a drag picks no words (#230 D9)
+          // its offset: out of a drag's preview's way (#260 R2) — a transform,
+          // so nothing in a row may be position: fixed (#206)
+          style={offset ? { transform: `translateY(${offset}px)` } : undefined}
           className={`group/row relative flex h-[30px] cursor-default select-none items-center gap-1 rounded-[5px] text-[13px] text-ink ${
-            count !== null ? "pr-0" : "pr-2"
-          } ${indentClass(level)} ${
+            settling ? "" : ROW_GLIDE
+          } ${count !== null ? "pr-0" : "pr-2"} ${indentClass(level)} ${
             dropInto
               ? `${DROP_TARGET} ${isSelected ? "font-semibold" : "font-medium"}`
               : isSelected
@@ -803,16 +888,6 @@ const TreeBody = ({
                     : "font-medium [--row-bg:var(--frame)] hover:bg-hover hover:[--row-bg:var(--hover)]"
           }`}
         >
-          {line ? (
-            // inside the row: the row is as wide as the widest, so the line reaches its end even scrolled sideways (Sidebar-Deep)
-            <span
-              data-drop-line=""
-              aria-hidden="true"
-              className={`pointer-events-none absolute right-1 z-10 h-0.5 rounded-[1px] bg-ink ${lineLeft(
-                line.level,
-              )} ${line.edge === "top" ? "-top-[1.5px]" : "-bottom-[1.5px]"}`}
-            />
-          ) : null}
           {expandable ? (
             <span
               data-chevron
@@ -824,25 +899,16 @@ const TreeBody = ({
               }}
               className={`flex h-3.5 w-3.5 flex-none items-center justify-center ${chevronTone}`}
             >
-              {open ? (
-                <ChevronDown size={14} strokeWidth={2} />
-              ) : (
-                <ChevronRight size={14} strokeWidth={2} />
-              )}
+              <ChevronRight
+                size={14}
+                strokeWidth={2}
+                className={`${CHEVRON_MOTION} ${open ? "rotate-90" : ""}`}
+              />
             </span>
           ) : (
             <span aria-hidden="true" className="w-3.5 flex-none" />
           )}
-          {/* a top row — a project — shows its badge; a folder
-              its Folder, FolderOpen while unfolded (#229 D6) — coloured by kind,
-              selected or not (#236 D2·D3) */}
-          {node.kind === "diagram" ? (
-            <DiagramGlyph />
-          ) : node.kind === "folder" ? (
-            <FolderGlyph open={open} />
-          ) : (
-            <ProjectBadge id={node.folder.id} name={node.folder.name} greyed={missing} />
-          )}
+          <NodeGlyph node={node} open={open} greyed={missing} />
           {node.kind !== "diagram" && renaming === node.folder.id ? (
             <NameInput
               size="sm"
@@ -912,11 +978,11 @@ const TreeBody = ({
           {/* last in the row: painted over the sticky tail's fill */}
           {dropInto ? <span data-drop-ring="" aria-hidden="true" className={DROP_RING} /> : null}
         </div>
-        {open ? (
-          // biome-ignore lint/a11y/useSemanticElements: the WAI-ARIA tree's child list is a group
-          <ul role="group" className="m-0 flex list-none flex-col gap-px p-0">
-            {children.map((child) => renderItem(child, level + 1))}
-          </ul>
+        {expandable ? (
+          <FoldGroup
+            open={open}
+            render={() => children.map((child) => renderItem(child, level + 1))}
+          />
         ) : null}
       </li>
     );
@@ -936,11 +1002,21 @@ const TreeBody = ({
         // nodelete: Backspace on a row must not delete the canvas selection (D27)
         // one column as wide as the widest row (and at least the list's): deep
         // rows scroll sideways, the list alone, on both axes (Sidebar-Deep);
-        // a padding, not a margin, on top: the first row's drop line stays
-        // inside the scroll box (#230)
-        className="nodelete m-0 grid min-h-0 flex-1 list-none grid-cols-[minmax(max-content,1fr)] content-start gap-y-px overflow-auto px-0 pb-0 pt-0.5"
+        // a padding, not a margin, on top, inside the scroll box (#230): the
+        // rows a drag works out start LIST_PAD_TOP below the list's top (#260);
+        // relative: a drag's preview is drawn on it, scrolling with the rows;
+        // no scrollbar on either axis, whatever macOS's scroll bar setting
+        // (Sidebar-Deep): the wheel, the trackpad and the keys reach every row
+        className="nodelete relative m-0 grid min-h-0 flex-1 list-none grid-cols-[minmax(max-content,1fr)] content-start gap-y-px overflow-auto px-0 pb-0 pt-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {tree.map((project) => renderItem(project, 1))}
+        {drag && shownDrag?.preview ? (
+          <TreePreviewRow
+            node={drag.node}
+            level={shownDrag.preview.level}
+            top={LIST_PAD_TOP + shownDrag.preview.index * ROW_PITCH}
+          />
+        ) : null}
       </ul>
       {drag ? <TreeDragLayer node={drag.node} at={drag.at} /> : null}
       {/* a live region that stays mounted (as the toasts'): each notice is a new

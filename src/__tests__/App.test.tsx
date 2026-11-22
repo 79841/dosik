@@ -56,6 +56,7 @@ import { resetTreeForTests } from "../features/sidebar/treeStore";
 import { makeDoc } from "../shared/lib/__tests__/testFixtures";
 import { useDiagramStore } from "../shared/lib/store";
 import { useSidebarStore } from "../shared/lib/sidebarLayout";
+import { resetSidebarSlideForTests } from "../shared/lib/sidebarSlide";
 import { useToastStore } from "../shared/lib/toastStore";
 import { likeRust } from "../test/rustAnswers";
 
@@ -91,6 +92,7 @@ describe("App — window (#217)", () => {
     resetTabsForTests();
     useLibraryStore.setState({ folders: null, readFailed: false });
     useSidebarStore.setState({ hidden: false, width: 248, hinted: true, peek: false });
+    resetSidebarSlideForTests();
     useToastStore.getState().dismissAll();
   });
 
@@ -108,7 +110,7 @@ describe("App — window (#217)", () => {
     expect(within(sheet()).getByRole("heading", { level: 1, name: "Home" })).toBeInTheDocument();
   });
 
-  it("Editor: Home + document tab; the sheet's top-left corner is rounded when docked and square when hidden (R7)", async () => {
+  it("Editor: Home + document tab; the sheet's top-left corner is rounded when docked and square once hidden (R7)", async () => {
     openDocument({ ...makeDoc([], []), title: "Orders flow" }, { projectId: "p1" });
     render(<App />);
     expect(await screen.findByRole("toolbar", { name: "Diagram actions" })).toBeInTheDocument();
@@ -119,6 +121,11 @@ describe("App — window (#217)", () => {
     expect(tabs()[1]!.id).toMatch(/^doc-tab-tab-\d+$/);
     expect(sheet()).toHaveClass("rounded-tl-lg");
     act(() => useSidebarStore.getState().hide());
+    // rounded while the sidebar slides out beside it, square once it has gone
+    expect(sheet()).toHaveClass("rounded-tl-lg");
+    fireEvent.transitionEnd(document.querySelector("[data-sidebar-slot]")!, {
+      propertyName: "width",
+    });
     expect(sheet()).not.toHaveClass("rounded-tl-lg");
   });
 
@@ -155,15 +162,22 @@ describe("App — window (#217)", () => {
     });
   });
 
-  it("⌘\\ (Ctrl+\\ here) hides and shows the sidebar on Home too — a hidden sidebar leaves the DOM", async () => {
+  it("⌘\\ (Ctrl+\\ here) hides and shows the sidebar on Home too — sliding, then a hidden sidebar leaves the DOM", async () => {
     render(<App />);
     await screen.findByRole("main");
+    const slot = () => document.querySelector("[data-sidebar-slot]") as HTMLElement | null;
     fireEvent.keyDown(window, { key: "\\", code: "Backslash", ctrlKey: true });
+    // sliding out: out of the screen reader's reach at once, gone once it has slid
     expect(screen.queryByRole("complementary", { name: "Library" })).toBeNull();
     expect(screen.queryByRole("separator", { name: "Resize sidebar" })).toBeNull();
     expect(screen.getByRole("button", { name: "Show sidebar" })).toBeInTheDocument();
+    fireEvent.transitionEnd(slot()!, { propertyName: "width" });
+    expect(slot()).toBeNull();
     fireEvent.keyDown(window, { key: "\\", code: "Backslash", ctrlKey: true });
     expect(screen.getByRole("complementary", { name: "Library" })).toBeInTheDocument();
+    // the edge comes back once the sidebar has landed
+    expect(screen.queryByRole("separator", { name: "Resize sidebar" })).toBeNull();
+    fireEvent.transitionEnd(slot()!, { propertyName: "width" });
     expect(screen.getByRole("separator", { name: "Resize sidebar" })).toBeInTheDocument();
   });
 

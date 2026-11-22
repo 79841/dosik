@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef } from "react";
 
 import { useSidebarStore } from "../../shared/lib/sidebarLayout";
+import { useSidebarSliding } from "../../shared/lib/sidebarSlide";
 import { toastError } from "../../shared/lib/toastStore";
 import { useAppStore } from "../library/appStore";
 import { resolveHomeView } from "../library/homeView";
@@ -71,6 +72,7 @@ export const Home = () => {
   const homeView = useAppStore((s) => s.homeView);
   const focusTicket = useAppStore((s) => s.homeFocus);
   const hidden = useSidebarStore((s) => s.hidden);
+  const sliding = useSidebarSliding();
   const mode = useHomeMode((s) => s.mode);
   const sheet = useRef<HTMLElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -133,7 +135,7 @@ export const Home = () => {
               />
             </div>
           ) : (
-            <div className={contentColumn(hidden)}>
+            <div className={contentColumn(hidden, sliding)}>
               {view.kind === "dashboard" ? (
                 <Dashboard />
               ) : view.kind === "recent" ? (

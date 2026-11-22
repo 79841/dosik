@@ -92,9 +92,13 @@ body,
   height: 100%;
 }
 
+/* no words on the page are selected; fields keep their own (the webview's
+   styles). WebKit reads only the prefixed property, which the build adds by
+   itself but the dev server does not */
 body {
   margin: 0;
   overflow: hidden;
+  -webkit-user-select: none;
   user-select: none;
   background: var(--dsk-canvas-bg, #FFFFFF);
 }

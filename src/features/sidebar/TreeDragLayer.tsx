@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { DiagramGlyph, FolderGlyph } from "../../shared/ui/KindGlyph";
 
 import type { TreeNode } from "./treeModel";
+import { shownName } from "./treeRowParts";
 
 /** the lifted row sits this far right of and below the pointer (canvas `Hybrid-Project-Cards`) */
 const LIFT_OFFSET = { x: 8, y: 10 } as const;
@@ -24,7 +25,7 @@ export const TreeDragLayer = ({ node, at }: { node: TreeNode; at: { x: number; y
       className="pointer-events-none fixed z-[60] flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-md bg-surface pl-2 pr-2.5 text-[12px] font-medium text-ink shadow-lifted"
     >
       {node.kind === "diagram" ? <DiagramGlyph /> : node.kind === "folder" ? <FolderGlyph /> : null}
-      <span>{node.kind === "diagram" ? node.title : node.folder.name}</span>
+      <span>{shownName(node)}</span>
     </div>,
     document.body,
   );

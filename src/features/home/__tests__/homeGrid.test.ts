@@ -38,6 +38,12 @@ describe("Home 12-column grid (#220 D12, T18)", () => {
   it("content column — 1040 with the sidebar shown, 1232 hidden, from the left (not centered, #231 D21), container", () => {
     expect(contentColumn(false)).toContain(`max-w-[${CONTENT_MAX}px]`);
     expect(contentColumn(true)).toContain(`max-w-[${CONTENT_MAX_WIDE}px]`);
+    // the cap eases with the sidebar's slide, and only then (canvas TabsCollapse-Toggle)
+    for (const hidden of [false, true]) {
+      expect(contentColumn(hidden)).not.toContain("transition");
+      expect(contentColumn(hidden, true)).toContain("motion-safe:transition-[max-width]");
+      expect(contentColumn(hidden, true)).toContain("motion-safe:duration-200");
+    }
     for (const hidden of [false, true]) {
       // spare room in a wide window goes to the right — no auto margin on the left or both sides
       expect(contentColumn(hidden)).not.toMatch(/\b(mx|ml|ms)-auto\b/);

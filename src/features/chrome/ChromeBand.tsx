@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from "react";
 
 import { useDockedWidth, useSidebarStore } from "../../shared/lib/sidebarLayout";
+import { SLIDE_TIMING, useSidebarSliding } from "../../shared/lib/sidebarSlide";
 import {
   BAND_BUTTON,
   BAND_GAP,
@@ -28,6 +29,8 @@ import { MoreMenu } from "./MoreMenu";
  */
 export const ChromeBand = ({ mac = isMacPlatform() }: { mac?: boolean }) => {
   const hidden = useSidebarStore((s) => s.hidden);
+  // the docked sidebar sliding out or in: the tabs glide with its edge
+  const sliding = useSidebarSliding();
   const focusAfter = useSidebarStore((s) => s.focusAfter);
   const docked = useDockedWidth();
   const hideSlot = useRef<HTMLDivElement>(null);
@@ -76,7 +79,9 @@ export const ChromeBand = ({ mac = isMacPlatform() }: { mac?: boolean }) => {
       <div
         data-band-slot
         style={{ left: tabsLeft(hidden ? null : docked, mac) }}
-        className="absolute inset-y-0 right-0 flex"
+        className={`absolute inset-y-0 right-0 flex ${
+          sliding ? `motion-safe:transition-[left] ${SLIDE_TIMING}` : ""
+        }`}
       >
         <DocumentTabs mac={mac} />
         <div
