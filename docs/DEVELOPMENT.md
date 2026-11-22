@@ -20,6 +20,22 @@ A development run keeps its library apart from the installed app's: in `Document
 - The installed app's agent bridge listens on `127.0.0.1:4517`, the same port as a development run — if both run at once, the second cannot take the port. Give development runs another port with `DOSIK_PORT`
 - Subscription connections in AI chat look for an installed Claude Code or Codex CLI. If the app cannot find one, set the path with `CLAUDE_CLI_PATH` / `CODEX_CLI_PATH`
 
+## Windows build and smoke check
+
+The Windows installer of a branch is built by hand on GitHub Actions:
+
+```bash
+gh workflow run windows-build.yml --ref <branch>                # build, then the smoke check
+gh workflow run windows-build.yml --ref <branch> -f smoke=false  # build only
+```
+
+The installer is the run's `dosik-windows-x64` artifact. The smoke check then installs it on a Windows 11 (ARM, 1024×768) and a Windows Server 2025 (1920×1080) runner and walks through the window frame with real mouse and key input ([`scripts/windows-smoke.ps1`](../scripts/windows-smoke.ps1)):
+
+- **Checked** (a failure fails the job): silent install, first window placement, the Snap layouts spot over Maximize, one window menu for a right click on the band and for Alt+Space, F11 covering the screen and returning to the same window, Maximize and a double click on the band, no developer tools on F12, the agent bridge, Ctrl+W
+- **Seen** (screenshots in the `smoke-<runner>` artifact): Snap layouts, the hover colours, the full screen toast, Settings still open after F5 / Ctrl+R, no browser menus
+
+Each job's summary lists its checks. Dragging, the tray, sign-ins and connected apps still need a person.
+
 ## Agent bridge
 
 While Dosik runs, a local REST API at `http://127.0.0.1:4517` lets any agent read and edit the open diagram; edits appear on the canvas immediately, with highlights. Protocol: [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md); schema: [openapi.yaml](openapi.yaml) (served at `GET /api/openapi.yaml`, with a reference UI at `GET /api/docs`).

@@ -1,9 +1,17 @@
 # Builds the Windows installer (NSIS) on request, for testing on a Windows machine:
 #   gh workflow run windows-build.yml --ref <branch>
+# and then installs it on hosted Windows runners and walks through the window
+# frame (scripts/windows-smoke.ps1): checks in the job summary, log and
+# screenshots as an artifact. Without the smoke run: -f smoke=false
 name: Windows Build
 
 on:
   workflow_dispatch:
+    inputs:
+      smoke:
+        description: Install it on Windows 11 and Windows Server runners and check the window frame
+        type: boolean
+        default: true
 
 # checks out and uploads an artifact, so read access is enough
 permissions:
@@ -46,3 +54,43 @@ jobs:
           name: dosik-windows-x64
           path: src-tauri/target/release/bundle/nsis/*.exe
           retention-days: 14
+
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    needs: build
+    if: github.repository == '79841/dosik' && inputs.smoke
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows 11 on ARM runs the x64 installer under emulation; its screen stays 1024x768
+          - os: windows-11-arm
+            width: 0
+            height: 0
+          - os: windows-2025
+            width: 1920
+            height: 1080
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dosik-windows-x64
+          path: installer
+
+      - name: Install and walk through the window frame
+        shell: pwsh
+        run: |
+          $installer = (Get-ChildItem installer -Filter *-setup.exe | Select-Object -First 1).FullName
+          if (-not $installer) { throw "no installer in the build's artifact" }
+          powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-smoke.ps1 -Installer $installer -Out "$env:RUNNER_TEMP\smoke" -Width ${{ matrix.width }} -Height ${{ matrix.height }}
+
+      - name: Upload the log and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.os }}
+          path: ${{ runner.temp }}/smoke
+          retention-days: 7
