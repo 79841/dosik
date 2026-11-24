@@ -1,13 +1,16 @@
 import { baseKeymap, splitBlock } from "prosemirror-commands";
 import { history, redo, undo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
-import { Fragment, Slice } from "prosemirror-model";
+import { Slice } from "prosemirror-model";
 import { EditorState, Plugin, TextSelection } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { type CSSProperties, useLayoutEffect, useRef } from "react";
 
 import { useCommitDrafts } from "../../shared/lib/commitDrafts";
-import { docToText, textOffsetToPos, textSchema, textToDoc } from "./textDoc";
+import { docToText, textOffsetToPos, textToDoc } from "./textDoc";
+
+/** a text's length in characters, as the store's limits count them (code points) */
+const charCount = (doc: ReturnType<typeof textToDoc>): number => [...docToText(doc)].length;
 
 /** how an editor closed: kept (Enter, a click away), dropped (Esc), or kept and moving on (Tab) */
 export type EditorFinish = "commit" | "cancel" | "next" | "prev";
@@ -150,16 +153,25 @@ export const TextEditor = ({
         }),
       );
     }
+    /** `text` cut to what the limit leaves room for, the selection being replaced */
+    const roomFor = (v: EditorView, text: string): string => {
+      if (maxLength === undefined) return text;
+      const { from, to } = v.state.selection;
+      const used = charCount(v.state.doc) - [...v.state.doc.textBetween(from, to, "\n")].length;
+      return [...text].slice(0, Math.max(0, maxLength - used)).join("");
+    };
     if (maxLength !== undefined) {
       plugins.push(
         new Plugin({
-          // a change past the limit is refused — but never mid-composition,
-          // where refusing would break the IME's word; the store trims what
-          // is kept to the same limit
+          // a change that grows the text past the limit is refused — never
+          // one mid-composition, where refusing would break the IME's word
+          // (the store trims what is kept to the same limit), and never one
+          // that shortens it, so a text gone past the limit can be cut back
           filterTransaction: (tr) =>
             !tr.docChanged ||
             tr.getMeta("composition") !== undefined ||
-            [...docToText(tr.doc)].length <= maxLength,
+            charCount(tr.doc) <= maxLength ||
+            charCount(tr.doc) <= charCount(tr.before),
         }),
       );
     }
@@ -190,24 +202,19 @@ export const TextEditor = ({
       },
       // pasted text: one line for a one-line text, and cut to what the limit
       // leaves room for rather than refused whole
-      transformPastedText: (text, _plain, v) => {
-        const flat = multiline ? text : text.replace(/\s*\r?\n\s*/g, " ");
-        if (maxLength === undefined) return flat;
-        const { from, to } = v.state.selection;
-        const used =
-          [...docToText(v.state.doc)].length - [...v.state.doc.textBetween(from, to, "\n")].length;
-        return [...flat].slice(0, Math.max(0, maxLength - used)).join("");
-      },
-      // copied rich text (another editor's lines) comes as one line too
-      transformPasted: (slice) => {
-        if (multiline || slice.content.childCount <= 1) return slice;
-        const words: string[] = [];
+      transformPastedText: (text, _plain, v) =>
+        roomFor(v, multiline ? text : text.replace(/\s*\r?\n\s*/g, " ")),
+      // copied rich text (another editor's lines): one line for a one-line
+      // text, and cut to the limit's room as plain text is
+      transformPasted: (slice, v) => {
+        const lines: string[] = [];
         slice.content.forEach((line) => {
-          words.push(line.textContent);
+          lines.push(line.textContent);
         });
-        const joined = words.join(" ").replace(/\s+/g, " ").trim();
-        const line = textSchema.node("line", null, joined ? [textSchema.text(joined)] : []);
-        return new Slice(Fragment.from(line), 1, 1);
+        const text = multiline ? lines.join("\n") : lines.join(" ").replace(/\s+/g, " ").trim();
+        const fitted = roomFor(v, text);
+        if (fitted === lines.join("\n")) return slice;
+        return new Slice(textToDoc(fitted).content, 1, 1);
       },
       handleDOMEvents: {
         blur: () => {

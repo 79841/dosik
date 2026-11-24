@@ -170,6 +170,40 @@ describe("TextEditor — a shape's text, edited where it is drawn (#281)", () =>
     expect(slice.content.textBetween(0, slice.content.size)).toBe("one two three");
   });
 
+  it("past the limit through composition, it can still be cut back one character at a time", () => {
+    const { view, editor } = setup({ value: "abcde", maxLength: 5 });
+    act(() => {
+      const end = view.state.doc.content.size - 1;
+      const tr = view.state.tr.insertText("xy", end);
+      tr.setMeta("composition", 1);
+      view.dispatch(tr);
+    });
+    expect(editor).toHaveTextContent("abcdexy");
+    // a Backspace: one character off, still past the limit — taken
+    act(() => {
+      const end = view.state.doc.content.size - 1;
+      view.dispatch(view.state.tr.delete(end - 1, end));
+    });
+    expect(editor).toHaveTextContent("abcdex");
+    // a character more is still refused
+    act(() => {
+      view.dispatch(view.state.tr.insertText("x", view.state.doc.content.size - 1));
+    });
+    expect(editor).toHaveTextContent("abcdex");
+  });
+
+  it("rich text pasted is cut to the limit's room too", () => {
+    const { view } = setup({ value: "ab", maxLength: 6, select: [2, 2] });
+    let fitted: Slice | null = null;
+    view.someProp("transformPasted", (f) => {
+      fitted = f(textToDoc("cdef\nghij").slice(0), view, false);
+      return true;
+    });
+    const slice = fitted as unknown as Slice;
+    // four of the six are left: the first line fits, the break and the rest do not
+    expect(slice.content.textBetween(0, slice.content.size, "\n")).toBe("cdef");
+  });
+
   it("draws its selection in the asked colour scheme", () => {
     const { editor } = setup({ scheme: "dark" });
     expect((editor.parentElement as HTMLElement).style.colorScheme).toBe("dark");
