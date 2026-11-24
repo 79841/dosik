@@ -189,8 +189,11 @@ export const NodeContextMenu = () => {
       .setNodeTextEdit({ nodeId: shown.nodeId, part, ...(adding ? { adding } : {}) });
     close();
   };
+  // a menu opened from the keyboard over several shapes names none of them:
+  // whose text Edit or Add would open is not for the menu to guess
+  const oneShape = !shown.fromKeyboard || pickedIds().length <= 1;
   const textItems =
-    clicked && nodeTextParts(clicked).includes("label") ? (
+    oneShape && clicked && nodeTextParts(clicked).includes("label") ? (
       <>
         <MenuItem onClick={() => openText("label", false)} hint="↵" keys="Enter">
           Edit text

@@ -161,6 +161,23 @@ describe("the shape's menu: Edit text and Add … (#281)", () => {
     expect(ui().nodeTextEdit).toEqual({ nodeId: "e", part: "columns", adding: true });
   });
 
+  it("opened from the keyboard over several shapes, it offers no text items — whose text would it be", () => {
+    load([
+      { op: "add_node", node: { id: "a", label: "A", x: 0, y: 0 } },
+      { op: "add_node", node: { id: "b", label: "B", x: 300, y: 0 } },
+    ]);
+    act(() =>
+      useDiagramStore.setState((s) => ({ nodes: s.nodes.map((n) => ({ ...n, selected: true })) })),
+    );
+    act(() => {
+      openSelectionMenuFromKeyboard();
+    });
+    render(<NodeContextMenu />);
+    expect(screen.queryByRole("menuitem", { name: "Edit text" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /^Add / })).toBeNull();
+    expect(item("Bring to front")).toBeInTheDocument();
+  });
+
   it("a shape with one text offers no Add items", () => {
     load([{ op: "add_node", node: { id: "l", label: "Order", shape: "lifeline", x: 0, y: 0 } }]);
     openOnShape("l");

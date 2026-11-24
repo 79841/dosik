@@ -33,6 +33,7 @@ import {
 import { isSequenceMessage } from "../../shared/lib/edgeUtils";
 import { handleRatio } from "../../shared/lib/sideAttach";
 import { useDiagramStore } from "../../shared/lib/store";
+import { useThemeStore } from "../../shared/lib/theme";
 import { IMAGE_NODE_MIN } from "../../shared/lib/imageData";
 import { resizeFloor } from "../../shared/lib/resizeFloor";
 import { IconGlyph } from "../../shared/lib/icons";
@@ -159,6 +160,8 @@ export const ShapeNode = ({
   const [draft, setDraft] = useState<{ edit: NodeTextEdit; text: string } | null>(null);
   // whether the resize under way has taken its undo step
   const resizeCommitted = useRef(false);
+  // the step circle is the ink, so its editor's selection takes the opposite scheme
+  const theme = useThemeStore((s) => s.theme);
   // picked as part of a whole group (not stepped into): the group's box carries
   // the handles (#179). Only a selected node pays for the lookup.
   const groupId = data.groupId;
@@ -372,7 +375,7 @@ export const ShapeNode = ({
       ariaLabel="Label"
       // a frame's title, a fragment's guard, an icon's or the text shape's
       // words sit on the canvas; every other name on its tile or strip
-      onLightTile={!(isFrame || isFragment || isIcon || isText)}
+      scheme={isFrame || isFragment || isIcon || isText ? undefined : "light"}
       hostClassName={`w-full ${editorFill}`}
       className={`${labelSize} ${labelWeight} leading-snug ${editorFill} ${labelAlign} ${isFrame ? "px-1.5" : ""}`}
       style={{ color: labelColor, ...titlePatch }}
@@ -388,7 +391,7 @@ export const ShapeNode = ({
         multiline
         maxLength={MAX_DESCRIPTION}
         ariaLabel="Description"
-        onLightTile
+        scheme="light"
         hostClassName="w-full"
         className={`text-[11px] font-normal leading-snug ${isSticky ? "text-left" : "text-center"}`}
         // the drawn description's 65% as the colour's own — an opacity on the
@@ -398,6 +401,7 @@ export const ShapeNode = ({
     ) : undefined;
 
   // the badge's editor — inside the tag, or the step circle (#281)
+  const stepBadge = badge !== undefined && isStepBadge(badge);
   const badgeEditor =
     editingPart === "badge" ? (
       <TextEditor
@@ -406,11 +410,11 @@ export const ShapeNode = ({
         multiline={false}
         maxLength={MAX_BADGE}
         ariaLabel="Badge"
-        onLightTile
+        // a tag is a light cap; a step circle is the ink — the page's opposite
+        scheme={stepBadge ? (theme === "dark" ? "light" : "dark") : "light"}
         className="text-center"
       />
     ) : null;
-  const stepBadge = badge !== undefined && isStepBadge(badge);
 
   // a compartment being typed: the card is drawn from its lines, growing with
   // them; an emptied compartment keeps one row while it is open (#281)
@@ -658,7 +662,7 @@ export const ShapeNode = ({
             key="stereotype"
             {...editorProps("stereotype")}
             multiline={false}
-            onLightTile
+            scheme="light"
             ariaLabel="Stereotype"
           />
           »

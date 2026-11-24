@@ -1,12 +1,13 @@
 import { baseKeymap, splitBlock } from "prosemirror-commands";
 import { history, redo, undo } from "prosemirror-history";
 import { keymap } from "prosemirror-keymap";
+import { Fragment, Slice } from "prosemirror-model";
 import { EditorState, Plugin, TextSelection } from "prosemirror-state";
 import { Decoration, DecorationSet, EditorView } from "prosemirror-view";
 import { type CSSProperties, useLayoutEffect, useRef } from "react";
 
 import { useCommitDrafts } from "../../shared/lib/commitDrafts";
-import { docToText, textOffsetToPos, textToDoc } from "./textDoc";
+import { docToText, textOffsetToPos, textSchema, textToDoc } from "./textDoc";
 
 /** how an editor closed: kept (Enter, a click away), dropped (Esc), or kept and moving on (Tab) */
 export type EditorFinish = "commit" | "cancel" | "next" | "prev";
@@ -34,10 +35,12 @@ export interface TextEditorProps {
   hostClassName?: string;
   style?: CSSProperties;
   /**
-   * It sits on a tile, which stays light in the dark theme: the selection is
-   * drawn in the light scheme's colours, or it would be white on pale blue.
+   * The colour scheme its selection is drawn in, when it differs from the
+   * page's: a tile stays light in the dark theme ("light"), a step circle is
+   * the ink — the opposite of the page. Without it the selection would be
+   * white words on pale blue.
    */
-  onLightTile?: boolean;
+  scheme?: "light" | "dark";
   /** stretches of each line drawn in another colour, as the drawn text has them — a member's visibility mark */
   tintLine?: (line: string) => { from: number; to: number; color: string }[];
   /** every change, as text — a compartment's card grows with its rows */
@@ -74,7 +77,7 @@ export const TextEditor = ({
   className = "",
   hostClassName = "",
   style,
-  onLightTile = false,
+  scheme,
   tintLine,
   onChange,
   onFinish,
@@ -150,7 +153,13 @@ export const TextEditor = ({
     if (maxLength !== undefined) {
       plugins.push(
         new Plugin({
-          filterTransaction: (tr) => !tr.docChanged || [...docToText(tr.doc)].length <= maxLength,
+          // a change past the limit is refused — but never mid-composition,
+          // where refusing would break the IME's word; the store trims what
+          // is kept to the same limit
+          filterTransaction: (tr) =>
+            !tr.docChanged ||
+            tr.getMeta("composition") !== undefined ||
+            [...docToText(tr.doc)].length <= maxLength,
         }),
       );
     }
@@ -179,8 +188,27 @@ export const TextEditor = ({
         view.updateState(view.state.apply(tr));
         if (tr.docChanged) latest.current.onChange?.(docToText(view.state.doc));
       },
-      // a one-line text takes pasted lines as one line
-      transformPastedText: (text) => (multiline ? text : text.replace(/\s*\r?\n\s*/g, " ")),
+      // pasted text: one line for a one-line text, and cut to what the limit
+      // leaves room for rather than refused whole
+      transformPastedText: (text, _plain, v) => {
+        const flat = multiline ? text : text.replace(/\s*\r?\n\s*/g, " ");
+        if (maxLength === undefined) return flat;
+        const { from, to } = v.state.selection;
+        const used =
+          [...docToText(v.state.doc)].length - [...v.state.doc.textBetween(from, to, "\n")].length;
+        return [...flat].slice(0, Math.max(0, maxLength - used)).join("");
+      },
+      // copied rich text (another editor's lines) comes as one line too
+      transformPasted: (slice) => {
+        if (multiline || slice.content.childCount <= 1) return slice;
+        const words: string[] = [];
+        slice.content.forEach((line) => {
+          words.push(line.textContent);
+        });
+        const joined = words.join(" ").replace(/\s+/g, " ").trim();
+        const line = textSchema.node("line", null, joined ? [textSchema.text(joined)] : []);
+        return new Slice(Fragment.from(line), 1, 1);
+      },
       handleDOMEvents: {
         blur: () => {
           finish("commit");
@@ -205,7 +233,7 @@ export const TextEditor = ({
       // a drag must not move the shape, a double-click must not reopen it
       // as another text, a right-click opens the system's text menu (D3)
       className={`nodrag nowheel pointer-events-auto ${hostClassName}`}
-      style={onLightTile ? { colorScheme: "light", ...style } : style}
+      style={scheme ? { colorScheme: scheme, ...style } : style}
       onDoubleClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}

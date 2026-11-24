@@ -586,3 +586,31 @@ describe("an editor kept going, and pasted lines (#281)", () => {
     expect(pasted).toBe("Order Line");
   });
 });
+
+describe("a step circle's editor in either theme (#281)", () => {
+  it("takes the scheme opposite the page's — the circle is the ink", async () => {
+    const { useThemeStore } = await import("../../../shared/lib/theme");
+    const before = useThemeStore.getState().theme;
+    try {
+      act(() => useThemeStore.setState({ theme: "light" }));
+      const c = setup(
+        [{ op: "add_node", node: { id: "s", label: "Checkout", badge: "2", x: 0, y: 0 } }],
+        "s",
+      );
+      fireEvent.doubleClick(c.querySelector('[data-text-part="badge"]')!);
+      expect((editor("Badge").parentElement as HTMLElement).style.colorScheme).toBe("dark");
+      act(() => useCanvasUiStore.getState().setNodeTextEdit(null));
+      act(() => useThemeStore.setState({ theme: "dark" }));
+      fireEvent.doubleClick(c.querySelector('[data-text-part="badge"]')!);
+      expect((editor("Badge").parentElement as HTMLElement).style.colorScheme).toBe("light");
+    } finally {
+      act(() => useThemeStore.setState({ theme: before }));
+    }
+  });
+
+  it("a tag's editor stays light — the cap is light in both themes", () => {
+    const c = setup(BOX, "b");
+    fireEvent.doubleClick(c.querySelector('[data-text-part="badge"]')!);
+    expect((editor("Badge").parentElement as HTMLElement).style.colorScheme).toBe("light");
+  });
+});

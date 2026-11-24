@@ -1,9 +1,11 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
+import type { Slice } from "prosemirror-model";
 import { TextSelection } from "prosemirror-state";
 import { describe, expect, it, vi } from "vitest";
 
 import { commitDrafts } from "../../../shared/lib/commitDrafts";
 import { editorViewOf, TextEditor } from "../TextEditor";
+import { textToDoc } from "../textDoc";
 import { typeText } from "./editorTestUtils";
 
 const setup = (props: Partial<Parameters<typeof TextEditor>[0]> = {}) => {
@@ -132,6 +134,45 @@ describe("TextEditor — a shape's text, edited where it is drawn (#281)", () =>
     expect(editor).toHaveTextContent("ab");
     typeText(view, "abc");
     expect(editor).toHaveTextContent("abc");
+  });
+
+  it("a paste is cut to what the limit leaves room for, not refused whole", () => {
+    const { view } = setup({ value: "ab", maxLength: 5 });
+    let pasted = "";
+    view.someProp("transformPastedText", (f) => {
+      pasted = f("cdefgh", true, view);
+      return true;
+    });
+    // all of "ab" is selected, so it would be replaced: five fit
+    expect(pasted).toBe("cdefg");
+  });
+
+  it("a change mid-composition is never refused — the store trims what is kept", () => {
+    const { view, editor } = setup({ value: "abc", maxLength: 3 });
+    act(() => {
+      const tr = view.state.tr.insertText("d", view.state.doc.content.size - 1);
+      tr.setMeta("composition", 1);
+      view.dispatch(tr);
+    });
+    expect(editor).toHaveTextContent("abcd");
+  });
+
+  it("copied lines from rich text come as one line into a one-line text", () => {
+    const { view } = setup({ value: "x", multiline: false });
+    let flat: Slice | null = null;
+    view.someProp("transformPasted", (f) => {
+      flat = f(textToDoc("one\ntwo  three").slice(0), view, false);
+      return true;
+    });
+    const slice = flat as unknown as Slice;
+    expect(slice.content.childCount).toBe(1);
+    expect(slice.openStart).toBe(1);
+    expect(slice.content.textBetween(0, slice.content.size)).toBe("one two three");
+  });
+
+  it("draws its selection in the asked colour scheme", () => {
+    const { editor } = setup({ scheme: "dark" });
+    expect((editor.parentElement as HTMLElement).style.colorScheme).toBe("dark");
   });
 
   it("Save writes what is typed and stays open (#219)", () => {
