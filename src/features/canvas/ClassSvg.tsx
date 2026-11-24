@@ -34,6 +34,8 @@ interface ClassSvgProps {
   isAbstract?: boolean;
   attributes?: string[];
   methods?: string[];
+  /** the text an editor sits on in the canvas — left undrawn, never two copies (#174, #281) */
+  editingPart?: string;
 }
 
 /**
@@ -55,11 +57,18 @@ const MemberRow = ({
 }) => {
   const { mark, rest } = splitVisibility(line);
   return (
-    <text x={x} y={y} fontSize={11.5} fill={ink} dominantBaseline="middle" xmlSpace="preserve">
+    // centred on its row as the entity's rows are (`central`) — where the
+    // compartment's editor puts each line too (#281). WebKit does not hand
+    // the baseline down to a <tspan>, so the parts say it again: without it a
+    // member with a visibility mark sat on its alphabetic baseline, 4px above
+    // the rows without one.
+    <text x={x} y={y} fontSize={11.5} fill={ink} dominantBaseline="central" xmlSpace="preserve">
       {mark ? (
         <>
-          <tspan fill={muted}>{mark}</tspan>
-          <tspan> {rest}</tspan>
+          <tspan fill={muted} dominantBaseline="central">
+            {mark}
+          </tspan>
+          <tspan dominantBaseline="central"> {rest}</tspan>
         </>
       ) : (
         line
@@ -100,6 +109,7 @@ export const ClassSvg = ({
   isAbstract,
   attributes = [],
   methods = [],
+  editingPart,
 }: ClassSvgProps) => {
   const dividers = classDividerYs({ stereotype, attributes, methods });
   const nameTop = stereotype ? CLASS_STEREOTYPE_H : 0;
@@ -125,7 +135,7 @@ export const ClassSvg = ({
         stroke={border}
         strokeWidth={1}
       />
-      {stereotype ? (
+      {stereotype && editingPart !== "stereotype" ? (
         <text
           x={CLASS_TEXT_PAD}
           y={CLASS_STEREOTYPE_H / 2 + 6}
@@ -148,12 +158,12 @@ export const ClassSvg = ({
         textAnchor="start"
         dominantBaseline="middle"
       >
-        {name}
+        {editingPart === "label" ? "" : name}
       </text>
       {dividers.map((y) => (
         <line key={`d${y}`} x1={0} x2={w} y1={y} y2={y} stroke={border} strokeWidth={1} />
       ))}
-      {attrRows.map((row) => (
+      {(editingPart === "attributes" ? [] : attrRows).map((row) => (
         <MemberRow
           key={row.key}
           line={row.line}
@@ -163,7 +173,7 @@ export const ClassSvg = ({
           muted={muted}
         />
       ))}
-      {methodRows.map((row) => (
+      {(editingPart === "methods" ? [] : methodRows).map((row) => (
         <MemberRow
           key={row.key}
           line={row.line}

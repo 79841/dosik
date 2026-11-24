@@ -77,6 +77,8 @@ export interface DiagramState {
   /** Deselects everything — the chat's selection chip clears it this way. */
   clearSelection: () => void;
   selectForContextMenu: (nodeId: string) => void;
+  /** every shape and line picked — the empty canvas's Select all, ⌘A (#281); false when there is nothing */
+  selectAll: () => boolean;
 
   commit: () => void;
   undo: () => void;

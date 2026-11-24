@@ -9,32 +9,80 @@ import { usePopupPosition } from "../../shared/lib/usePopupPosition";
 import { useOutsideDismiss } from "../../shared/lib/useOutsideDismiss";
 import { hasExportableSelection } from "../export/selection";
 import { pickedShapes } from "../inspector/useSelectionEditing";
-import { useCanvasUiStore } from "./canvasUiStore";
+import { type NodeMenuState, useCanvasUiStore } from "./canvasUiStore";
 import { ExportSelectionItems } from "./ExportSelectionItems";
+import { MenuItem } from "./menuParts";
+import {
+  addableTextParts,
+  isListPart,
+  type NodeTextPart,
+  nodeTextParts,
+  textPartPatch,
+  textPartValue,
+} from "./nodeTextParts";
 
 /** the ids the edit items act on — the same pick the edit bar makes */
 const pickedIds = () => pickedShapes(useDiagramStore.getState().nodes).map((n) => n.id);
 
-const MenuItem = ({
-  onClick,
-  children,
-  danger,
+/** what a text is called in the menu — one row of a compartment is one attribute */
+const TEXT_NOUN: Record<NodeTextPart, string> = {
+  label: "name",
+  description: "description",
+  badge: "badge",
+  stereotype: "stereotype",
+  attributes: "attribute",
+  methods: "method",
+  columns: "column",
+};
+
+/**
+ * The menu of one text in a shape — its description, badge, stereotype or a
+ * row (#281): open it for typing, or take it away. A row goes alone; the rest
+ * of its compartment stays.
+ */
+const TextMenuItems = ({
+  menu,
+  part,
+  close,
 }: {
-  onClick: () => void;
-  children: React.ReactNode;
-  danger?: boolean;
-}) => (
-  <button
-    type="button"
-    role="menuitem"
-    onClick={onClick}
-    className={`w-full rounded-md px-3 py-1.5 text-left text-[12px] font-medium transition-colors ${
-      danger ? "text-danger hover:bg-danger/10" : "text-muted-strong hover:bg-hover"
-    }`}
-  >
-    {children}
-  </button>
-);
+  menu: NodeMenuState;
+  part: NodeTextPart;
+  close: () => void;
+}) => {
+  const noun = TEXT_NOUN[part];
+  const edit = () => {
+    useCanvasUiStore.getState().setNodeTextEdit({
+      nodeId: menu.nodeId,
+      part,
+      ...(isListPart(part) ? { line: menu.line ?? 0 } : {}),
+    });
+    close();
+  };
+  const remove = () => {
+    const store = useDiagramStore.getState();
+    const node = store.nodes.find((n) => n.id === menu.nodeId);
+    if (node) {
+      const text = isListPart(part)
+        ? textPartValue(node.data, part)
+            .split("\n")
+            .filter((_, i) => i !== (menu.line ?? 0))
+            .join("\n")
+        : "";
+      store.updateNodeData(node.id, textPartPatch(part, text));
+    }
+    close();
+  };
+  return (
+    <>
+      {/* no ↵ here: Enter on a selected shape opens its name, not this text */}
+      <MenuItem onClick={edit}>Edit {noun}</MenuItem>
+      <div className="my-1 h-px bg-line" />
+      <MenuItem danger onClick={remove}>
+        Remove {noun}
+      </MenuItem>
+    </>
+  );
+};
 
 /**
  * Right-click menu for shapes: editing what is picked (#159) — colour, order,
@@ -69,13 +117,22 @@ export const NodeContextMenu = () => {
         : s.nodes.find((n) => n.selected && n.data.shape !== "anchor");
     return shape?.data.color;
   });
+  // the clicked shape's data — its texts decide the text items (#281)
+  const clicked = useDiagramStore((s) =>
+    menu === null ? undefined : s.nodes.find((n) => n.id === menu.nodeId)?.data,
+  );
+  // a menu opened on one of the shape's texts is that text's, while the text is there
+  const textPart =
+    menu?.textPart && clicked && nodeTextParts(clicked).includes(menu.textPart)
+      ? menu.textPart
+      : undefined;
   const groupable = useDiagramStore((s) => (menu === null ? false : canGroup(s.nodes)));
   const ungroupable = useDiagramStore((s) => (menu === null ? false : canUngroup(s.nodes)));
   const ref = useRef<HTMLDivElement>(null);
   // the placement hook is told "open" by the same test that decides whether
   // anything renders — otherwise a menu whose content arrives a render later
   // keeps its stale spot, since nothing in the anchor changed (#142)
-  const shown = menu !== null && (exportable || editable) ? menu : null;
+  const shown = menu !== null && (exportable || editable || textPart) ? menu : null;
   const position = usePopupPosition(ref, shown && { x: shown.clientX, y: shown.clientY });
 
   useOutsideDismiss(ref, menu !== null, () => setNodeMenu(null));
@@ -89,7 +146,12 @@ export const NodeContextMenu = () => {
     if (!keyboardOwned) return;
     const returnTo = document.activeElement as HTMLElement | null;
     return () => {
-      if (returnTo?.isConnected) returnTo.focus();
+      // only the focus the menu took, or the page's when it went with the
+      // menu — not a text editor an item just opened (#281), which would
+      // close the moment it lost the focus
+      const now = document.activeElement;
+      const lost = now === null || now === document.body || !now.isConnected;
+      if (lost && returnTo?.isConnected) returnTo.focus();
     };
   }, [keyboardOwned]);
   const close = (): void => setNodeMenu(null);
@@ -104,6 +166,43 @@ export const NodeContextMenu = () => {
     store.setNodesColor(pickedIds(), c);
     close();
   };
+
+  if (textPart) {
+    return (
+      <div
+        ref={ref}
+        role="menu"
+        aria-label={`${TEXT_NOUN[textPart][0]!.toUpperCase()}${TEXT_NOUN[textPart].slice(1)} actions`}
+        className="nodelete fixed z-50 w-52 rounded-lg bg-surface p-1.5 shadow-popover ring-1 ring-line"
+        style={position}
+        onKeyDown={onKeyDown}
+      >
+        <TextMenuItems menu={shown} part={textPart} close={close} />
+      </div>
+    );
+  }
+
+  // the shape's own texts: its name, and the ones it can take (#281)
+  const openText = (part: NodeTextPart, adding: boolean) => {
+    useCanvasUiStore
+      .getState()
+      .setNodeTextEdit({ nodeId: shown.nodeId, part, ...(adding ? { adding } : {}) });
+    close();
+  };
+  const textItems =
+    clicked && nodeTextParts(clicked).includes("label") ? (
+      <>
+        <MenuItem onClick={() => openText("label", false)} hint="↵" keys="Enter">
+          Edit text
+        </MenuItem>
+        {addableTextParts(clicked).map(({ part, enabled }) => (
+          <MenuItem key={part} disabled={!enabled} onClick={() => openText(part, true)}>
+            Add {TEXT_NOUN[part]}
+          </MenuItem>
+        ))}
+        <div className="my-1 h-px bg-line" />
+      </>
+    ) : null;
 
   return (
     <div
@@ -134,6 +233,7 @@ export const NodeContextMenu = () => {
             ))}
           </fieldset>
           <div className="my-1 h-px bg-line" />
+          {textItems}
           <MenuItem
             onClick={() => {
               store.setNodeZ(pickedIds(), "front");

@@ -39,6 +39,8 @@ import { DropNodeMenu } from "./DropNodeMenu";
 import { EdgeContextMenu } from "./EdgeContextMenu";
 import { NodeContextMenu } from "./NodeContextMenu";
 import { openShapeMenu } from "./selectionMenu";
+import { CanvasContextMenu } from "./CanvasContextMenu";
+import { pickTextPart } from "./nodeTextParts";
 import { LabeledEdge } from "./LabeledEdge";
 import { ShapeNode } from "./ShapeNode";
 import { registerPointerAt, registerViewportCenter, registerViewportRead } from "./canvasViewport";
@@ -147,6 +149,19 @@ const pointer = (e: React.MouseEvent) => ({
   clientY: e.clientY,
 });
 
+/**
+ * The text of the shape a right-click landed on — a description, a badge, a
+ * row — whose own menu opens instead of the shape's (#281). Nothing for the
+ * name or anywhere else on the shape.
+ */
+const textUnder = (e: React.MouseEvent, node: DiagramNode) => {
+  const mark = (e.target as Element).closest<HTMLElement>("[data-text-part]");
+  const picked = mark
+    ? pickTextPart(node.data, mark.dataset.textPart, mark.dataset.textLine)
+    : null;
+  return picked && picked.part !== "label" ? { textPart: picked.part, line: picked.line } : {};
+};
+
 /** middle button only — see the note on `panOnDrag` below */
 const PAN_BUTTONS = [1];
 
@@ -167,7 +182,7 @@ export const DiagramCanvas = () => {
   const nodes = useDiagramStore((s) => s.nodes);
   const edges = useDiagramStore((s) => s.edges);
   const editedEdgeId = useCanvasUiStore((s) => s.edgeLabelEdit?.edgeId ?? null);
-  const editedNodeId = useCanvasUiStore((s) => s.nodeLabelEdit);
+  const editedNodeId = useCanvasUiStore((s) => s.nodeTextEdit?.nodeId ?? null);
   const onNodesChange = useDiagramStore((s) => s.onNodesChange);
   const onEdgesChange = useDiagramStore((s) => s.onEdgesChange);
   const onConnect = useDiagramStore((s) => s.onConnect);
@@ -713,7 +728,18 @@ export const DiagramCanvas = () => {
         panOnDrag={PAN_BUTTONS}
         panOnScroll
         onNodeContextMenu={(e, node) => {
-          if (openShapeMenu({ ...pointer(e), nodeId: node.id, settle: true })) e.preventDefault();
+          if (
+            openShapeMenu({ ...pointer(e), nodeId: node.id, settle: true, ...textUnder(e, node) })
+          )
+            e.preventDefault();
+        }}
+        // the empty canvas has a menu of its own: paste, add, select all (#281)
+        onPaneContextMenu={(e) => {
+          e.preventDefault();
+          const at = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+          useCanvasUiStore
+            .getState()
+            .setCanvasMenu({ clientX: e.clientX, clientY: e.clientY, flowX: at.x, flowY: at.y });
         }}
         // React Flow lays a transparent rectangle over a rubber-band selection
         // (`.react-flow__nodesselection-rect`, z-index 3 above the viewport's
@@ -735,6 +761,7 @@ export const DiagramCanvas = () => {
           useDiagramStore.getState().enterGroup(null);
           setEdgeMenu(null);
           setNodeMenu(null);
+          useCanvasUiStore.getState().setCanvasMenu(null);
           setEdgeLabelEdit(null);
         }}
         onDrop={onDrop}
@@ -773,6 +800,7 @@ export const DiagramCanvas = () => {
       <ArrowDrawOverlay />
       <EdgeContextMenu />
       <NodeContextMenu />
+      <CanvasContextMenu />
       <DropNodeMenu />
     </div>
   );

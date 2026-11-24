@@ -73,8 +73,24 @@ describe("Text input fields turn off autocapitalize, autocorrect and spellcheck 
     // that starts missing fields fails here instead of passing quietly
     // (#219 moved the title field from the toolbar into the document tab.
     // #220 adds From Mermaid…'s textarea. #229 takes the page tabs' rename
-    // field away with the pages)
-    expect(checked).toBe(15);
+    // field away with the pages. #281 takes the shape's label textarea and the
+    // edit bar's description, badge and member fields: the shape's texts are
+    // typed in place, in the editor checked below)
+    expect(checked).toBe(11);
+  });
+
+  it("Every rich text editor turns the three off on its editable element (#281)", () => {
+    const editors = sources(SRC).filter((file) =>
+      readFileSync(file, "utf8").includes("new EditorView("),
+    );
+    // the shape-text editor — raise this when another editor is added
+    expect(editors.map((file) => relative(SRC, file))).toEqual(["features/canvas/TextEditor.tsx"]);
+    for (const file of editors) {
+      const source = readFileSync(file, "utf8");
+      expect(source).toContain('spellcheck: "false"');
+      expect(source).toContain('autocapitalize: "off"');
+      expect(source).toContain('autocorrect: "off"');
+    }
   });
 
   it("Finds the end of the tag correctly — a textarea with children, a following number field", () => {

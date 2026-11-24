@@ -1,7 +1,7 @@
 import { isMacPlatform } from "./windowChrome";
 
 /** the shortcuts that are shown to the user (#217 D22, #218 D12, #219 D18) */
-export type ShortcutKey = "\\" | "," | "O" | "S" | "T" | "W" | "Z";
+export type ShortcutKey = "\\" | "," | "A" | "O" | "S" | "T" | "V" | "W" | "Z";
 
 /** with Shift too — Redo */
 type Modifiers = { shift?: boolean };

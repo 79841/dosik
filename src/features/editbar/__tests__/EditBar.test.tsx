@@ -398,7 +398,7 @@ describe("MARKER_OPTIONS", () => {
   });
 });
 
-describe("class member editing — concurrent edits with an agent", () => {
+describe("class stereotype editing — concurrent edits with an agent", () => {
   const seedClass = () => {
     useDiagramStore.getState().loadDoc({ version: 1, title: "T", nodes: [], edges: [] }, null);
     useDiagramStore
@@ -406,7 +406,7 @@ describe("class member editing — concurrent edits with an agent", () => {
       .applyOps([{ op: "add_node", node: { id: "c", label: "C", shape: "class", x: 0, y: 0 } }]);
     useDiagramStore
       .getState()
-      .applyOps([{ op: "update_node", id: "c", set: { attributes: ["+ old: int"] } }]);
+      .applyOps([{ op: "update_node", id: "c", set: { stereotype: "old" } }]);
     act(() => {
       useDiagramStore.setState((st) => ({
         nodes: st.nodes.map((n) => ({ ...n, selected: n.id === "c" })),
@@ -417,55 +417,55 @@ describe("class member editing — concurrent edits with an agent", () => {
     act(() => {
       useDiagramStore
         .getState()
-        .applyOps([{ op: "update_node", id: "c", set: { attributes: [value] } }]);
+        .applyOps([{ op: "update_node", id: "c", set: { stereotype: value } }]);
     });
   };
-  const box = () => screen.getByLabelText("Attributes") as HTMLTextAreaElement;
+  const box = () => screen.getByLabelText("Stereotype") as HTMLInputElement;
 
   beforeEach(seedClass);
 
   it("takes focus with a single click", async () => {
-    renderBar("Members");
+    renderBar("Class");
     await userEvent.click(box());
     expect(document.activeElement).toBe(box());
   });
 
   it("keeps the typed input when the agent changes the same field mid-typing", async () => {
-    renderBar("Members");
+    renderBar("Class");
     await userEvent.click(box());
     await userEvent.type(box(), "X");
-    agentEdits("+ fromAgent: int");
+    agentEdits("fromAgent");
 
-    expect(box().value).toBe("+ old: intX");
+    expect(box().value).toBe("oldX");
     expect(document.activeElement).toBe(box());
   });
 
   it("shows agent changes again after focus leaves", async () => {
-    renderBar("Members");
+    renderBar("Class");
     await userEvent.click(box());
     await userEvent.tab();
-    agentEdits("+ fromAgent: int");
+    agentEdits("fromAgent");
 
-    expect(box().value).toBe("+ fromAgent: int");
+    expect(box().value).toBe("fromAgent");
   });
 
   it("commits nothing when leaving without edits — agent changes made meanwhile aren't overwritten", async () => {
-    renderBar("Members");
+    renderBar("Class");
     await userEvent.click(box());
-    agentEdits("+ fromAgent: int");
+    agentEdits("fromAgent");
     await userEvent.tab();
 
-    expect(useDiagramStore.getState().nodes[0]?.data.attributes).toEqual(["+ fromAgent: int"]);
-    expect(box().value).toBe("+ fromAgent: int");
+    expect(useDiagramStore.getState().nodes[0]?.data.stereotype).toBe("fromAgent");
+    expect(box().value).toBe("fromAgent");
   });
 
   it("lets the user's input win when leaving after edits", async () => {
-    renderBar("Members");
+    renderBar("Class");
     await userEvent.click(box());
     await userEvent.type(box(), "!");
     await userEvent.tab();
 
-    expect(useDiagramStore.getState().nodes[0]?.data.attributes).toEqual(["+ old: int!"]);
+    expect(useDiagramStore.getState().nodes[0]?.data.stereotype).toBe("old!");
   });
 });
 
@@ -475,8 +475,8 @@ describe("when the selection changes while focus stays", () => {
     useDiagramStore.getState().applyOps([
       { op: "add_node", node: { id: "a", label: "A", shape: "class", x: 0, y: 0 } },
       { op: "add_node", node: { id: "b", label: "B", shape: "class", x: 300, y: 0 } },
-      { op: "update_node", id: "a", set: { attributes: ["+ fromA: int"] } },
-      { op: "update_node", id: "b", set: { attributes: ["+ fromB: str"] } },
+      { op: "update_node", id: "a", set: { stereotype: "fromA" } },
+      { op: "update_node", id: "b", set: { stereotype: "fromB" } },
     ]);
   };
   const select = (id: string) =>
@@ -485,32 +485,32 @@ describe("when the selection changes while focus stays", () => {
         nodes: st.nodes.map((n) => ({ ...n, selected: n.id === id })),
       }));
     });
-  const box = () => screen.getByLabelText("Attributes") as HTMLTextAreaElement;
+  const box = () => screen.getByLabelText("Stereotype") as HTMLInputElement;
 
   beforeEach(seedTwo);
 
   it("swaps in the new node's values — no uncommitted input from the previous node remains", async () => {
     select("a");
-    renderBar("Members");
+    renderBar("Class");
     await userEvent.click(box());
     await userEvent.type(box(), "XYZ");
 
     select("b");
 
-    expect(box().value).toBe("+ fromB: str");
+    expect(box().value).toBe("fromB");
   });
 
   it("a later blur doesn't commit the previous node's input to the new node", async () => {
     select("a");
-    renderBar("Members");
+    renderBar("Class");
     await userEvent.click(box());
     await userEvent.type(box(), "XYZ");
     select("b");
     await userEvent.tab();
 
     const nodes = useDiagramStore.getState().nodes;
-    expect(nodes.find((n) => n.id === "b")?.data.attributes).toEqual(["+ fromB: str"]);
-    expect(nodes.find((n) => n.id === "a")?.data.attributes).toEqual(["+ fromA: int"]);
+    expect(nodes.find((n) => n.id === "b")?.data.stereotype).toBe("fromB");
+    expect(nodes.find((n) => n.id === "a")?.data.stereotype).toBe("fromA");
   });
 });
 
@@ -679,47 +679,26 @@ describe("editing box decorations (#160)", () => {
     expect(useDiagramStore.getState().past.length).toBe(past);
   });
 
-  it("saves description and badge on leaving the field — spaces between words survive", async () => {
-    const user = userEvent.setup();
-    selectBox();
-    renderBar("Text");
-    const description = screen.getByRole("textbox", { name: "Description" });
-    await user.click(description);
-    await user.type(description, "Postgres 16 primary");
-    expect(data().description).toBeUndefined();
-    const badge = screen.getByRole("textbox", { name: "Badge" });
-    await user.click(badge);
-    expect(data().description).toBe("Postgres 16 primary");
-    await user.type(badge, "v2");
-    await user.tab();
-    expect(data().badge).toBe("v2");
-  });
-
-  it("has no description or badge fields for non-boxes", () => {
+  it("a box, a frame and a class have no text fields — their texts are typed on the canvas (#281)", () => {
     useDiagramStore.getState().loadDoc({ version: 1, title: "T", nodes: [], edges: [] }, null);
-    useDiagramStore
-      .getState()
-      .applyOps([{ op: "add_node", node: { id: "c", label: "C", shape: "class", x: 0, y: 0 } }]);
-    useDiagramStore.setState((s) => ({ nodes: s.nodes.map((n) => ({ ...n, selected: true })) }));
-    renderBar("Text");
-    expect(screen.queryByRole("textbox", { name: "Description" })).toBeNull();
-    expect(screen.queryByRole("textbox", { name: "Badge" })).toBeNull();
-  });
-
-  it("frames only have a badge field — no description field (#210 D23)", async () => {
-    const user = userEvent.setup();
-    useDiagramStore.getState().loadDoc({ version: 1, title: "T", nodes: [], edges: [] }, null);
-    useDiagramStore
-      .getState()
-      .applyOps([{ op: "add_node", node: { id: "f", label: "VPC", shape: "frame", x: 0, y: 0 } }]);
-    useDiagramStore.setState((s) => ({ nodes: s.nodes.map((n) => ({ ...n, selected: true })) }));
-    renderBar("Text");
-    expect(screen.queryByRole("textbox", { name: "Description" })).toBeNull();
-    const badge = screen.getByRole("textbox", { name: "Badge" });
-    await user.click(badge);
-    await user.type(badge, "1");
-    await user.tab();
-    expect(data().badge).toBe("1");
+    useDiagramStore.getState().applyOps([
+      { op: "add_node", node: { id: "b", label: "B", x: 0, y: 0 } },
+      { op: "add_node", node: { id: "f", label: "VPC", shape: "frame", x: 300, y: 0 } },
+      { op: "add_node", node: { id: "c", label: "C", shape: "class", x: 900, y: 0 } },
+      { op: "add_node", node: { id: "e", label: "E", shape: "entity", x: 1200, y: 0 } },
+    ]);
+    for (const id of ["b", "f", "c", "e"]) {
+      act(() => {
+        useDiagramStore.setState((s) => ({
+          nodes: s.nodes.map((n) => ({ ...n, selected: n.id === id })),
+        }));
+      });
+      const view = renderBar();
+      expect(screen.queryByRole("button", { name: "Text" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Columns" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Members" })).toBeNull();
+      view.unmount();
+    }
   });
 });
 
@@ -738,11 +717,11 @@ describe("when a frame is selected (#170 D8)", () => {
       nodes: s.nodes.map((n) => ({ ...n, selected: ids.includes(n.id) })),
     }));
 
-  it("has Color and Text but no Shape", () => {
+  it("has Color but no Shape — and no Text: its title and badge are typed on the canvas (#281)", () => {
     pick(["f"]);
     renderBar();
     expect(screen.getByRole("button", { name: "Color" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Text" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Text" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Shape" })).not.toBeInTheDocument();
   });
 

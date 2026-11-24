@@ -45,7 +45,7 @@ describe("node label edit state lifecycle", () => {
     useDiagramStore
       .getState()
       .loadDoc(makeDoc([makeNode({ id: "n1", label: "n1 in A" })], []), null);
-    useCanvasUiStore.getState().setNodeLabelEdit(null);
+    useCanvasUiStore.getState().setNodeTextEdit(null);
   });
 
   it("records an open edit in shared state — not component-local", () => {
@@ -54,7 +54,7 @@ describe("node label edit state lifecycle", () => {
       useDiagramStore.getState().requestEditLabel("n1");
     });
 
-    expect(useCanvasUiStore.getState().nodeLabelEdit).toBe("n1");
+    expect(useCanvasUiStore.getState().nodeTextEdit?.nodeId).toBe("n1");
     expect(screen.getByRole("textbox")).toBeTruthy();
   });
 
@@ -63,7 +63,7 @@ describe("node label edit state lifecycle", () => {
     act(() => {
       useDiagramStore.getState().requestEditLabel("n1");
     });
-    expect(useCanvasUiStore.getState().nodeLabelEdit).toBe("n1");
+    expect(useCanvasUiStore.getState().nodeTextEdit?.nodeId).toBe("n1");
 
     act(() => {
       useDiagramStore
@@ -71,7 +71,7 @@ describe("node label edit state lifecycle", () => {
         .loadDoc(makeDoc([makeNode({ id: "n1", label: "n1 in B" })], []), "/b.dosik.json");
     });
 
-    expect(useCanvasUiStore.getState().nodeLabelEdit).toBeNull();
+    expect(useCanvasUiStore.getState().nodeTextEdit).toBeNull();
   });
 
   it("set_diagram containing the same id also clears the edit state", () => {
@@ -90,7 +90,7 @@ describe("node label edit state lifecycle", () => {
       ]);
     });
 
-    expect(useCanvasUiStore.getState().nodeLabelEdit).toBeNull();
+    expect(useCanvasUiStore.getState().nodeTextEdit).toBeNull();
   });
 
   it("the bridge's clear also clears the edit state", () => {
@@ -104,7 +104,7 @@ describe("node label edit state lifecycle", () => {
       useDiagramStore.getState().applyOps([{ op: "clear" }]);
     });
 
-    expect(useCanvasUiStore.getState().nodeLabelEdit).toBeNull();
+    expect(useCanvasUiStore.getState().nodeTextEdit).toBeNull();
   });
 
   it("drops the edit state when the node disappears", () => {
@@ -117,7 +117,7 @@ describe("node label edit state lifecycle", () => {
       useDiagramStore.getState().deleteElements(["n1"], []);
     });
 
-    expect(useCanvasUiStore.getState().nodeLabelEdit).toBeNull();
+    expect(useCanvasUiStore.getState().nodeTextEdit).toBeNull();
   });
 
   it("closes the editor once the edit state clears, so the old label can't be written into the new document", () => {

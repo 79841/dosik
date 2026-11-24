@@ -304,6 +304,18 @@ const diagramState: StateCreator<DiagramState> = (set, get) => ({
     }));
   },
 
+  selectAll: () => {
+    const { nodes, edges } = get();
+    if (nodes.length === 0 && edges.length === 0) return false;
+    set({
+      nodes: nodes.map((n) => (n.selected ? n : { ...n, selected: true })),
+      edges: edges.map((e) => (e.selected ? e : { ...e, selected: true })),
+      // a whole-canvas pick is no longer inside one group
+      enteredGroup: null,
+    });
+    return true;
+  },
+
   onConnect: (connection, at) => {
     if (!connection.source || !connection.target) return;
     get().commit();

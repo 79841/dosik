@@ -14,7 +14,9 @@ import { ShapeNode } from "../ShapeNode";
 /** the node; with its label editor open unless `editing` is false */
 const renderNode = (id: string, editing = true) => {
   const node = useDiagramStore.getState().nodes.find((n) => n.id === id)!;
-  act(() => useCanvasUiStore.getState().setNodeLabelEdit(editing ? id : null));
+  act(() =>
+    useCanvasUiStore.getState().setNodeTextEdit(editing ? { nodeId: id, part: "label" } : null),
+  );
   return render(
     <ReactFlowProvider>
       <ShapeNode
@@ -40,7 +42,10 @@ const renderNode = (id: string, editing = true) => {
 const renderEditing = (id: string) => renderNode(id);
 
 /** the band the editor is laid in */
-const editorBand = (c: Element) => c.querySelector("textarea")!.parentElement as HTMLElement;
+const editorBand = (c: Element) =>
+  c.querySelector("[contenteditable=true]")!.parentElement!.parentElement as HTMLElement;
+/** the open editor — the editable text itself */
+const editorOf = (c: Element) => c.querySelector("[contenteditable=true]") as HTMLElement;
 /** the names the box's own drawing paints */
 const paintedText = (c: Element) => [...c.querySelectorAll("svg text")].map((t) => t.textContent);
 
@@ -72,7 +77,7 @@ describe("the name editor sits where the name is drawn (#174)", () => {
     expect(paintedText(c)).not.toContain("TestClass");
     expect(paintedText(c)).toContain("name:string");
     // the name is left-aligned on the card's header strip (#210 D13)
-    expect(c.querySelector("textarea")).toHaveClass("text-left");
+    expect(editorOf(c)).toHaveClass("text-left");
     expect(band.style.paddingLeft).toBe(`${CLASS_TEXT_PAD}px`);
   });
 
@@ -90,12 +95,12 @@ describe("the name editor sits where the name is drawn (#174)", () => {
     expect(band.style.top).toBe("0px");
     expect(band.style.height).toBe(`${ENTITY_HEADER_H}px`);
     expect(paintedText(c)).not.toContain("users");
-    expect(c.querySelector("textarea")).toHaveClass("text-left");
+    expect(editorOf(c)).toHaveClass("text-left");
     expect(band.style.paddingLeft).toBe(`${ENTITY_TEXT_PAD}px`);
   });
 
   it("turns off autocapitalize, autocorrect and spellcheck in the editor", () => {
-    const area = renderEditing("c").querySelector("textarea")!;
+    const area = editorOf(renderEditing("c"));
     expect(area.getAttribute("autocapitalize")).toBe("off");
     expect(area.getAttribute("autocorrect")).toBe("off");
     expect(area.getAttribute("spellcheck")).toBe("false");
@@ -123,8 +128,8 @@ describe("a box's description stays put while its label is edited (#174)", () =>
 
   it("puts the editor at the label and leaves the description below it", () => {
     const c = renderEditing("b");
-    const area = c.querySelector("textarea")!;
-    expect(area.value).toBe("test");
+    const area = editorOf(c);
+    expect(area).toHaveTextContent("test");
     expect(c.textContent).toContain("Postgres 16");
     // the editor and the description share the decorated stack
     const stack = c.querySelector(".flex-col.gap-0\\.5")!;
@@ -135,7 +140,7 @@ describe("a box's description stays put while its label is edited (#174)", () =>
 
 describe("the title editor opens where the title was shown — left-aligned (#181)", () => {
   beforeEach(() => {
-    act(() => useCanvasUiStore.getState().setNodeLabelEdit(null));
+    act(() => useCanvasUiStore.getState().setNodeTextEdit(null));
     useDiagramStore.getState().loadDoc(makeDoc([], []), null);
     useDiagramStore.getState().applyOps([
       {
@@ -163,7 +168,7 @@ describe("the title editor opens where the title was shown — left-aligned (#18
     expect(band.style.top).toBe(`${-BORDER_TITLE.height / 2}px`);
     expect(band.style.height).toBe(`${BORDER_TITLE.height}px`);
     expect(band.style.left).toBe(`${BORDER_TITLE.inset}px`);
-    const editor = c.querySelector("textarea")!;
+    const editor = editorOf(c);
     expect(editor).toHaveClass("text-left");
     expect(editor).not.toHaveClass("text-center");
   });
@@ -174,7 +179,7 @@ describe("the title editor opens where the title was shown — left-aligned (#18
     expect(band.style.left).toBe(`${FRAGMENT_GUARD.left}px`);
     expect(band.style.top).toBe(`${FRAGMENT_GUARD.top}px`);
     expect(band.style.height).toBe(`${FRAGMENT_GUARD.height}px`);
-    const editor = c.querySelector("textarea")!;
+    const editor = editorOf(c);
     expect(editor).toHaveClass("text-left");
     expect(editor).not.toHaveClass("text-center");
   });

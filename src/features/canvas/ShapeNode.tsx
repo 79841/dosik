@@ -7,7 +7,7 @@ import {
   useUpdateNodeInternals,
   type NodeProps,
 } from "@xyflow/react";
-import { Fragment, useCallback, useEffect, useMemo, useRef } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   DEFAULT_NODE_SIZE,
@@ -30,7 +30,6 @@ import {
   THEME_INK,
   THEME_INK_MUTED,
 } from "../../shared/lib/palette";
-import { useCommitDrafts } from "../../shared/lib/commitDrafts";
 import { isSequenceMessage } from "../../shared/lib/edgeUtils";
 import { handleRatio } from "../../shared/lib/sideAttach";
 import { useDiagramStore } from "../../shared/lib/store";
@@ -39,6 +38,8 @@ import { resizeFloor } from "../../shared/lib/resizeFloor";
 import { IconGlyph } from "../../shared/lib/icons";
 import {
   DECOR,
+  MAX_BADGE,
+  MAX_DESCRIPTION,
   hasBadge,
   hasInlineDecor,
   iconPlacement,
@@ -50,19 +51,75 @@ import {
 import { contentLift, frameTitleRight } from "../../shared/lib/nodeLayout";
 import { visibleActivation } from "../../shared/lib/store/opValidation";
 import type { DiagramEdge, DiagramNode } from "../../shared/lib/types";
-import { connectDrag, useCanvasUiStore } from "./canvasUiStore";
+import { connectDrag, type NodeTextEdit, useCanvasUiStore } from "./canvasUiStore";
 import { startPointerDrag } from "../../shared/lib/pointerDrag";
-import { CLASS_NAME_H, CLASS_STEREOTYPE_H, CLASS_TEXT_PAD } from "../../shared/lib/classShape";
+import {
+  CLASS_NAME_H,
+  CLASS_SECTION_PAD,
+  CLASS_STEREOTYPE_FONT,
+  CLASS_STEREOTYPE_H,
+  CLASS_TEXT_PAD,
+  classNodeHeight,
+  classNodeWidth,
+  splitVisibility,
+} from "../../shared/lib/classShape";
 import { ClassSvg } from "./ClassSvg";
 import { EntitySvg } from "./EntitySvg";
-import { ENTITY_HEADER_H, ENTITY_TEXT_PAD } from "../../shared/lib/entityShape";
+import {
+  ENTITY_HEADER_H,
+  ENTITY_ROWS_PAD,
+  ENTITY_TEXT_PAD,
+  entityNodeHeight,
+  entityNodeWidth,
+} from "../../shared/lib/entityShape";
 import { IconNodeSvg } from "./IconNodeSvg";
 import { FrameSvg } from "./FrameSvg";
 import { FragmentSvg, LifelineSvg } from "./SequenceSvg";
 import { ShapeSvg } from "./ShapeSvg";
-import { PLAIN_TEXT } from "../../shared/ui/plainText";
+import {
+  cardRowBands,
+  compartmentTop,
+  editorStartText,
+  isListPart,
+  type ListPart,
+  lineRange,
+  type NodeTextPart,
+  nextTextPart,
+  nodeTextParts,
+  pickTextPart,
+  STEREOTYPE_LINE,
+  textPartChanged,
+  textPartEmptied,
+  textPartPatch,
+} from "./nodeTextParts";
+import { type EditorFinish, TextEditor } from "./TextEditor";
 
 export { FragmentSvg, LifelineSvg, ShapeSvg };
+
+/**
+ * The ring round a text whose right-click menu is open (#281), in `color`:
+ * a tile's own text colour on a tile — which stays light in the dark theme —
+ * the canvas ink on the canvas or a card's body. An outline, which an export
+ * capture keeps round where a ring's box-shadow turns square (#138); only
+ * ever there while a menu is.
+ */
+const menuOutline = (color: string) =>
+  ({ outline: `1.5px solid ${color}`, outlineOffset: 2, borderRadius: 2 }) as const;
+
+/** a member line's leading visibility mark in its drawn, quiet tone (`ClassSvg`) */
+const tintVisibility = (line: string) =>
+  splitVisibility(line).mark ? [{ from: 0, to: 1, color: THEME_INK_MUTED }] : [];
+
+/** `color` at the description's quiet strength (`DECOR.descriptionOpacity`), as a colour of its own */
+const quiet = (color: string) =>
+  `color-mix(in srgb, ${color} ${DECOR.descriptionOpacity * 100}%, transparent)`;
+
+/** what a compartment's editor is called — its accessible name */
+const LIST_PART_LABEL: Record<ListPart, string> = {
+  attributes: "Attributes",
+  methods: "Methods",
+  columns: "Columns",
+};
 
 export const ShapeNode = ({
   id,
@@ -86,8 +143,22 @@ export const ShapeNode = ({
   );
   // shared, not local: React keys nodes by id, so a document swap that reuses
   // an id reuses this instance. A local flag would carry an open editor — and
-  // the uncontrolled textarea's old text — into the new document (#105).
-  const editing = useCanvasUiStore((s) => s.nodeLabelEdit === id);
+  // the old text in it — into the new document (#105).
+  const edit = useCanvasUiStore((s) => (s.nodeTextEdit?.nodeId === id ? s.nodeTextEdit : null));
+  const editingPart = edit?.part ?? null;
+  // the name's editor — the paths below that place the label
+  const editing = editingPart === "label";
+  // the text whose right-click menu is open — outlined while it is (#281)
+  const menuText = useCanvasUiStore((s) =>
+    s.nodeMenu?.nodeId === id && s.nodeMenu.textPart
+      ? `${s.nodeMenu.textPart}:${s.nodeMenu.line ?? 0}`
+      : null,
+  );
+  // what an open compartment holds as it is typed — its card is drawn from it.
+  // Tied to the opening it belongs to, so a later one never draws a stale draft.
+  const [draft, setDraft] = useState<{ edit: NodeTextEdit; text: string } | null>(null);
+  // whether the resize under way has taken its undo step
+  const resizeCommitted = useRef(false);
   // picked as part of a whole group (not stepped into): the group's box carries
   // the handles (#179). Only a selected node pays for the lookup.
   const groupId = data.groupId;
@@ -99,26 +170,15 @@ export const ShapeNode = ({
     const members = s.nodes.filter((n) => n.data.groupId === groupId);
     return members.length >= 2 && members.every((n) => n.selected);
   });
-  const setEditing = useCallback(
-    (on: boolean) => useCanvasUiStore.getState().setNodeLabelEdit(on ? id : null),
-    [id],
-  );
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  // Save (⌘S) takes what is typed so far and leaves the editor open, the
-  // focus and the caret where they are (#219). Above the anchor
-  // early-return, with the other hooks.
-  useCommitDrafts(editing, () => {
-    const typed = textareaRef.current?.value;
-    if (typed !== undefined && typed !== data.label) updateNodeData(id, { label: typed });
-  });
-
-  // External edit trigger (Enter key on a selected node).
+  // External edit trigger (Enter key on a selected node): the name.
   useEffect(() => {
-    if (editRequested) {
-      setEditing(true);
-      useDiagramStore.getState().requestEditLabel(null);
+    if (!editRequested) return;
+    useDiagramStore.getState().requestEditLabel(null);
+    const node = useDiagramStore.getState().nodes.find((n) => n.id === id);
+    if (node && nodeTextParts(node.data).includes("label")) {
+      useCanvasUiStore.getState().setNodeTextEdit({ nodeId: id, part: "label" });
     }
-  }, [editRequested, setEditing]);
+  }, [editRequested, id]);
 
   const size = DEFAULT_NODE_SIZE[data.shape];
   const w = width ?? size.width;
@@ -136,29 +196,6 @@ export const ShapeNode = ({
   const isImage = data.shape === "image";
   const isEntity = data.shape === "entity";
   const agentTouched = touchedAt !== undefined && Date.now() - touchedAt < 2000;
-
-  // Sizes the textarea to its content so the flex parent keeps the text
-  // vertically centered while editing, matching the rendered label.
-  const autoResizeTextarea = () => {
-    const el = textareaRef.current;
-    // a plain sticky's editor fills the note; with a description under it,
-    // it grows with its text like any other (#174)
-    if (!el || (isSticky && !hasInlineDecor(data))) return;
-    el.style.height = "0px";
-    // a class or entity name edits in its own band, not the whole box (#174)
-    const band = isClass ? CLASS_NAME_H : isEntity ? Math.min(ENTITY_HEADER_H, h) : h;
-    el.style.height = `${Math.min(el.scrollHeight, band)}px`;
-  };
-
-  // Must stay above the anchor early-return: update_node can switch a node's
-  // shape between anchor and others, and a conditional hook would then crash.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: resize only on edit start, not on every content-dependent value
-  useEffect(() => {
-    if (editing) {
-      autoResizeTextarea();
-      textareaRef.current?.select();
-    }
-  }, [editing]);
 
   // Free-arrow endpoint: a small draggable dot. Its single center handle is a
   // pure attachment point (not connectable), so dragging always moves the dot.
@@ -209,8 +246,9 @@ export const ShapeNode = ({
   }
 
   // a box's icon and description sit with its label; its badge is a tag in the
-  // top-left corner or a step circle on the top-right (#160, Studio #210)
-  const decorated = hasInlineDecor(data);
+  // top-left corner or a step circle on the top-right (#160, Studio #210). A
+  // description being added from the right-click menu sits there already.
+  const decorated = hasInlineDecor(data) || editingPart === "description";
   const floor = resizeFloor(data);
   const badge = hasBadge(data) ? data.badge : undefined;
   const step = stepAnchor(data.shape, w, h);
@@ -260,30 +298,144 @@ export const ShapeNode = ({
   // a plain sticky's editor fills the note
   const editorFill = isSticky && !decorated ? "h-full" : "";
 
-  // the label's inline editor, while it is open
+  /** this node's data as the store has it now — an editor finishes after renders it did not see */
+  const storedData = () => useDiagramStore.getState().nodes.find((n) => n.id === id)?.data;
+  /**
+   * Writes a text the user touched, when it changes once cleaned — no empty
+   * undo step, and an untouched editor never writes back over a change an
+   * agent made meanwhile (#281).
+   */
+  const writeText = (part: NodeTextPart, text: string, touched: boolean) => {
+    const stored = storedData();
+    if (touched && stored && textPartChanged(stored, part, text))
+      updateNodeData(id, textPartPatch(part, text));
+  };
+  /**
+   * Save mid-typing (⌘S, #219): written, and the editor stays — even when the
+   * text was emptied and the store drops its field: it stays open as a text
+   * being added, rather than closing and dropping the focus to the page,
+   * where the next Backspace would delete the shape.
+   */
+  const saveText = (part: NodeTextPart, text: string, touched: boolean) => {
+    const ui = useCanvasUiStore.getState();
+    const current = ui.nodeTextEdit;
+    if (touched && current?.nodeId === id && current.part === part && textPartEmptied(part, text)) {
+      const adding = { ...current, adding: true };
+      // the compartment's draft belongs to this opening still
+      setDraft((d) => (d && d.edit === current ? { ...d, edit: adding } : d));
+      ui.setNodeTextEdit(adding);
+    }
+    writeText(part, text, touched);
+  };
+  /** an editor closed: keep or drop its text, then close, or open the next text (Tab) */
+  const finishText = (how: EditorFinish, text: string, touched: boolean) => {
+    const ui = useCanvasUiStore.getState();
+    const current = ui.nodeTextEdit;
+    if (current?.nodeId !== id) return;
+    if (how !== "cancel") writeText(current.part, text, touched);
+    if (how === "commit" || how === "cancel") {
+      ui.setNodeTextEdit(null);
+      return;
+    }
+    // from what is stored now — a text emptied on Tab is gone and skipped
+    const stored = storedData();
+    const next = stored ? nextTextPart(stored, current.part, how === "next" ? 1 : -1) : null;
+    // a shape with one text keeps its editor going
+    if (next === current.part && useCanvasUiStore.getState().nodeTextEdit === current) return;
+    useCanvasUiStore.getState().setNodeTextEdit(next ? { nodeId: id, part: next } : null);
+  };
+  /** what a text's editor opens with and has selected, and where it writes */
+  const editorProps = (part: NodeTextPart) => {
+    const value = editorStartText(data, part, edit?.adding === true);
+    // a compartment opens on the row clicked, or the new last row; the rest, all of it
+    const select: [number, number] | undefined = !isListPart(part)
+      ? undefined
+      : edit?.adding
+        ? [value.length, value.length]
+        : lineRange(value, edit?.line ?? 0);
+    return {
+      value,
+      select,
+      onFinish: finishText,
+      onSave: (text: string, touched: boolean) => saveText(part, text, touched),
+    };
+  };
+
+  // the name's editor, while it is open
   const labelEditor = editing ? (
-    <textarea
-      {...PLAIN_TEXT}
-      ref={textareaRef}
-      defaultValue={data.label}
-      rows={1}
-      className={`nodrag w-full resize-none overflow-hidden bg-transparent ${labelSize} ${labelWeight} leading-snug outline-none ${editorFill} ${labelAlign} ${isIcon || isFrame ? "whitespace-nowrap" : ""} ${backdrop ? "pointer-events-auto" : ""} ${isFrame ? "px-1.5" : ""}`}
+    <TextEditor
+      key="label"
+      {...editorProps("label")}
+      // a class's or entity's name is drawn on one line of its strip
+      multiline={!(isClass || isEntity)}
+      nowrap={isIcon || isFrame}
+      ariaLabel="Label"
+      // a frame's title, a fragment's guard, an icon's or the text shape's
+      // words sit on the canvas; every other name on its tile or strip
+      onLightTile={!(isFrame || isFragment || isIcon || isText)}
+      hostClassName={`w-full ${editorFill}`}
+      className={`${labelSize} ${labelWeight} leading-snug ${editorFill} ${labelAlign} ${isFrame ? "px-1.5" : ""}`}
       style={{ color: labelColor, ...titlePatch }}
-      onInput={autoResizeTextarea}
-      onBlur={(e) => {
-        updateNodeData(id, { label: e.target.value });
-        setEditing(false);
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault();
-          e.currentTarget.blur();
-        }
-        if (e.key === "Escape") setEditing(false);
-        e.stopPropagation();
-      }}
     />
   ) : null;
+
+  // the description's editor — in the description's place, under the label (#281)
+  const descriptionEditor =
+    editingPart === "description" ? (
+      <TextEditor
+        key="description"
+        {...editorProps("description")}
+        multiline
+        maxLength={MAX_DESCRIPTION}
+        ariaLabel="Description"
+        onLightTile
+        hostClassName="w-full"
+        className={`text-[11px] font-normal leading-snug ${isSticky ? "text-left" : "text-center"}`}
+        // the drawn description's 65% as the colour's own — an opacity on the
+        // element would wash out the selection drawn under the text too
+        style={{ color: quiet(token.text) }}
+      />
+    ) : undefined;
+
+  // the badge's editor — inside the tag, or the step circle (#281)
+  const badgeEditor =
+    editingPart === "badge" ? (
+      <TextEditor
+        key="badge"
+        {...editorProps("badge")}
+        multiline={false}
+        maxLength={MAX_BADGE}
+        ariaLabel="Badge"
+        onLightTile
+        className="text-center"
+      />
+    ) : null;
+  const stepBadge = badge !== undefined && isStepBadge(badge);
+
+  // a compartment being typed: the card is drawn from its lines, growing with
+  // them; an emptied compartment keeps one row while it is open (#281)
+  const listPart: ListPart | null =
+    editingPart !== null && isListPart(editingPart) ? editingPart : null;
+  const listText =
+    listPart === null
+      ? null
+      : draft !== null && draft.edit === edit
+        ? draft.text
+        : editorStartText(data, listPart, edit?.adding === true);
+  const liveData =
+    listPart && listText !== null ? { ...data, [listPart]: listText.split("\n") } : data;
+  const cardW =
+    listPart === null ? w : isClass ? classNodeWidth(liveData, w) : entityNodeWidth(liveData, w);
+  const cardH =
+    listPart === null
+      ? h
+      : Math.max(h, isClass ? classNodeHeight(liveData) : entityNodeHeight(liveData.columns));
+  const listPad = isEntity ? ENTITY_TEXT_PAD : CLASS_TEXT_PAD;
+  // the first row, under the compartment's rule and padding — on the card as drawn
+  const listTop =
+    listPart === null
+      ? 0
+      : compartmentTop(liveData, listPart) + (isEntity ? ENTITY_ROWS_PAD : CLASS_SECTION_PAD);
 
   return (
     <div
@@ -306,8 +458,26 @@ export const ShapeNode = ({
         e.stopPropagation();
         // in a group, a double-click steps in and picks this shape alone (#171)
         useDiagramStore.getState().pickInGroup(id);
-        // an image carries no visible label to edit (#8)
-        if (!isImage) setEditing(true);
+        // the text under the pointer opens — a description, a badge, a row —
+        // anywhere else the name; an image draws no text to open (#8, #281)
+        const mark =
+          (e.target as Element).closest<HTMLElement>("[data-text-part]") ??
+          // a step circle sits under the corner resize grip of a selected
+          // shape: a double-click on the grip within the circle is the circle's
+          [...e.currentTarget.querySelectorAll<HTMLElement>('[data-text-part="badge"]')].find(
+            (el) => {
+              const r = el.getBoundingClientRect();
+              return (
+                r.width > 0 &&
+                e.clientX >= r.left &&
+                e.clientX <= r.right &&
+                e.clientY >= r.top &&
+                e.clientY <= r.bottom
+              );
+            },
+          );
+        const picked = pickTextPart(data, mark?.dataset.textPart, mark?.dataset.textLine);
+        if (picked) useCanvasUiStore.getState().setNodeTextEdit({ nodeId: id, ...picked });
       }}
     >
       <NodeResizer
@@ -322,7 +492,17 @@ export const ShapeNode = ({
         // honours the same floors (`resizeFloor`).
         minWidth={floor.width}
         minHeight={floor.height}
-        onResizeStart={() => commit()}
+        // one undo step per resize, taken at its first move — React Flow calls
+        // onResizeStart on the press already, so a double-click on the corner
+        // grip (over a step circle, #281) would leave empty steps
+        onResizeStart={() => {
+          resizeCommitted.current = false;
+        }}
+        onResize={() => {
+          if (resizeCommitted.current) return;
+          resizeCommitted.current = true;
+          commit();
+        }}
         onResizeEnd={() => {
           // resizing rescales the pct anchors — restore horizontal messages
           if (isLifeline) useDiagramStore.getState().resnapMessages([id]);
@@ -350,34 +530,36 @@ export const ShapeNode = ({
             <FrameSvg width={w} height={h} line={token.line} />
           ) : isEntity ? (
             <EntitySvg
-              width={w}
-              height={h}
+              width={cardW}
+              height={cardH}
               fill={token.fill}
               body={THEME_CARD_BODY}
               border={THEME_CARD_BORDER}
               text={token.text}
               ink={THEME_INK}
               muted={THEME_INK_MUTED}
-              // the editor sits on the name while it is open — never two copies (#174)
-              name={editing ? "" : data.label}
-              columns={data.columns}
+              name={data.label}
+              columns={liveData.columns}
+              // an editor sits on the text it opens — never two copies (#174, #281)
+              editingPart={editingPart ?? undefined}
             />
           ) : isClass ? (
             <ClassSvg
-              width={w}
-              height={h}
+              width={cardW}
+              height={cardH}
               fill={token.fill}
               body={THEME_CARD_BODY}
               border={THEME_CARD_BORDER}
               text={token.text}
               ink={THEME_INK}
               muted={THEME_INK_MUTED}
-              // the editor sits on the name while it is open — never two copies (#174)
-              name={editing ? "" : data.label}
+              name={data.label}
               stereotype={data.stereotype}
               isAbstract={data.isAbstract}
-              attributes={data.attributes}
-              methods={data.methods}
+              attributes={liveData.attributes}
+              methods={liveData.methods}
+              // an editor sits on the text it opens — never two copies (#174, #281)
+              editingPart={editingPart ?? undefined}
             />
           ) : isFragment ? (
             <FragmentSvg
@@ -414,8 +596,76 @@ export const ShapeNode = ({
           )}
         </svg>
       ) : null}
-      {/* the class box paints its own compartments; only its name is editable,
-          and that happens in the shared layer below while `editing` */}
+      {/* a class's or entity's rows: where a double-click on one lands (#281) */}
+      {isClass || isEntity
+        ? cardRowBands(data).map((band) => (
+            <Fragment key={`${band.part}-${band.line}`}>
+              <div
+                aria-hidden="true"
+                data-text-part={band.part}
+                data-text-line={band.line}
+                className="absolute inset-x-0"
+                style={{ top: band.top, height: band.height }}
+              />
+              {menuText === `${band.part}:${band.line}` ? (
+                // the row whose menu is open, ringed inside the card's edge
+                <div
+                  aria-hidden="true"
+                  className="pointer-events-none absolute"
+                  style={{
+                    left: 4,
+                    right: 4,
+                    top: band.row.top - 1,
+                    height: band.row.height + 2,
+                    ...menuOutline(THEME_INK),
+                    outlineOffset: 0,
+                  }}
+                />
+              ) : null}
+            </Fragment>
+          ))
+        : null}
+      {listPart !== null ? (
+        // the compartment's rows as lines, each on its own row (#281 D5)
+        <TextEditor
+          key={listPart}
+          {...editorProps(listPart)}
+          multiline
+          ariaLabel={LIST_PART_LABEL[listPart]}
+          // a member's visibility mark keeps its quiet tone, as drawn
+          tintLine={isClass ? tintVisibility : undefined}
+          onChange={(text) => edit && setDraft({ edit, text })}
+          hostClassName="absolute"
+          className={`text-[11.5px] font-normal ${isEntity ? "leading-[20px]" : "leading-[18px]"}`}
+          style={{ left: listPad, top: listTop, width: cardW - listPad * 2, color: THEME_INK }}
+        />
+      ) : null}
+      {editingPart === "stereotype" ? (
+        // the «stereotype» line: its body typed between the guillemets
+        <div
+          className="absolute flex h-[14px] items-center whitespace-pre text-[10.5px] leading-[14px]"
+          style={{
+            left: CLASS_TEXT_PAD,
+            top: STEREOTYPE_LINE.top,
+            fontSize: CLASS_STEREOTYPE_FONT,
+            // quiet as drawn, in the colour rather than an opacity that would
+            // wash out the selection too
+            color: quiet(token.text),
+          }}
+        >
+          «
+          <TextEditor
+            key="stereotype"
+            {...editorProps("stereotype")}
+            multiline={false}
+            onLightTile
+            ariaLabel="Stereotype"
+          />
+          »
+        </div>
+      ) : null}
+      {/* the class box paints its own compartments; its name edits in the
+          shared layer below while `editing` */}
       {((isClass || isEntity) && !editing) || isImage ? null : (
         <div
           // a frame's guard strip spans the full width, so the container must stay
@@ -492,6 +742,8 @@ export const ShapeNode = ({
               height={h}
               weight={labelWeight}
               alignStart={isSticky}
+              description={descriptionEditor}
+              outlined={menuText === "description:0"}
             />
           ) : (
             <span
@@ -513,27 +765,34 @@ export const ShapeNode = ({
           )}
         </div>
       )}
-      {badge === undefined ? null : isStepBadge(badge) ? (
+      {badge === undefined && badgeEditor === null ? null : stepBadge ? (
         // a step number: an ink circle on the shape's top-right anchor, in a ring
         // of canvas so it reads on an ink tile too — a border, which a capture
-        // keeps round where a box-shadow turns square (#138, #210)
+        // keeps round where a box-shadow turns square (#138, #210). It takes
+        // the double-click that opens it (#281), and while it is typed into it
+        // sits over the corner grip that covers it otherwise.
         <span
-          className="pointer-events-none absolute z-10 flex h-6 w-6 items-center justify-center rounded-full border-2 text-[11px] font-bold leading-none"
+          data-text-part="badge"
+          className="pointer-events-auto absolute z-10 flex h-6 w-6 items-center justify-center rounded-full border-2 text-[11px] font-bold leading-none"
           style={{
             left: step.x - DECOR.stepRadius - DECOR.stepRing,
             top: step.y - DECOR.stepRadius - DECOR.stepRing,
             backgroundColor: THEME_INK,
             borderColor: THEME_CANVAS_BG,
             color: THEME_CANVAS_BG,
+            zIndex: badgeEditor ? 30 : undefined,
+            ...(menuText === "badge:0" ? menuOutline(THEME_INK) : {}),
           }}
         >
-          {badge}
+          {badgeEditor ?? badge}
         </span>
       ) : (
         // a tag in the node's deeper tone, inside the silhouette at the top
-        // left — set into the top border at the right on a frame (#210 D7, D23)
+        // left — set into the top border at the right on a frame (#210 D7, D23).
+        // It takes the double-click that opens it (#281).
         <span
-          className="pointer-events-none absolute z-10 inline-flex h-[15px] items-center whitespace-nowrap rounded-[3px] px-[5px] text-[9.5px] font-semibold uppercase leading-none"
+          data-text-part="badge"
+          className="pointer-events-auto absolute z-10 inline-flex h-[15px] items-center whitespace-nowrap rounded-[3px] px-[5px] text-[9.5px] font-semibold uppercase leading-none"
           style={{
             // a frame's tag is placed from the right, so it ends exactly at the
             // inset whatever its text measures; every other tag from the left
@@ -543,9 +802,11 @@ export const ShapeNode = ({
             top: tag.y,
             backgroundColor: token.cap,
             color: token.text,
+            // a frame's tag sits on the canvas, a box's on its tile
+            ...(menuText === "badge:0" ? menuOutline(isFrame ? THEME_INK : token.text) : {}),
           }}
         >
-          {badge}
+          {badgeEditor ?? badge}
         </span>
       )}
       {isText && selected ? (
@@ -769,6 +1030,8 @@ const DecoratedLabel = ({
   weight,
   alignStart,
   label,
+  description,
+  outlined = false,
 }: {
   data: DiagramNode["data"];
   color: string;
@@ -780,6 +1043,10 @@ const DecoratedLabel = ({
   alignStart: boolean;
   /** in place of the painted label — its editor, while it is open (#174) */
   label?: React.ReactNode;
+  /** in place of the painted description — its editor, while it is open (#281) */
+  description?: React.ReactNode;
+  /** the description's right-click menu is open (#281) */
+  outlined?: boolean;
 }) => {
   const align = alignStart ? "text-left" : "text-center";
   const place = data.icon ? iconPlacement(height) : null;
@@ -833,14 +1100,21 @@ const DecoratedLabel = ({
       ) : (
         (label ?? painted(`w-full ${align}`))
       )}
-      {data.description ? (
-        <span
-          className={`w-full text-[11px] font-normal leading-snug whitespace-pre-wrap break-words opacity-65 ${align}`}
-          style={{ color }}
-        >
-          {data.description}
-        </span>
-      ) : null}
+      {description ??
+        (data.description ? (
+          <span
+            data-text-part="description"
+            className={`w-full text-[11px] font-normal leading-snug whitespace-pre-wrap break-words opacity-65 ${align}`}
+            style={{ color }}
+          >
+            {/* ringed round its words, not across the box's width */}
+            {outlined ? (
+              <span style={menuOutline(color)}>{data.description}</span>
+            ) : (
+              data.description
+            )}
+          </span>
+        ) : null)}
     </div>
   );
 };

@@ -13,7 +13,6 @@ import {
   Route,
   SendToBack,
   Spline,
-  Table,
   Tags,
   Trash2,
   Type,
@@ -45,7 +44,6 @@ import {
   ColorDot,
   EdgeColorSection,
   EndsSection,
-  EntitySection,
   FrameSection,
   IconSection,
   LabelsSection,
@@ -289,11 +287,12 @@ export const EditBar = () => {
   // closes rather than popping up again later by itself
   const offered = new Set<string>([
     // a frame is an area, not a box: it takes no other shape (#170 D8)
-    ...(node ? ["color", "text"] : []),
+    ...(node ? ["color"] : []),
+    // drawn texts are typed on the canvas (#281); an image's alt text is not drawn
+    ...(node?.data.shape === "image" ? ["text"] : []),
     ...(node && node.data.shape !== "frame" ? ["shape"] : []),
     ...(node && (node.data.shape === "icon" || takesDecor(node.data.shape)) ? ["icon"] : []),
     ...(e.soleClass ? ["class"] : []),
-    ...(e.soleEntity ? ["entity"] : []),
     ...(e.soleLifeline ? ["lifeline"] : []),
     ...(e.soleFragment ? ["fragment"] : []),
     ...(e.selectedLifelines.length >= 2 ? ["align"] : []),
@@ -338,26 +337,19 @@ export const EditBar = () => {
               <ShapeSection e={e} />
             </Panel>
           )}
-          <Panel
-            label={node.data.shape === "image" ? "Alt text" : "Text"}
-            glyph={<Type {...icon} />}
-            {...panel("text")}
-          >
-            <TextSection e={e} update={update} />
-          </Panel>
+          {node.data.shape === "image" ? (
+            <Panel label="Alt text" glyph={<Type {...icon} />} {...panel("text")}>
+              <TextSection e={e} update={update} />
+            </Panel>
+          ) : null}
           {node.data.shape === "icon" || takesDecor(node.data.shape) ? (
             <Panel label="Icon" glyph={<Boxes {...icon} />} {...panel("icon")}>
               <IconSection e={e} update={update} />
             </Panel>
           ) : null}
           {e.soleClass ? (
-            <Panel label="Members" glyph={<Braces {...icon} />} wide {...panel("class")}>
+            <Panel label="Class" glyph={<Braces {...icon} />} {...panel("class")}>
               <ClassSection e={e} update={update} />
-            </Panel>
-          ) : null}
-          {e.soleEntity ? (
-            <Panel label="Columns" glyph={<Table {...icon} />} wide {...panel("entity")}>
-              <EntitySection e={e} update={update} />
             </Panel>
           ) : null}
           {e.soleLifeline ? (

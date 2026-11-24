@@ -10,6 +10,8 @@ src/features/export/__tests__/fixtures/allShapes.ts
 src/features/export/__tests__/image.test.ts
 src/features/export/__tests__/mermaidParse.test.ts
 src/features/export/__tests__/vectorSvg.test.ts
+# Korean text kept intact through the shape-text editor's document
+src/features/canvas/__tests__/textDoc.test.ts
 # CJK text width, wrapping, and first-letter badges
 src/shared/lib/__tests__/classShape.test.ts
 src/shared/lib/__tests__/projectBadge.test.ts

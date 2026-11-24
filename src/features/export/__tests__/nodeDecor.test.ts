@@ -38,10 +38,10 @@ describe("Box decoration layout — the same numbers as the canvas (#160, Studio
     expect(source).toContain('className="h-[18px] w-[18px] shrink-0"');
     expect(source).toContain("flex w-full items-center gap-1.5");
     expect(source).toContain(
-      "pointer-events-none absolute z-10 inline-flex h-[15px] items-center whitespace-nowrap rounded-[3px] px-[5px] text-[9.5px] font-semibold uppercase leading-none",
+      "pointer-events-auto absolute z-10 inline-flex h-[15px] items-center whitespace-nowrap rounded-[3px] px-[5px] text-[9.5px] font-semibold uppercase leading-none",
     );
     expect(source).toContain(
-      "pointer-events-none absolute z-10 flex h-6 w-6 items-center justify-center rounded-full border-2 text-[11px] font-bold leading-none",
+      "pointer-events-auto absolute z-10 flex h-6 w-6 items-center justify-center rounded-full border-2 text-[11px] font-bold leading-none",
     );
     expect(DECOR).toMatchObject({
       descriptionFontSize: 11,

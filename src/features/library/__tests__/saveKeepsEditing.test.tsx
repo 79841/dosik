@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeDoc, makeEdge, makeNode } from "../../../shared/lib/__tests__/testFixtures";
 import { commitDrafts } from "../../../shared/lib/commitDrafts";
+import { typeText } from "../../canvas/__tests__/editorTestUtils";
 import { useDiagramStore } from "../../../shared/lib/store";
 import { useToastStore } from "../../../shared/lib/toastStore";
 import { useCanvasUiStore } from "../../canvas/canvasUiStore";
@@ -65,7 +66,7 @@ describe("⌘S saves the text being typed and editing continues (#219)", () => {
     useToastStore.getState().dismissAll();
     mockedInvoke.mockReset();
     mockedInvoke.mockImplementation(likeRust());
-    useCanvasUiStore.getState().setNodeLabelEdit(null);
+    useCanvasUiStore.getState().setNodeTextEdit(null);
     useCanvasUiStore.getState().setEdgeLabelEdit(null);
     window.addEventListener("keydown", appKeys, true);
     window.addEventListener("keydown", handleCanvasKeyDown);
@@ -109,17 +110,17 @@ describe("⌘S saves the text being typed and editing continues (#219)", () => {
     );
     act(() => store().requestEditLabel("n1"));
     const editor = screen.getByRole("textbox");
-    act(() => editor.focus());
-    fireEvent.change(editor, { target: { value: "Typed" } });
+    expect(editor).toHaveFocus();
+    typeText(editor, "Typed");
 
     await pressSave(editor);
 
     expect(savedDoc()?.nodes[0].data.label).toBe("Typed");
     expect(store().nodes[0]!.data.label).toBe("Typed");
-    expect(useCanvasUiStore.getState().nodeLabelEdit).toBe("n1");
+    expect(useCanvasUiStore.getState().nodeTextEdit?.nodeId).toBe("n1");
     expect(screen.getByRole("textbox")).toBe(editor);
     expect(editor).toHaveFocus();
-    expect(editor).toHaveValue("Typed");
+    expect(editor).toHaveTextContent("Typed");
 
     fireEvent.keyDown(editor, { key: "Backspace" });
     expect(store().nodes.map((n) => n.id)).toEqual(["n1"]);
@@ -181,20 +182,20 @@ describe("⌘S saves the text being typed and editing continues (#219)", () => {
     expect(field).toHaveFocus();
   });
 
-  it("edit bar text field (Description): saved and focus stays — leaving afterwards does not write twice", async () => {
-    openWith();
+  it("edit bar text field (Stereotype): saved and focus stays — leaving afterwards does not write twice", async () => {
+    openWith([makeNode({ id: "n1", label: "Order", shape: "class" })]);
     act(() =>
       useDiagramStore.setState((s) => ({ nodes: s.nodes.map((n) => ({ ...n, selected: true })) })),
     );
     render(<EditBar />);
-    fireEvent.click(screen.getByRole("button", { name: "Text" }));
-    const field = screen.getByRole("textbox", { name: "Description" });
+    fireEvent.click(screen.getByRole("button", { name: "Class" }));
+    const field = screen.getByRole("textbox", { name: "Stereotype" });
     act(() => field.focus());
-    fireEvent.change(field, { target: { value: "Under the label" } });
+    fireEvent.change(field, { target: { value: "entity" } });
 
     await pressSave(field);
 
-    expect(savedDoc()?.nodes[0].data.description).toBe("Under the label");
+    expect(savedDoc()?.nodes[0].data.stereotype).toBe("entity");
     expect(field).toHaveFocus();
     const undoSteps = store().past.length;
     fireEvent.blur(field);

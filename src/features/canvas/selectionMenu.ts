@@ -2,6 +2,7 @@ import { useDiagramStore } from "../../shared/lib/store";
 import { hasExportableSelection } from "../export/selection";
 import { takesAllKeys } from "./canvasKeymap";
 import { useCanvasUiStore } from "./canvasUiStore";
+import type { NodeTextPart } from "./nodeTextParts";
 
 /**
  * A right-click on a shape, decided before anything is shown (#139).
@@ -27,15 +28,21 @@ export const openShapeMenu = (args: {
   settle: boolean;
   clientX: number;
   clientY: number;
+  /** a text of the shape the click landed on — the menu is that text's (#281) */
+  textPart?: NodeTextPart;
+  line?: number;
 }): boolean => {
   const store = useDiagramStore.getState();
   if (takesAllKeys(args.target)) return false;
   if (args.settle && store.nodes.find((n) => n.id === args.nodeId)?.data.shape === "anchor")
     return false;
   if (args.settle) store.selectForContextMenu(args.nodeId);
-  useCanvasUiStore
-    .getState()
-    .setNodeMenu({ nodeId: args.nodeId, clientX: args.clientX, clientY: args.clientY });
+  useCanvasUiStore.getState().setNodeMenu({
+    nodeId: args.nodeId,
+    clientX: args.clientX,
+    clientY: args.clientY,
+    ...(args.textPart ? { textPart: args.textPart, line: args.line } : {}),
+  });
   return true;
 };
 

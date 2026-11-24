@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import type { SnapTarget } from "../../shared/lib/edgeUtils";
 import { useDiagramStore } from "../../shared/lib/store";
+import { type NodeTextPart, nodeTextParts } from "./nodeTextParts";
 
 export interface EdgeMenuState {
   edgeId: string;
@@ -15,6 +16,18 @@ export interface NodeMenuState {
   clientY: number;
   /** opened without a pointer, so the menu takes focus (#139) */
   fromKeyboard?: boolean;
+  /** opened on one of the shape's texts — its description, badge, a row — so the menu is that text's (#281) */
+  textPart?: NodeTextPart;
+  /** the row, when the text is a compartment's */
+  line?: number;
+}
+
+/** the empty canvas's right-click menu (#281): where it opened, on screen and on the canvas */
+export interface CanvasMenuState {
+  clientX: number;
+  clientY: number;
+  flowX: number;
+  flowY: number;
 }
 
 export interface DropMenuState {
@@ -31,23 +44,34 @@ export interface EdgeLabelEditState {
   which: "center" | "start" | "end";
 }
 
+/** the one text of a shape being typed into (#281) */
+export interface NodeTextEdit {
+  nodeId: string;
+  part: NodeTextPart;
+  /** a compartment's row the double-click landed on — it opens selected */
+  line?: number;
+  /** a text the shape does not show yet, opened from right-click › Add … */
+  adding?: boolean;
+}
+
 interface CanvasUiState {
   /** arrow draw tool active (drag on canvas to draw a free arrow) */
   arrowMode: boolean;
   edgeMenu: EdgeMenuState | null;
   nodeMenu: NodeMenuState | null;
+  canvasMenu: CanvasMenuState | null;
   dropMenu: DropMenuState | null;
   edgeLabelEdit: EdgeLabelEditState | null;
   /**
-   * id of the node whose label editor is open.
+   * The shape text whose editor is open — which node, which of its texts.
    *
    * Lives here rather than in `ShapeNode` local state so the swap cleanup
    * below can close it. React keys nodes by id, so a document swap that reuses
    * an id reuses the component instance — a local `editing` would survive into
-   * the new document with the *old* text in an uncontrolled textarea, and blur
+   * the new document with the *old* text in the open editor, and its blur
    * would then write that text onto the new node (#105).
    */
-  nodeLabelEdit: string | null;
+  nodeTextEdit: NodeTextEdit | null;
   /** clipboard for edge style copy/paste */
   copiedEdgeStyle: Record<string, unknown> | null;
   /** node/handle an arrow endpoint drag would snap to (shows its points) */
@@ -60,9 +84,10 @@ interface CanvasUiState {
   setSnapTarget: (target: SnapTarget | null, forAnchor?: string) => void;
   setEdgeMenu: (menu: EdgeMenuState | null) => void;
   setNodeMenu: (menu: NodeMenuState | null) => void;
+  setCanvasMenu: (menu: CanvasMenuState | null) => void;
   setDropMenu: (menu: DropMenuState | null) => void;
   setEdgeLabelEdit: (state: EdgeLabelEditState | null) => void;
-  setNodeLabelEdit: (nodeId: string | null) => void;
+  setNodeTextEdit: (edit: NodeTextEdit | null) => void;
   setCopiedEdgeStyle: (style: Record<string, unknown> | null) => void;
 }
 
@@ -87,13 +112,14 @@ export const connectDrag: {
   point: { x: number; y: number } | null;
 } = { start: null, point: null };
 
-export const useCanvasUiStore = create<CanvasUiState>((set, get) => ({
+export const useCanvasUiStore = create<CanvasUiState>((set) => ({
   arrowMode: false,
   edgeMenu: null,
   nodeMenu: null,
+  canvasMenu: null,
   dropMenu: null,
   edgeLabelEdit: null,
-  nodeLabelEdit: null,
+  nodeTextEdit: null,
   copiedEdgeStyle: null,
   snapTarget: null,
   snapFor: null,
@@ -101,18 +127,22 @@ export const useCanvasUiStore = create<CanvasUiState>((set, get) => ({
   setArrowMode: (arrowMode) => set({ arrowMode }),
   setSnapTarget: (snapTarget, forAnchor) =>
     set({ snapTarget, snapFor: snapTarget ? (forAnchor ?? null) : null }),
-  // The two right-click menus are mutually exclusive: opening one closes the
-  // other, so a stale menu never survives behind the new one.
+  // The right-click menus are mutually exclusive: opening one closes the
+  // others, so a stale menu never survives behind the new one.
   //
   // In practice this is usually redundant — a right-click's `pointerdown`
   // lands before its `contextmenu`, so `useOutsideDismiss` has already closed
   // the previous menu. It is kept as the guarantee rather than the mechanism
   // (#139).
-  setEdgeMenu: (edgeMenu) => set({ edgeMenu, nodeMenu: edgeMenu ? null : get().nodeMenu }),
-  setNodeMenu: (nodeMenu) => set({ nodeMenu, edgeMenu: nodeMenu ? null : get().edgeMenu }),
+  setEdgeMenu: (edgeMenu) =>
+    set(edgeMenu ? { edgeMenu, nodeMenu: null, canvasMenu: null } : { edgeMenu: null }),
+  setNodeMenu: (nodeMenu) =>
+    set(nodeMenu ? { nodeMenu, edgeMenu: null, canvasMenu: null } : { nodeMenu: null }),
+  setCanvasMenu: (canvasMenu) =>
+    set(canvasMenu ? { canvasMenu, edgeMenu: null, nodeMenu: null } : { canvasMenu: null }),
   setDropMenu: (dropMenu) => set({ dropMenu }),
   setEdgeLabelEdit: (edgeLabelEdit) => set({ edgeLabelEdit }),
-  setNodeLabelEdit: (nodeLabelEdit) => set({ nodeLabelEdit }),
+  setNodeTextEdit: (nodeTextEdit) => set({ nodeTextEdit }),
   setCopiedEdgeStyle: (copiedEdgeStyle) => set({ copiedEdgeStyle }),
 }));
 
@@ -128,9 +158,10 @@ useDiagramStore.subscribe((state, prevState) => {
   const ui = useCanvasUiStore.getState();
   if (
     !ui.edgeLabelEdit &&
-    !ui.nodeLabelEdit &&
+    !ui.nodeTextEdit &&
     !ui.edgeMenu &&
     !ui.nodeMenu &&
+    !ui.canvasMenu &&
     !ui.dropMenu &&
     !ui.snapTarget
   )
@@ -144,9 +175,18 @@ useDiagramStore.subscribe((state, prevState) => {
   const nodeGone = (nodeId: string): boolean =>
     swapped || !state.nodes.some((n) => n.id === nodeId);
   if (ui.edgeLabelEdit && edgeGone(ui.edgeLabelEdit.edgeId)) ui.setEdgeLabelEdit(null);
-  if (ui.nodeLabelEdit && nodeGone(ui.nodeLabelEdit)) ui.setNodeLabelEdit(null);
+  if (ui.nodeTextEdit) {
+    const { nodeId, part, adding } = ui.nodeTextEdit;
+    const node = nodeGone(nodeId) ? undefined : state.nodes.find((n) => n.id === nodeId);
+    // the text itself went — an agent removed the badge being typed into, the
+    // shape became one that does not draw it — and its editor goes with it
+    const shown = node ? nodeTextParts(node.data, adding ? part : undefined).includes(part) : false;
+    if (!shown) ui.setNodeTextEdit(null);
+  }
   if (ui.edgeMenu && edgeGone(ui.edgeMenu.edgeId)) ui.setEdgeMenu(null);
   if (ui.nodeMenu && nodeGone(ui.nodeMenu.nodeId)) ui.setNodeMenu(null);
+  // the canvas menu holds a point of the old document's view
+  if (ui.canvasMenu && swapped) ui.setCanvasMenu(null);
   if (ui.dropMenu && nodeGone(ui.dropMenu.fromId)) ui.setDropMenu(null);
   if (ui.snapTarget && nodeGone(ui.snapTarget.nodeId)) ui.setSnapTarget(null);
 });

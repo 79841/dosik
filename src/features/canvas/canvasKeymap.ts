@@ -167,5 +167,8 @@ export const handleCanvasKeyDown = (e: KeyboardEvent): void => {
   } else if (key === "d") {
     // Cmd+D is "bookmark" in a browser — claim it whenever the canvas can act
     if (useDiagramStore.getState().duplicateSelection()) e.preventDefault();
+  } else if (key === "a") {
+    // the right-click menu's Select all, from the keyboard (#281)
+    if (useDiagramStore.getState().selectAll()) e.preventDefault();
   }
 };

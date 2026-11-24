@@ -41,7 +41,23 @@ export const registerPointerAt = (fn: PointerFn): (() => void) => {
  * Mermaid diagram (#200): under the pointer, the way the user aims it, and
  * the middle of the view when the pointer is not over the canvas.
  */
-export const pastePoint = (): { x: number; y: number } => pointerAt() ?? center();
+export const pastePoint = (): { x: number; y: number } => pinned ?? pointerAt() ?? center();
+
+/** a point a paste was asked for — the empty canvas's right-click › Paste (#281) */
+let pinned: { x: number; y: number } | null = null;
+
+/**
+ * Runs a paste with `at` as its point: the right-click menu's Paste lands
+ * where the menu was opened, not where the pointer went to click the item.
+ */
+export const pasteAt = async (at: { x: number; y: number }, paste: () => Promise<void>) => {
+  pinned = at;
+  try {
+    await paste();
+  } finally {
+    pinned = null;
+  }
+};
 
 /**
  * The canvas's pan and zoom, read when a tab is left so it can be put back

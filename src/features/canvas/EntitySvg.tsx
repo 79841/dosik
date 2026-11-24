@@ -33,6 +33,7 @@ export const EntitySvg = ({
   muted,
   name,
   columns,
+  editingPart,
 }: {
   width: number;
   height: number;
@@ -50,6 +51,8 @@ export const EntitySvg = ({
   muted: string;
   name: string;
   columns?: string[];
+  /** the text an editor sits on in the canvas — left undrawn, never two copies (#174, #281) */
+  editingPart?: string;
 }) => {
   const rows = (columns ?? []).map(parseColumn);
   const header = Math.min(ENTITY_HEADER_H, h);
@@ -80,9 +83,9 @@ export const EntitySvg = ({
         fontWeight={600}
         fill={text}
       >
-        {name}
+        {editingPart === "label" ? "" : name}
       </text>
-      {rows.map((row, index) => {
+      {(editingPart === "columns" ? [] : rows).map((row, index) => {
         const cy = ENTITY_HEADER_H + ENTITY_ROWS_PAD + ENTITY_ROW_H * (index + 0.5);
         return (
           // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional

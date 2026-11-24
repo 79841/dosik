@@ -103,14 +103,10 @@ describe("bottom edit bar (#159)", () => {
     expect(useDiagramStore.getState().nodes.map((n) => n.data.color)).toEqual(["teal", "teal"]);
   });
 
-  it("Text edits the label — for images it's called alt text", () => {
+  it("a drawn text has no field here — it is typed on the canvas; an image's alt text is (#281)", () => {
     select(["a"]);
     const view = render(<EditBar />);
-    open("Text");
-    fireEvent.change(screen.getByRole("textbox", { name: "Label" }), {
-      target: { value: "Start" },
-    });
-    expect(useDiagramStore.getState().nodes[0]?.data.label).toBe("Start");
+    expect(button("Text")).toBeNull();
 
     act(() => {
       useDiagramStore.setState((s) => ({
@@ -120,7 +116,11 @@ describe("bottom edit bar (#159)", () => {
       }));
     });
     view.rerender(<EditBar />);
-    expect(button("Alt text")).not.toBeNull();
+    open("Alt text");
+    fireEvent.change(screen.getByRole("textbox", { name: "Alt text" }), {
+      target: { value: "Start" },
+    });
+    expect(useDiagramStore.getState().nodes[0]?.data.label).toBe("Start");
   });
 
   it("line: labels · path · end shapes · reverse · reset bends", () => {
@@ -239,22 +239,22 @@ describe("bottom edit bar (#159)", () => {
         <div data-testid="canvas" />
       </>,
     );
-    const attrs = () => useDiagramStore.getState().nodes[0]?.data.attributes;
-    open("Members");
-    let box = screen.getByRole("textbox", { name: "Attributes" });
+    const stereotype = () => useDiagramStore.getState().nodes[0]?.data.stereotype;
+    open("Class");
+    let box = screen.getByRole("textbox", { name: "Stereotype" });
     act(() => box.focus());
-    fireEvent.change(box, { target: { value: "+ id: int" } });
+    fireEvent.change(box, { target: { value: "entity" } });
     fireEvent.pointerDown(screen.getByTestId("canvas"));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(attrs()).toEqual(["+ id: int"]);
+    expect(stereotype()).toBe("entity");
 
-    open("Members");
-    box = screen.getByRole("textbox", { name: "Attributes" });
+    open("Class");
+    box = screen.getByRole("textbox", { name: "Stereotype" });
     act(() => box.focus());
-    fireEvent.change(box, { target: { value: "+ id: int\n+ name: str" } });
+    fireEvent.change(box, { target: { value: "aggregate" } });
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(attrs()).toEqual(["+ id: int", "+ name: str"]);
+    expect(stereotype()).toBe("aggregate");
   });
 
   it("Escape in a number field cancels only the input and the popover stays", () => {
@@ -285,19 +285,19 @@ describe("bottom edit bar (#159)", () => {
     });
     select(["c"]);
     const view = render(<EditBar />);
-    open("Members");
-    const box = screen.getByRole("textbox", { name: "Attributes" });
+    open("Class");
+    const box = screen.getByRole("textbox", { name: "Stereotype" });
     act(() => box.focus());
-    fireEvent.change(box, { target: { value: "+ id: int\n\n" } });
+    fireEvent.change(box, { target: { value: "  entity  " } });
     // the field unmounts in the same render that takes the selection away
     select([]);
     view.rerender(<EditBar />);
     expect(screen.queryByRole("toolbar")).toBeNull();
-    // written, and cleaned like any other edit (the blank lines go)
-    expect(useDiagramStore.getState().nodes[0]?.data.attributes).toEqual(["+ id: int"]);
+    // written, and cleaned like any other edit (the spaces go)
+    expect(useDiagramStore.getState().nodes[0]?.data.stereotype).toBe("entity");
   });
 
-  it("drops members when the section vanished because the shape changed — they have nowhere to go and aren't left raw on the box", () => {
+  it("drops the stereotype when the section vanished because the shape changed — it has nowhere to go and isn't left raw on the box", () => {
     act(() => {
       useDiagramStore.getState().loadDoc(makeDoc([], []), null);
       useDiagramStore
@@ -306,17 +306,17 @@ describe("bottom edit bar (#159)", () => {
     });
     select(["c"]);
     const view = render(<EditBar />);
-    open("Members");
-    const box = screen.getByRole("textbox", { name: "Attributes" });
+    open("Class");
+    const box = screen.getByRole("textbox", { name: "Stereotype" });
     act(() => box.focus());
-    fireEvent.change(box, { target: { value: "+ id: int" } });
+    fireEvent.change(box, { target: { value: "entity" } });
     act(() => {
       useDiagramStore.setState((s) => ({
         nodes: s.nodes.map((n) => ({ ...n, data: { ...n.data, shape: "rect" as const } })),
       }));
     });
     view.rerender(<EditBar />);
-    expect(useDiagramStore.getState().nodes[0]?.data.attributes).toBeUndefined();
+    expect(useDiagramStore.getState().nodes[0]?.data.stereotype).toBeUndefined();
   });
 
   it("input committed by an outside click comes back with one undo — not written twice", () => {
@@ -333,14 +333,14 @@ describe("bottom edit bar (#159)", () => {
         <div data-testid="canvas" />
       </>,
     );
-    open("Members");
-    const box = screen.getByRole("textbox", { name: "Attributes" });
+    open("Class");
+    const box = screen.getByRole("textbox", { name: "Stereotype" });
     act(() => box.focus());
-    fireEvent.change(box, { target: { value: "+ id: int" } });
+    fireEvent.change(box, { target: { value: "entity" } });
     fireEvent.pointerDown(screen.getByTestId("canvas"));
-    expect(useDiagramStore.getState().nodes[0]?.data.attributes).toEqual(["+ id: int"]);
+    expect(useDiagramStore.getState().nodes[0]?.data.stereotype).toBe("entity");
     act(() => useDiagramStore.getState().undo());
-    expect(useDiagramStore.getState().nodes[0]?.data.attributes ?? []).toEqual([]);
+    expect(useDiagramStore.getState().nodes[0]?.data.stereotype).toBeUndefined();
   });
 
   it("closes an open section that no longer applies, and doesn't reopen it by itself when it applies again", () => {
@@ -352,7 +352,7 @@ describe("bottom edit bar (#159)", () => {
     });
     select(["c"]);
     const view = render(<EditBar />);
-    open("Members");
+    open("Class");
     act(() => useDiagramStore.getState().updateNodeData("c", { shape: "rect" }));
     view.rerender(<EditBar />);
     expect(screen.queryByRole("dialog")).toBeNull();

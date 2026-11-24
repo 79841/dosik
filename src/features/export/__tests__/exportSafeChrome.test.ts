@@ -45,6 +45,9 @@ const NOT_CAPTURED = [
   "DropNodeMenu.tsx",
   "EdgeContextMenu.tsx",
   "NodeContextMenu.tsx",
+  "CanvasContextMenu.tsx",
+  // the items and submenus of those popups (#281)
+  "menuParts.tsx",
   // the flow container itself and an overlay pinned to it, not to the canvas
   "DiagramCanvas.tsx",
   "ArrowDrawOverlay.tsx",

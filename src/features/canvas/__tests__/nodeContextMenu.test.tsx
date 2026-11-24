@@ -269,7 +269,15 @@ describe("editing from the shape context menu (#159)", () => {
     openOn("a");
     render(<NodeContextMenu />);
     const items = screen.getAllByRole("menuitem").map((b) => b.textContent);
-    expect(items.slice(0, 3)).toEqual(["Bring to front", "Send to back", "Delete"]);
+    // the shape's texts first (#281), then the order and delete
+    expect(items.slice(0, 6)).toEqual([
+      "Edit text↵",
+      "Add description",
+      "Add badge",
+      "Bring to front",
+      "Send to back",
+      "Delete",
+    ]);
     expect(screen.getAllByRole("menuitemradio")).toHaveLength(PALETTE_COLORS.length);
   });
 

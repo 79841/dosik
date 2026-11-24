@@ -545,17 +545,33 @@ describe("handleCanvasKeyDown", () => {
     expect(prevented).toBe(true);
   });
 
-  it("lets modifier combinations that aren't ours (Cmd+A etc.) pass through", () => {
+  it("lets modifier combinations that aren't ours (Cmd+L etc.) pass through", () => {
     const copy = vi.spyOn(useDiagramStore.getState(), "copySelection");
     const paste = vi.spyOn(useDiagramStore.getState(), "paste");
 
-    expect(press("a", { meta: true }).prevented).toBe(false);
+    expect(press("l", { meta: true }).prevented).toBe(false);
     expect(press("s", { meta: true }).prevented).toBe(false);
 
     expect(copy).not.toHaveBeenCalled();
     expect(paste).not.toHaveBeenCalled();
     copy.mockRestore();
     paste.mockRestore();
+  });
+
+  it("Cmd+A picks every shape and line — the canvas menu's Select all (#281)", () => {
+    useDiagramStore.setState({
+      nodes: [makeNode({ id: "a" }), makeNode({ id: "b" })],
+      edges: [makeEdge({ id: "e", source: "a", target: "b" })],
+    });
+    expect(press("a", { meta: true }).prevented).toBe(true);
+    const { nodes, edges } = useDiagramStore.getState();
+    expect(nodes.every((n) => n.selected)).toBe(true);
+    expect(edges.every((e) => e.selected)).toBe(true);
+  });
+
+  it("Cmd+A on an empty canvas is left alone", () => {
+    useDiagramStore.setState({ nodes: [], edges: [] });
+    expect(press("a", { meta: true }).prevented).toBe(false);
   });
 
   it("Cmd+Z is undo, Cmd+Shift+Z is redo (existing behavior regression)", () => {

@@ -10,7 +10,6 @@ import {
 } from "../../shared/lib/edgeUtils";
 import { ERD_RELATION_STYLE, ERD_RELATIONS, matchErdRelation } from "../../shared/lib/entityShape";
 import { ICON_IDS, ICON_LABELS, isIconId } from "../../shared/lib/iconIds";
-import { MAX_BADGE, MAX_DESCRIPTION, takesBadge, takesDecor } from "../../shared/lib/nodeDecor";
 import { IconGlyph } from "../../shared/lib/icons";
 import {
   ACCENT_SOFT,
@@ -270,51 +269,6 @@ const useExternalDraft = (
   };
 };
 
-export const MemberList = ({
-  label,
-  nodeId,
-  field,
-  lines,
-  onCommit,
-}: {
-  label: string;
-  nodeId: string;
-  field: "attributes" | "methods" | "columns";
-  lines: string[] | undefined;
-  onCommit: (id: string, patch: Record<string, unknown>) => void;
-}) => {
-  const { draft, setDraft, onFocus, finish } = useExternalDraft(
-    (lines ?? []).join("\n"),
-    `${nodeId}/${field}`,
-    (value) => onCommit(nodeId, { [field]: value.split("\n") }),
-  );
-  return (
-    <label
-      className={`flex flex-col gap-1 text-[11px] font-semibold uppercase tracking-wide ${TEXT_MUTED}`}
-    >
-      {label}
-      <textarea
-        {...PLAIN_TEXT}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-        onFocus={onFocus}
-        rows={Math.max(2, draft.split("\n").length + 1)}
-        placeholder={
-          field === "methods"
-            ? "+ save(): void"
-            : field === "columns"
-              ? "id uuid PK"
-              : "+ name: string"
-        }
-        className="resize-none rounded-md bg-frame px-2 py-1.5 font-normal text-[12px] normal-case tracking-normal text-ink outline-none focus:ring-2 focus:ring-primary/40"
-        onBlur={(e) => {
-          if (finish(e.target.value)) onCommit(nodeId, { [field]: e.target.value.split("\n") });
-        }}
-      />
-    </label>
-  );
-};
-
 export const StereotypeInput = ({
   nodeId,
   value,
@@ -398,99 +352,25 @@ export const ShapeSection = ({ e }: { e: E }) => {
 };
 
 /**
- * The label as text. Double-click edits it on the canvas too, but not for every
- * shape: an image draws no label — it is the picture's alt text — so this is
- * the one place to write it (#159 D3).
+ * An image's alt text — the one text a shape has that is not drawn, so the
+ * one written here (#159 D3). Every drawn text is typed where it is drawn,
+ * on the canvas (#281).
  */
 export const TextSection = ({ e, update }: { e: E; update: UpdateNodeData }) => {
   const node = e.firstNode;
-  if (!node) return null;
-  const isImage = node.data.shape === "image";
+  if (node?.data.shape !== "image") return null;
   return (
     <div className="flex flex-col gap-1.5">
       <input
         {...PLAIN_TEXT}
-        aria-label={isImage ? "Alt text" : "Label"}
+        aria-label="Alt text"
         className={FIELD}
         value={node.data.label}
-        placeholder={isImage ? "Describe the picture" : "Enter label"}
+        placeholder="Describe the picture"
         onChange={(ev) => update(node.id, { label: ev.target.value })}
       />
-      {isImage ? <p className={HINT}>Not drawn — used in Markdown and Mermaid exports.</p> : null}
-      {takesDecor(node.data.shape) ? (
-        <DecorText
-          nodeId={node.id}
-          field="description"
-          label="Description"
-          value={node.data.description ?? ""}
-          onCommit={update}
-        />
-      ) : null}
-      {takesBadge(node.data.shape) ? (
-        // a frame takes a badge too — its step number (#210 D23)
-        <DecorText
-          nodeId={node.id}
-          field="badge"
-          label="Badge"
-          value={node.data.badge ?? ""}
-          onCommit={update}
-        />
-      ) : null}
+      <p className={HINT}>Not drawn — used in Markdown and Mermaid exports.</p>
     </div>
-  );
-};
-
-/**
- * A box's description or badge (#160). Commits on blur like the member lists:
- * the store trims and caps the text, so writing every keystroke through would
- * eat the space just typed between two words.
- */
-const DecorText = ({
-  nodeId,
-  field,
-  label,
-  value,
-  onCommit,
-}: {
-  nodeId: string;
-  field: "description" | "badge";
-  label: string;
-  value: string;
-  onCommit: (id: string, patch: Record<string, unknown>) => void;
-}) => {
-  const { draft, setDraft, onFocus, finish } = useExternalDraft(
-    value,
-    `${nodeId}/${field}`,
-    (next) => onCommit(nodeId, { [field]: next }),
-  );
-  const shared = {
-    "aria-label": label,
-    value: draft,
-    onFocus,
-    className: FIELD,
-    onBlur: (ev: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
-      if (finish(ev.target.value)) onCommit(nodeId, { [field]: ev.target.value });
-    },
-  };
-  return field === "description" ? (
-    <textarea
-      {...shared}
-      {...PLAIN_TEXT}
-      rows={Math.max(2, draft.split("\n").length)}
-      maxLength={MAX_DESCRIPTION}
-      placeholder="Description (smaller, under the label)"
-      onChange={(ev) => setDraft(ev.target.value)}
-      className={`${FIELD} resize-none`}
-    />
-  ) : (
-    <input
-      {...shared}
-      {...PLAIN_TEXT}
-      type="text"
-      maxLength={MAX_BADGE}
-      placeholder="Badge (e.g. v2, NEW)"
-      onChange={(ev) => setDraft(ev.target.value)}
-    />
   );
 };
 
@@ -560,6 +440,10 @@ export const IconSection = ({ e, update }: { e: E; update: UpdateNodeData }) => 
   );
 };
 
+/**
+ * A class's stereotype and whether it is abstract. Its members are typed on
+ * the class itself, row by row (#281).
+ */
 export const ClassSection = ({ e, update }: { e: E; update: UpdateNodeData }) => {
   const node = e.soleClass;
   if (!node) return null;
@@ -576,38 +460,6 @@ export const ClassSection = ({ e, update }: { e: E; update: UpdateNodeData }) =>
         />
         Abstract
       </label>
-      <MemberList
-        label="Attributes"
-        nodeId={node.id}
-        field="attributes"
-        lines={node.data.attributes}
-        onCommit={update}
-      />
-      <MemberList
-        label="Methods"
-        nodeId={node.id}
-        field="methods"
-        lines={node.data.methods}
-        onCommit={update}
-      />
-      <p className={HINT}>One member per line. Lead with + - # ~ for visibility.</p>
-    </div>
-  );
-};
-
-export const EntitySection = ({ e, update }: { e: E; update: UpdateNodeData }) => {
-  const node = e.soleEntity;
-  if (!node) return null;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <MemberList
-        label="Columns"
-        nodeId={node.id}
-        field="columns"
-        lines={node.data.columns}
-        onCommit={update}
-      />
-      <p className={HINT}>One column per line: name, type, then PK / FK / UK.</p>
     </div>
   );
 };
