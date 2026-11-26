@@ -48,6 +48,21 @@ export const takesAllKeys = (target: HTMLElement | null): boolean => {
   return !!target.closest?.(".nokey");
 };
 
+/** words the user may select and copy — the chat's messages */
+export const SELECTABLE_TEXT = "[data-selectable-text]";
+
+/**
+ * The focus is in selectable words and part of them is selected: Cmd+C (and
+ * Cmd+X, which cuts nothing there) are the webview's to copy them. Only those
+ * keys — undo and paste still reach the canvas from there.
+ */
+const holdsTextSelection = (target: HTMLElement | null): boolean => {
+  const region = target?.closest?.(SELECTABLE_TEXT);
+  if (!region) return false;
+  const selection = document.getSelection();
+  return !!selection && !selection.isCollapsed && region.contains(selection.anchorNode);
+};
+
 /**
  * Additionally off-limits for a *bare* destructive key. A `<select>` is not text
  * entry — undo and the clipboard should still reach the canvas from one — but
@@ -61,12 +76,18 @@ export const takesAllKeys = (target: HTMLElement | null): boolean => {
  * `.nodelete` puts a whole subtree in this grade — the AI chat panel uses it so
  * Backspace on its resize handle or a header button cannot delete the shape the
  * user is asking about, while `Cmd+Z` from there still reaches the canvas.
+ * Its message list is no control: a press there to read or copy words leaves
+ * Backspace and Enter to the canvas, as a press anywhere else would.
  */
+const inNoDelete = (target: HTMLElement | null): boolean =>
+  !!target?.closest?.(".nodelete") && !target.closest(SELECTABLE_TEXT);
+
 const takesBareDestructiveKeys = (target: HTMLElement | null): boolean =>
-  takesAllKeys(target) || target?.tagName === "SELECT" || !!target?.closest?.(".nodelete");
+  takesAllKeys(target) || target?.tagName === "SELECT" || inNoDelete(target);
 
 /** what Enter and Space press themselves rather than reaching the canvas */
-const CONTROLS = "button, select, a[href], [role=menu], [role=toolbar], .nodelete";
+const CONTROL_ELEMENTS = "button, select, a[href], [role=menu], [role=toolbar]";
+const CONTROLS = `${CONTROL_ELEMENTS}, .nodelete`;
 
 const isBareSpace = (e: KeyboardEvent): boolean =>
   e.key === " " && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
@@ -126,7 +147,8 @@ export const handleCanvasKeyDown = (e: KeyboardEvent): void => {
   // unless it lands on a control (a bar button, a menu item), where Enter is
   // that control's own activation (#159)
   if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-    if (target?.closest?.(CONTROLS)) return;
+    // the chat's message list is read, not pressed: Enter there still reaches the canvas
+    if (target?.closest?.(CONTROL_ELEMENTS) || inNoDelete(target)) return;
     const selected = useDiagramStore
       .getState()
       // an image has no label on show to edit — same as its double-click (#8)
@@ -191,6 +213,13 @@ export const handleCanvasKeyDown = (e: KeyboardEvent): void => {
   // only swallow the keystroke when the canvas actually acted on it. Cancelling
   // a Cmd+C keydown suppresses the copy command that would follow, so an empty
   // selection must leave the event alone for whatever else might want it.
+  if ((key === "c" || key === "x") && holdsTextSelection(target)) return;
+  if (key === "a") {
+    // the canvas has no select-all; left alone, the webview's would select
+    // every word it can — the chat's — from anywhere but those words
+    if (!target?.closest?.(SELECTABLE_TEXT)) e.preventDefault();
+    return;
+  }
   if (key === "c") {
     if (useDiagramStore.getState().copySelection()) {
       e.preventDefault();

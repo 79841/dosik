@@ -58,6 +58,25 @@ const SelectionChip = () => {
   );
 };
 
+/** the words only: the webview would carry the theme's colours along, unreadable pasted on white */
+const copyAsPlainText = (event: React.ClipboardEvent) => {
+  const text = document.getSelection()?.toString();
+  if (!text) return;
+  event.clipboardData.setData("text/plain", text);
+  event.preventDefault();
+};
+
+/**
+ * Focus moved elsewhere in the window (a shape, the composer): the words'
+ * highlight goes too, so no selection is on show that Cmd+C would not copy.
+ * Another app taking the focus leaves it.
+ */
+const dropSelection = (event: React.FocusEvent<HTMLElement>) => {
+  if (!document.hasFocus()) return;
+  const selection = document.getSelection();
+  if (selection && event.currentTarget.contains(selection.anchorNode)) selection.removeAllRanges();
+};
+
 /** grows the composer with its content, capped by the element's own max-height */
 const autoGrow = (el: HTMLTextAreaElement): void => {
   el.style.height = "auto";
@@ -94,6 +113,21 @@ export const ChatPanel = () => {
   const dragRef = useRef<(() => void) | null>(null);
 
   useEffect(() => () => dragRef.current?.(), []);
+
+  // words selected while the focus is elsewhere (the Edit menu's Select All
+  // with the canvas focused) would show a selection Cmd+C does not copy
+  useEffect(() => {
+    const onSelectionChange = () => {
+      const list = listRef.current;
+      const selection = document.getSelection();
+      if (!list || !selection || selection.isCollapsed) return;
+      if (list.contains(selection.anchorNode) && !list.contains(document.activeElement)) {
+        selection.removeAllRanges();
+      }
+    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  }, []);
 
   // toasts centre on the canvas, not the sheet: while the panel is up they
   // move left by its width (D16) — and back when it closes or the editor goes
@@ -241,14 +275,22 @@ export const ChatPanel = () => {
         <MermaidPreview />
       ) : (
         <>
+          {/* the words of the messages select and copy (the rest of the app
+              does not). A press here focuses the list, so Cmd+C lands on it
+              and the canvas leaves selected words to the webview (and every
+              other key to itself) */}
           <div
             ref={listRef}
             aria-live="polite"
-            className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-3 pt-1 pb-3 text-[12px] leading-[1.6] text-ink"
+            tabIndex={-1}
+            data-selectable-text=""
+            onCopy={copyAsPlainText}
+            onBlur={dropSelection}
+            className="flex min-h-0 flex-1 select-text flex-col gap-4 overflow-y-auto px-3 pt-1 pb-3 text-[12px] leading-[1.6] text-ink outline-none"
           >
             {messages.length === 0 ? (
               <div
-                className={`flex h-full items-center justify-center px-2 text-center text-[12px] leading-relaxed text-balance ${TEXT_MUTED}`}
+                className={`flex h-full select-none items-center justify-center px-2 text-center text-[12px] leading-relaxed text-balance ${TEXT_MUTED}`}
               >
                 <p className="max-w-[34ch]">
                   e.g. “Draw a login flow with error handling”.
@@ -294,7 +336,7 @@ export const ChatPanel = () => {
               );
             })}
             {busy ? (
-              <div className="mr-auto flex items-center gap-1.5 py-1">
+              <div className="mr-auto flex select-none items-center gap-1.5 py-1">
                 <span className="sr-only">Assistant is thinking…</span>
                 {[0, 120, 240].map((delay) => (
                   <span

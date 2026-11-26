@@ -35,6 +35,7 @@ const { ChatPanel } = await import("../ChatPanel");
 const { useSettingsStore } = await import("../../settings/settingsStore");
 const { SIDE_PANEL_ID, useChatStore } = await import("../chatStore");
 const { Toolbar } = await import("../../toolbar/Toolbar");
+const { handleCanvasKeyDown } = await import("../../canvas/canvasKeymap");
 
 // the panel opens on the chat unless a test switches it (#194). The width
 // tests measure against the window: the library sidebar is hidden, so the
@@ -555,6 +556,175 @@ describe("messages and composer (#219 D15, T26)", () => {
       "aria-haspopup",
       "menu",
     );
+  });
+});
+
+describe("selecting and copying message text", () => {
+  beforeEach(() => {
+    useChatStore.setState({ open: true, view: "chat", busy: false, messages: [], width: 320 });
+    useDiagramStore.setState({ nodes: [], edges: [], clipboard: null, editRequestId: null });
+    window.addEventListener("keydown", handleCanvasKeyDown);
+  });
+  afterEach(() => {
+    window.removeEventListener("keydown", handleCanvasKeyDown);
+    document.getSelection()?.removeAllRanges();
+  });
+
+  const press = (key: string) => {
+    const event = new KeyboardEvent("keydown", {
+      key,
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    (document.activeElement ?? document.body).dispatchEvent(event);
+    return event;
+  };
+  /** a press on the words, then a drag over them — as the user selects */
+  const selectWords = async (user: ReturnType<typeof userEvent.setup>, text: string) => {
+    const words = screen.getByText(text);
+    await user.click(words);
+    const range = document.createRange();
+    range.selectNodeContents(words);
+    document.getSelection()?.removeAllRanges();
+    document.getSelection()?.addRange(range);
+  };
+
+  it("lets the words of every message be selected, and nothing else in the panel", () => {
+    const store = useChatStore.getState();
+    store.addMessage("user", "make it amber");
+    store.addMessage("assistant", "Done — Payments is amber.");
+    store.addMessage("error", "Something broke");
+    store.addMessage("activity", "Applied 4 changes");
+    render(<ChatPanel />);
+    for (const text of [
+      "make it amber",
+      "Done — Payments is amber.",
+      "Something broke",
+      "Applied 4 changes",
+    ]) {
+      expect(screen.getByText(text).closest(".select-text")).not.toBeNull();
+    }
+    expect(screen.getByRole("heading", { name: "Assistant" }).closest(".select-text")).toBeNull();
+    expect(screen.getByLabelText("Send").closest(".select-text")).toBeNull();
+    act(() => useChatStore.setState({ busy: true }));
+    expect(screen.getByText("Assistant is thinking…").closest(".select-none")).not.toBeNull();
+  });
+
+  it("keeps the empty-chat hint out of a selection", () => {
+    render(<ChatPanel />);
+    expect(screen.getByText(/Draw a login flow/).closest(".select-none")).not.toBeNull();
+  });
+
+  it("copies selected message text on Cmd+C even while shapes are selected on the canvas", async () => {
+    const user = userEvent.setup();
+    select({ node: true });
+    useChatStore.getState().addMessage("assistant", "Done — Payments is amber.");
+    render(<ChatPanel />);
+    await selectWords(user, "Done — Payments is amber.");
+    const copy = press("c");
+    // the canvas did not take it: the webview's own copy goes ahead
+    expect(copy.defaultPrevented).toBe(false);
+    expect(useDiagramStore.getState().clipboard).toBeNull();
+  });
+
+  it("leaves the other modifier shortcuts to the canvas — Cmd+Z after a press on a message still undoes", async () => {
+    const user = userEvent.setup();
+    useDiagramStore.getState().loadDoc(makeDoc([makeNode({ id: "n1" })], []), null);
+    useDiagramStore.getState().addNode("rect", { x: 200, y: 0 });
+    expect(useDiagramStore.getState().nodes).toHaveLength(2);
+    useChatStore.getState().addMessage("assistant", "Added a shape.");
+    render(<ChatPanel />);
+    await selectWords(user, "Added a shape.");
+    press("z");
+    expect(useDiagramStore.getState().nodes.map((n) => n.id)).toEqual(["n1"]);
+  });
+
+  it("Backspace after a press on a message still deletes the shapes selected on the canvas", async () => {
+    const user = userEvent.setup();
+    select({ node: true });
+    useChatStore.getState().addMessage("assistant", "Done.");
+    render(<ChatPanel />);
+    await user.click(screen.getByText("Done."));
+    const backspace = new KeyboardEvent("keydown", {
+      key: "Backspace",
+      bubbles: true,
+      cancelable: true,
+    });
+    (document.activeElement ?? document.body).dispatchEvent(backspace);
+    expect(useDiagramStore.getState().nodes.map((n) => n.id)).toEqual(["n2"]);
+  });
+
+  it("Enter after a press on a message still starts editing the selected shape's label", async () => {
+    const user = userEvent.setup();
+    select({ node: true });
+    useChatStore.getState().addMessage("assistant", "Done.");
+    render(<ChatPanel />);
+    await user.click(screen.getByText("Done."));
+    const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    (document.activeElement ?? document.body).dispatchEvent(enter);
+    expect(useDiagramStore.getState().editRequestId).toBe("n1");
+  });
+
+  it("a selection of the words made from elsewhere (the Edit menu's Select All) does not stay", async () => {
+    useChatStore.getState().addMessage("assistant", "Done — Payments is amber.");
+    render(<ChatPanel />);
+    act(() => screen.getByRole("button", { name: "New chat" }).focus());
+    const range = document.createRange();
+    range.selectNodeContents(screen.getByText("Done — Payments is amber."));
+    act(() => {
+      document.getSelection()?.removeAllRanges();
+      document.getSelection()?.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    expect(document.getSelection()?.toString()).toBe("");
+  });
+
+  it("Cmd+C with no words selected copies the canvas selection as before", async () => {
+    const user = userEvent.setup();
+    select({ node: true });
+    useChatStore.getState().addMessage("assistant", "Done.");
+    render(<ChatPanel />);
+    await user.click(screen.getByText("Done."));
+    document.getSelection()?.removeAllRanges();
+    expect(press("c").defaultPrevented).toBe(true);
+    expect(useDiagramStore.getState().clipboard).not.toBeNull();
+  });
+
+  it("Cmd+A selects the conversation only from inside it — the canvas has no select-all to give the words", async () => {
+    const user = userEvent.setup();
+    useChatStore.getState().addMessage("assistant", "Done.");
+    render(<ChatPanel />);
+    act(() => (document.activeElement as HTMLElement | null)?.blur());
+    expect(press("a").defaultPrevented).toBe(true);
+    await user.click(screen.getByText("Done."));
+    expect(press("a").defaultPrevented).toBe(false);
+  });
+
+  it("copies the words as plain text — no colours of the theme go with them", async () => {
+    const user = userEvent.setup();
+    useChatStore.getState().addMessage("assistant", "Done — Payments is amber.");
+    render(<ChatPanel />);
+    await selectWords(user, "Done — Payments is amber.");
+    const data = new Map<string, string>();
+    const copy = new Event("copy", { bubbles: true, cancelable: true }) as ClipboardEvent;
+    Object.defineProperty(copy, "clipboardData", {
+      value: { setData: (type: string, value: string) => data.set(type, value) },
+    });
+    screen.getByText("Done — Payments is amber.").dispatchEvent(copy);
+    expect(copy.defaultPrevented).toBe(true);
+    expect([...data]).toEqual([["text/plain", "Done — Payments is amber."]]);
+  });
+
+  it("drops the selection once the focus moves elsewhere in the window", async () => {
+    const user = userEvent.setup();
+    useChatStore.getState().addMessage("assistant", "Done — Payments is amber.");
+    render(<ChatPanel />);
+    await selectWords(user, "Done — Payments is amber.");
+    expect(document.getSelection()?.toString()).toBe("Done — Payments is amber.");
+    // focus moving, not a click that would itself reset the selection
+    act(() => screen.getByRole("button", { name: "New chat" }).focus());
+    expect(document.getSelection()?.toString()).toBe("");
   });
 });
 

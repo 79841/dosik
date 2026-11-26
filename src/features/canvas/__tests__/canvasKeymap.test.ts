@@ -535,17 +535,21 @@ describe("handleCanvasKeyDown", () => {
     expect(prevented).toBe(true);
   });
 
-  it("lets modifier combinations that aren't ours (Cmd+A etc.) pass through", () => {
+  it("lets modifier combinations that aren't ours (Cmd+S etc.) pass through", () => {
     const copy = vi.spyOn(useDiagramStore.getState(), "copySelection");
     const paste = vi.spyOn(useDiagramStore.getState(), "paste");
 
-    expect(press("a", { meta: true }).prevented).toBe(false);
     expect(press("s", { meta: true }).prevented).toBe(false);
+    expect(press("o", { meta: true }).prevented).toBe(false);
 
     expect(copy).not.toHaveBeenCalled();
     expect(paste).not.toHaveBeenCalled();
     copy.mockRestore();
     paste.mockRestore();
+  });
+
+  it("holds Cmd+A on the canvas — it has no select-all, and the webview's would select the chat's words", () => {
+    expect(press("a", { meta: true }).prevented).toBe(true);
   });
 
   it("Cmd+Z is undo, Cmd+Shift+Z is redo (existing behavior regression)", () => {
