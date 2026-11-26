@@ -3123,7 +3123,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ================================================================================
-cookie 0.18.1 (Rust crate) — MIT OR Apache-2.0  https://github.com/SergioBenitez/cookie-rs
+cookie 0.18.3 (Rust crate) — MIT OR Apache-2.0  https://github.com/SergioBenitez/cookie-rs
 --------------------------------------------------------------------------------
 
 Apache License
@@ -3330,7 +3330,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ================================================================================
-cookie 0.18.1 (Rust crate) — MIT OR Apache-2.0  https://github.com/SergioBenitez/cookie-rs
+cookie 0.18.3 (Rust crate) — MIT OR Apache-2.0  https://github.com/SergioBenitez/cookie-rs
 --------------------------------------------------------------------------------
 
 Copyright (c) 2017 Sergio Benitez
