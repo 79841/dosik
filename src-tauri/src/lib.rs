@@ -1,6 +1,7 @@
 mod app_menu;
 mod bridge;
 mod chat;
+mod chat_files;
 mod clipboard_picture;
 mod codex;
 mod images;
@@ -264,7 +265,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(AgentState::default())
         .manage(open_requests::OpenRequests::default())
+        .manage(chat_files::DroppedFiles::default())
         .setup(|app| {
+            // no conversation outlives the app: its files go too
+            chat_files::clear_all(app.handle());
+            if let Some(window) = tauri::Manager::get_webview_window(app, "main") {
+                chat_files::watch_drops(&window);
+            }
             // the library before anything asks for it: its older form is
             // moved into the default location off the main thread
             library::setup(app.handle());
@@ -336,6 +343,10 @@ pub fn run() {
             secrets::secret_set,
             chat::claude_cli_status,
             chat::claude_cli_chat,
+            chat_files::pick_chat_files,
+            chat_files::read_dropped_files,
+            chat_files::stage_chat_files,
+            chat_files::discard_chat_files,
             codex::codex_cli_status,
             codex::codex_cli_chat,
             plugins::plugins_status,

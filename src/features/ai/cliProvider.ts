@@ -79,6 +79,8 @@ export const sendWithClaudeCli = (
   target: ChatTarget = captureChatTarget(),
   /** the composer's model (#252); null leaves the CLI on its own default */
   model: string | null = null,
+  /** the conversation whose files the CLI may read (`cliFiles.ts`); null when it has none */
+  conversation: string | null = null,
 ): Promise<CliChatResult> =>
   withChatRoute(target, userMessage, async ({ systemPrompt, prompt }) => {
     try {
@@ -87,6 +89,7 @@ export const sendWithClaudeCli = (
         systemPrompt,
         sessionId,
         model,
+        conversation,
       });
       return { text: result.text, sessionId: result.session_id };
     } catch (error) {

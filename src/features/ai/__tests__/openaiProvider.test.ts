@@ -69,7 +69,11 @@ describe("openaiProvider (#119)", () => {
     const body = JSON.parse(init.body);
     expect(body.model).toBe("gpt-5.6-sol");
     expect(body.instructions).toContain("read_diagram");
-    expect(body.tools.map((t: { name: string }) => t.name)).toEqual(["read_diagram", "apply_ops"]);
+    expect(body.tools.map((t: { name: string }) => t.name)).toEqual([
+      "read_diagram",
+      "apply_ops",
+      "view_image",
+    ]);
     expect(body.input).toEqual([
       { role: "assistant", content: "earlier" },
       { role: "user", content: "hi" },
@@ -110,6 +114,89 @@ describe("openaiProvider (#119)", () => {
     expect(JSON.parse(second.input[0].output).nodes).toEqual([]);
     expect(JSON.parse(second.input[1].output)).toEqual({ applied: 1, errors: [] });
     expect(callbacks.onText).toHaveBeenCalledWith("Added a node.");
+  });
+
+  it("view_image: the output says the picture follows, and the next request carries it as a user item", async () => {
+    const node = {
+      id: "img1",
+      type: "shape",
+      position: { x: 0, y: 0 },
+      data: { label: "", shape: "image", src: "data:image/png;base64,iVBORw0KGgo=" },
+    };
+    useDiagramStore.setState({ nodes: [node as never], edges: [] });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: "r1",
+          output: [
+            {
+              type: "function_call",
+              name: "view_image",
+              arguments: '{"id":"img1"}',
+              call_id: "c1",
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(textOutput("r2", "A login screen.")));
+    await sendWithOpenAi("k", "m", [], "what is it", callbacks, fetchMock);
+    const second = JSON.parse(fetchMock.mock.calls[1]![1].body);
+    expect(second.input).toHaveLength(2);
+    expect(second.input[0]).toMatchObject({ type: "function_call_output", call_id: "c1" });
+    expect(second.input[1]).toEqual({
+      role: "user",
+      content: [
+        { type: "input_text", text: "The picture of image node img1 (from view_image):" },
+        { type: "input_image", image_url: "data:image/png;base64,iVBORw0KGgo=" },
+      ],
+    });
+  });
+
+  it("a refused request carries its HTTP status", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "bad image" } }, 400));
+    await expect(sendWithOpenAi("k", "m", [], "x", callbacks, fetchMock)).rejects.toMatchObject({
+      status: 400,
+      message: "OpenAI API error 400: bad image",
+    });
+  });
+
+  it("a later round's refusal carries no status — it sent tool outputs, not the files", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          id: "r1",
+          output: [{ type: "function_call", name: "read_diagram", arguments: "{}", call_id: "c1" }],
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ error: { message: "bad tool output" } }, 400));
+    const error = await sendWithOpenAi("k", "m", [], "x", callbacks, fetchMock).catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toHaveProperty("status");
+  });
+
+  it("the turn's files go with its first request", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(textOutput("r1", "ok")));
+    const shot = {
+      id: "s",
+      name: "s.png",
+      mime: "image/png",
+      size: 3,
+      kind: "image" as const,
+      base64: "iVBO",
+    };
+    await sendWithOpenAi("k", "m", [], "look", callbacks, fetchMock, captureChatTarget(), [shot]);
+    const first = JSON.parse(fetchMock.mock.calls[0]![1].body);
+    expect(first.input.at(-1)).toEqual({
+      role: "user",
+      content: [
+        { type: "input_text", text: "look" },
+        { type: "input_image", image_url: "data:image/png;base64,iVBO" },
+      ],
+    });
   });
 
   it("stops editing and sends no further round once the user leaves the diagram (#167)", async () => {

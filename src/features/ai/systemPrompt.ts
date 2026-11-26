@@ -27,7 +27,9 @@ Diagram model:
     Prefer a decorated box over an icon node when the shape needs a tile or a second line.
   - image nodes hold a picture the user pasted. Reading the diagram, their src is a placeholder
     like "elided:image/png;1433KB" — leave it as it is (sending it back unchanged keeps the picture).
-    You cannot draw new pictures; use shapes and icons.
+    To see what a picture shows, look at it: with the view_image tool when you have it, otherwise
+    by reading the file listed for that node with the message. The pictures of selected image
+    nodes come with the message already. You cannot draw new pictures; use shapes and icons.
   - Frames: add_node with shape:"frame" draws a titled area (label = title) behind other
     shapes, to mark out a part of the diagram ("VPC", "Backend"). Place the shapes it holds wholly
     inside its box, leaving the top 30px clear (the title sits on the top border); give it ~24px

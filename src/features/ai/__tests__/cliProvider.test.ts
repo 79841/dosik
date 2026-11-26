@@ -22,6 +22,7 @@ describe("cliProvider", () => {
       prompt: expect.stringMatching(/\/api\/chat\/[^/]+\/ops[\s\S]*draw a login flow$/),
       systemPrompt: expect.any(String),
       sessionId: "s-8",
+      conversation: null,
       model: null,
     });
     expect(result).toEqual({ text: "reply", sessionId: "s-9" });

@@ -158,6 +158,7 @@ describe("sendChatTurn", () => {
       expect.stringContaining("draw something"),
       expect.anything(),
       { session: expect.any(Number), stopped: null },
+      [],
     );
     const roles = useChatStore.getState().messages.map((m) => m.role);
     expect(roles).toEqual(["user", "user", "activity", "assistant"]);
@@ -218,6 +219,7 @@ describe("routing for the four combinations (#119)", () => {
       null,
       { session: expect.any(Number), stopped: null },
       "gpt-5.6-sol",
+      { conversation: expect.any(String), images: [] },
     );
     expect(cliMock).not.toHaveBeenCalled();
     expect(useChatStore.getState().cliSessionId).toBe("th1");
@@ -240,6 +242,7 @@ describe("routing for the four combinations (#119)", () => {
       null,
       expect.anything(),
       "claude-haiku-4-5",
+      expect.any(String),
     );
   });
 
@@ -268,6 +271,7 @@ describe("routing for the four combinations (#119)", () => {
       expect.anything(),
       expect.any(Function),
       { session: expect.any(Number), stopped: null },
+      [],
     );
     expect(apiMock).not.toHaveBeenCalled();
   });
@@ -282,6 +286,7 @@ describe("routing for the four combinations (#119)", () => {
       expect.stringContaining("hi"),
       expect.anything(),
       { session: expect.any(Number), stopped: null },
+      [],
     );
     expect(openaiMock).not.toHaveBeenCalled();
   });

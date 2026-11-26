@@ -1,6 +1,7 @@
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect } from "react";
 
+import { dropTakenElsewhere } from "../../shared/lib/fileDrops";
 import { toastError } from "../../shared/lib/toastStore";
 import { droppedImagePaths, readPictureFile } from "./imageFiles";
 import {
@@ -58,6 +59,8 @@ export const useImageFileDrop = (
       getCurrentWebview()
         .onDragDropEvent((event) => {
           if (event.payload.type !== "drop") return;
+          // dropped on the chat panel, which takes files itself (#275)
+          if (dropTakenElsewhere(event.payload.position)) return;
           const paths = droppedImagePaths(event.payload.paths);
           if (paths.length === 0) return;
           // physical pixels — the canvas speaks CSS pixels

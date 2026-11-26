@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 
-import { elideImages } from "../../shared/lib/imageData";
+import { elideImages, isImageDataUrl } from "../../shared/lib/imageData";
 import { useDiagramStore } from "../../shared/lib/store";
 import { tallyErrors } from "../../shared/lib/store/agentOps";
 import type { AgentOp } from "../../shared/lib/types";
@@ -52,6 +52,42 @@ export const readForChat = (target: ChatTarget): ChatRead => {
   if (blocked(target)) return { ok: false, error: STOPPED_FOR_MODEL };
   const doc = useDiagramStore.getState().toDoc();
   return { ok: true, doc: JSON.stringify(elideImages(doc)) };
+};
+
+/** an image node's picture, as base64 */
+export interface NodePicture {
+  node: string;
+  mime: string;
+  base64: string;
+}
+
+const pictureOf = (id: string, src: unknown): NodePicture | null => {
+  if (!isImageDataUrl(src)) return null;
+  const comma = src.indexOf(",");
+  const mime = src.slice(5, src.indexOf(";"));
+  return { node: id, mime, base64: src.slice(comma + 1) };
+};
+
+/** the pictures of the diagram's image nodes — the selected ones only, if asked */
+export const diagramPictures = (only: "selected" | "all" = "all"): NodePicture[] =>
+  useDiagramStore
+    .getState()
+    .nodes.filter((n) => n.data.shape === "image" && (only === "all" || n.selected))
+    .map((n) => pictureOf(n.id, n.data.src))
+    .filter((p): p is NodePicture => p !== null);
+
+/** `view_image`: one image node's picture in the turn's diagram, or why not */
+export const pictureForChat = (
+  target: ChatTarget,
+  id: string,
+): { ok: true; picture: NodePicture } | { ok: false; error: string } => {
+  const stop = blocked(target);
+  if (stop) return { ok: false, error: STOPPED_FOR_MODEL };
+  const node = useDiagramStore.getState().nodes.find((n) => n.id === id);
+  if (!node) return { ok: false, error: `no node with id ${id}` };
+  if (node.data.shape !== "image") return { ok: false, error: `node ${id} is not an image node` };
+  const picture = pictureOf(id, node.data.src);
+  return picture ? { ok: true, picture } : { ok: false, error: `node ${id} holds no picture` };
 };
 
 export type ChatApply =

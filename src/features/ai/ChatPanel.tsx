@@ -1,20 +1,37 @@
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import {
   ArrowUp,
   Code,
+  Info,
   MessageSquarePlus,
+  Paperclip,
   Pencil,
   SlidersHorizontal,
   Sparkles,
   X,
 } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { base64ToBytes } from "../../shared/lib/base64";
+import { elementAtDrop, TAKES_FILE_DROPS } from "../../shared/lib/fileDrops";
 import { ACCENT_BUTTON, FOCUS_RING, TEXT_MUTED } from "../../shared/lib/palette";
 import { useDiagramStore } from "../../shared/lib/store";
+import { readClipboardPicture } from "../../shared/lib/systemClipboard";
+import { toastError } from "../../shared/lib/toastStore";
 import { ICON_STROKE, IconButton, SMALL_ICON_SIZE } from "../../shared/ui/IconButton";
 import { PLAIN_TEXT } from "../../shared/ui/plainText";
 import { MermaidPreview } from "../mermaid/MermaidPreview";
 import { openSettings } from "../settings/settingsStore";
+import { AttachmentChip } from "./AttachmentChip";
+import {
+  type ChatAttachment,
+  fromFiles,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENTS,
+  pickFiles,
+  readDroppedFiles,
+  roomFor,
+} from "./attachments";
 import { sendChatTurn } from "./chatActions";
 import { panelToggleId, SIDE_PANEL_ID, useChatStore } from "./chatStore";
 import { ModelPicker } from "./ModelPicker";
@@ -41,7 +58,7 @@ const SelectionChip = () => {
   if (!summary) return null;
   return (
     // the design's chip: 22 tall on the line tint, inside the composer (#219 D15)
-    <div className="mb-1 flex min-w-0">
+    <div className="flex min-w-0">
       <span className="flex h-[22px] min-w-0 items-center gap-1 rounded-(--radius-control) bg-line pl-[7px] pr-[3px] text-[10.5px] font-medium text-ink">
         <span className="truncate">Selection · {selectionChipLabel(summary)}</span>
         <button
@@ -57,6 +74,46 @@ const SelectionChip = () => {
     </div>
   );
 };
+
+/**
+ * What a paste without files may still hold: a picture's own bytes on the
+ * system clipboard, read through Rust (`clipboard_picture.rs`) as the canvas
+ * reads it. Files copied in Finder or Explorer are left to the paste itself.
+ */
+const clipboardPicture = async (): Promise<File | null> => {
+  const picture = await readClipboardPicture();
+  if (picture?.kind !== "data") return null;
+  return new File([base64ToBytes(picture.base64) as BlobPart], "", { type: picture.mime });
+};
+
+/** how many more files the composer takes right now */
+const room = () => roomFor(useChatStore.getState().attachments.length);
+
+/**
+ * Files in: `load` reads at most `room` of them (the rest it names), and
+ * whatever still does not fit when they arrive — or could not be read — is
+ * said in toasts.
+ */
+const attach = async (
+  load: (room: number) => Promise<{ attachments: ChatAttachment[]; errors: string[] }>,
+) => {
+  try {
+    const loaded = await load(room());
+    const fits = loaded.attachments.slice(0, room());
+    const late = loaded.attachments.slice(fits.length).map((a) => a.name);
+    if (fits.length > 0) useChatStore.getState().addAttachments(fits);
+    const errors = [...loaded.errors];
+    if (late.length > 0) {
+      errors.push(`Up to ${MAX_ATTACHMENTS} files per message: ${late.join(", ")} not attached`);
+    }
+    for (const message of errors) toastError(new Error(message));
+  } catch (error) {
+    toastError(error);
+  }
+};
+
+/** `File`s from a paste or a page drop, read in the webview */
+const attachFiles = (files: File[]) => attach((space) => fromFiles(files, space));
 
 /** the words only: the webview would carry the theme's colours along, unreadable pasted on white */
 const copyAsPlainText = (event: React.ClipboardEvent) => {
@@ -98,6 +155,14 @@ export const ChatPanel = () => {
   const busy = useChatStore((s) => s.busy);
   const messages = useChatStore((s) => s.messages);
   const clearMessages = useChatStore((s) => s.clearMessages);
+  const attachments = useChatStore((s) => s.attachments);
+  /** files are being dragged over the panel (#275) */
+  const [dropping, setDropping] = useState(false);
+  /** whether the drag Tauri reports carries files (its `over` events do not say) */
+  const dragFiles = useRef(false);
+  const chipRowRef = useRef<HTMLDivElement>(null);
+  /** where the focus goes once a chip is gone — another chip's x, or the message */
+  const focusAfterRemove = useRef<string | null>(null);
 
   const width = useChatWidth();
   const setWidth = useChatStore((s) => s.setWidth);
@@ -113,6 +178,45 @@ export const ChatPanel = () => {
   const dragRef = useRef<(() => void) | null>(null);
 
   useEffect(() => () => dragRef.current?.(), []);
+
+  // files dropped from Finder (#275): Tauri takes them before the page does
+  // (macOS) and says where they landed — over this panel they attach, and the
+  // canvas leaves them alone (`TAKES_FILE_DROPS`). Outside Tauri (and on
+  // Windows, where the page keeps drops) the panel's own drop handlers do it.
+  useEffect(() => {
+    if (!open || view !== "chat") return;
+    let unlisten: (() => void) | null = null;
+    let disposed = false;
+    const over = (position: { x: number; y: number }) =>
+      asideRef.current?.contains(elementAtDrop(position)) ?? false;
+    try {
+      getCurrentWebview()
+        .onDragDropEvent((event) => {
+          const { payload } = event;
+          if (payload.type === "enter") dragFiles.current = payload.paths.length > 0;
+          if (payload.type === "leave") setDropping(false);
+          else if (payload.type === "enter" || payload.type === "over")
+            setDropping(dragFiles.current && over(payload.position));
+          else if (payload.type === "drop") {
+            setDropping(false);
+            if (over(payload.position)) {
+              void attach((space) => readDroppedFiles(payload.paths, space));
+            }
+          }
+        })
+        .then((fn) => {
+          if (disposed) fn();
+          else unlisten = fn;
+        })
+        .catch(() => undefined);
+    } catch {
+      // not in Tauri (`pnpm dev`): no webview to listen to
+    }
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [open, view]);
 
   // words selected while the focus is elsewhere (the Edit menu's Select All
   // with the canvas focused) would show a selection Cmd+C does not copy
@@ -203,7 +307,48 @@ export const ChatPanel = () => {
     window.addEventListener("pointercancel", stop);
   };
 
+  /**
+   * A chip's x: the file goes, and the focus with it would fall to the page,
+   * where Backspace deletes the canvas selection (#219) — it goes to the next
+   * chip's x, the previous one's, or the message.
+   */
+  const removeChip = useCallback((id: string) => {
+    const { attachments: holding, removeAttachment } = useChatStore.getState();
+    const at = holding.findIndex((a) => a.id === id);
+    const next = holding[at + 1] ?? holding[at - 1];
+    focusAfterRemove.current = next ? `Remove ${next.name}` : "";
+    removeAttachment(id);
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attachments is the trigger — the chip row changed
+  useLayoutEffect(() => {
+    const label = focusAfterRemove.current;
+    if (label === null) return;
+    focusAfterRemove.current = null;
+    const chip = label
+      ? chipRowRef.current?.querySelector<HTMLElement>(`button[aria-label="${CSS.escape(label)}"]`)
+      : null;
+    (chip ?? inputRef.current)?.focus();
+  }, [attachments]);
+
+  const onPaste = (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const files = [...event.clipboardData.files];
+    if (files.length > 0) {
+      event.preventDefault();
+      void attachFiles(files);
+      return;
+    }
+    // a screenshot may sit on the clipboard as a picture the paste does not carry
+    if (event.clipboardData.types.length === 0) {
+      void clipboardPicture().then((file) => (file ? attachFiles([file]) : undefined));
+    }
+  };
+
+  const carriesFiles = (event: React.DragEvent) => [...event.dataTransfer.types].includes("Files");
+
   const send = async () => {
+    // an answer on its way: Enter must not throw away what was typed
+    if (useChatStore.getState().busy) return;
     const text = input;
     setInput("");
     const result = await sendChatTurn(text);
@@ -231,6 +376,26 @@ export const ChatPanel = () => {
       id={SIDE_PANEL_ID}
       aria-labelledby={titleId}
       style={{ width }}
+      // the Mermaid view takes no files: a drop there stays the canvas's
+      {...(chat ? { [TAKES_FILE_DROPS]: "" } : {})}
+      onDragEnter={(e) => {
+        if (chat && carriesFiles(e)) setDropping(true);
+      }}
+      onDragOver={(e) => {
+        if (!chat || !carriesFiles(e)) return;
+        // this panel takes the files: the page must not refuse them here
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={(e) => {
+        if (!asideRef.current?.contains(e.relatedTarget as Node | null)) setDropping(false);
+      }}
+      onDrop={(e) => {
+        if (!chat || !carriesFiles(e)) return;
+        e.preventDefault();
+        setDropping(false);
+        void attachFiles([...e.dataTransfer.files]);
+      }}
       // docked: no radius, no shadow, no border — flush with the window's
       // right edge (D12). nodelete, not nokey: Backspace on the resize handle
       // or a header button must not delete the canvas selection, but undo and
@@ -311,6 +476,23 @@ export const ChatPanel = () => {
                   </p>
                 );
               }
+              if (m.role === "notice") {
+                // a file that went by name only, under the message it went with
+                return (
+                  <p
+                    key={m.id}
+                    className="m-0 flex items-start gap-1.5 text-[11px] leading-[15px] text-muted"
+                  >
+                    <Info
+                      size={12}
+                      strokeWidth={2}
+                      aria-hidden="true"
+                      className="mt-px flex-none"
+                    />
+                    {m.text}
+                  </p>
+                );
+              }
               if (m.role === "error") {
                 return (
                   <p
@@ -321,6 +503,8 @@ export const ChatPanel = () => {
                   </p>
                 );
               }
+              // a message of files alone shows no empty bubble
+              if (m.role === "user" && !m.text) return null;
               return (
                 <div
                   key={m.id}
@@ -354,7 +538,13 @@ export const ChatPanel = () => {
                 message field rings the whole composer in 1px `focus`; the
                 buttons inside keep their own keyboard ring instead */}
             <div className="rounded-(--radius-island) bg-frame pt-2 pr-2 pb-1.5 pl-2.5 has-[textarea:focus]:ring-1 has-[textarea:focus]:ring-focus">
-              <SelectionChip />
+              {/* the selection and the files; empty, the row takes no room */}
+              <div ref={chipRowRef} className="mb-1 flex min-w-0 flex-wrap gap-1 empty:hidden">
+                <SelectionChip />
+                {attachments.map((a) => (
+                  <AttachmentChip key={a.id} attachment={a} onRemove={removeChip} />
+                ))}
+              </div>
               <textarea
                 {...PLAIN_TEXT}
                 ref={inputRef}
@@ -369,17 +559,27 @@ export const ChatPanel = () => {
                     void send();
                   }
                 }}
+                onPaste={onPaste}
                 rows={2}
                 aria-label="Message"
                 placeholder="Ask the AI to draw or edit…"
                 className="block max-h-32 w-full resize-none overflow-y-auto bg-transparent text-[12px] leading-normal text-ink outline-none placeholder:text-muted focus:outline-hidden"
               />
-              <div className="mt-1 flex items-center gap-2">
+              <div className="mt-1 flex items-center gap-0.5">
+                <IconButton
+                  label="Attach files"
+                  size={24}
+                  tooltip="above"
+                  align="start"
+                  onClick={() => void attach(pickFiles)}
+                >
+                  <Paperclip size={14} strokeWidth={1.9} aria-hidden="true" />
+                </IconButton>
                 <ModelPicker />
                 <button
                   type="button"
                   onClick={() => void send()}
-                  disabled={busy || !input.trim()}
+                  disabled={busy || (!input.trim() && attachments.length === 0)}
                   title="Send (Enter)"
                   aria-label="Send"
                   className={`ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] ${ACCENT_BUTTON} ${FOCUS_RING} disabled:bg-primary/35 disabled:text-primary-fg/70 disabled:hover:bg-primary/35`}
@@ -391,6 +591,19 @@ export const ChatPanel = () => {
           </div>
         </>
       )}
+      {chat && dropping ? (
+        // files over the panel: the frame tint says what a drop does — no outline (Chat-States 5)
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-0 top-10 bottom-0 z-[5] flex flex-col items-center justify-center gap-2 bg-frame text-icon"
+        >
+          <Paperclip size={22} strokeWidth={1.6} />
+          <p className="m-0 text-[12px] leading-4 font-semibold text-ink">Drop files to attach</p>
+          <p className="m-0 text-[11px] leading-[15px] text-muted">
+            Up to {MAX_ATTACHMENTS} files, {MAX_ATTACHMENT_BYTES / (1024 * 1024)} MB each
+          </p>
+        </div>
+      ) : null}
       {/* an <hr>, not a div: that is the semantic separator biome asks for and
           it carries the role implicitly. Last in the DOM so Tab reaches the
           panel's own controls first; it is positioned, so order is free. The

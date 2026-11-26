@@ -346,10 +346,13 @@ pub fn parse_cli_response(stdout: &str) -> CliChatResponse {
 /// `claude -p` for one chat turn: JSON out, the app's system prompt, curl as
 /// the only tool, the session to resume, the model the composer chose (#252),
 /// and the prompt last — after `--`, so a prompt starting with `-` stays one.
+/// When the conversation has files (attachments, the diagram's pictures), the
+/// CLI may also read that one folder — and nothing else.
 pub fn claude_args(
     system_prompt: &str,
     session_id: Option<&str>,
     model: Option<&str>,
+    files: Option<&std::path::Path>,
     prompt: &str,
 ) -> Vec<String> {
     let mut args: Vec<String> = vec![
@@ -361,6 +364,11 @@ pub fn claude_args(
         "--allowedTools".into(),
         "Bash(curl:*)".into(),
     ];
+    if let Some(dir) = files {
+        args.push(crate::chat_files::read_rule(dir));
+        args.push("--add-dir".into());
+        args.push(dir.to_string_lossy().into_owned());
+    }
     if let Some(id) = session_id {
         args.push("--resume".into());
         args.push(id.into());
@@ -374,17 +382,37 @@ pub fn claude_args(
     args
 }
 
+/// The Claude CLI's working folder: empty, under the app cache. Claude Code
+/// reads inside its working folder without a permission rule, so the folder
+/// it runs in is part of what it may read — this one holds nothing.
+pub fn claude_workdir_in(cache: &std::path::Path) -> std::path::PathBuf {
+    cache.join("claude-cli")
+}
+
+fn claude_workdir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    use tauri::Manager;
+    let dir = claude_workdir_in(&app.path().app_cache_dir().map_err(|e| e.to_string())?);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    Ok(dir)
+}
+
 /// Runs one chat turn through the Claude Code CLI in headless mode. The CLI is
 /// authenticated with the user's Claude subscription, and is only allowed to
 /// use curl (against the local diagram bridge) as a tool. The prompt is passed
 /// after `--` as a single argv entry, so prompt content is never shell-parsed.
 #[tauri::command]
 pub async fn claude_cli_chat(
+    app: tauri::AppHandle,
     prompt: String,
     system_prompt: String,
     session_id: Option<String>,
     model: Option<String>,
+    // the conversation whose files the CLI may read (`chat_files.rs`)
+    conversation: Option<String>,
 ) -> Result<CliChatResponse, CliError> {
+    let files = crate::chat_files::existing_dir(&app, conversation.as_deref())
+        .map_err(|m| CliError::new(CliErrorKind::Unknown, m))?;
+    let workdir = claude_workdir(&app).map_err(|m| CliError::new(CliErrorKind::Unknown, m))?;
     tauri::async_runtime::spawn_blocking(move || {
         let cli = find_claude_cli().ok_or_else(|| {
             CliError::new(
@@ -398,10 +426,14 @@ pub async fn claude_cli_chat(
             .map_err(|m| CliError::new(CliErrorKind::NotInstalled, m))?;
 
         let mut cmd = cli_command(cli);
+        // an empty folder of its own: Claude Code reads its working folder
+        // without asking, and an app started from Finder runs in `/`
+        cmd.current_dir(&workdir);
         cmd.args(claude_args(
             &system_prompt,
             session_id.as_deref(),
             model.as_deref(),
+            files.as_deref(),
             &prompt,
         ));
 
@@ -480,7 +512,7 @@ mod tests {
 
     #[test]
     fn claude_args_print_json_with_the_prompt_last() {
-        let args = claude_args("sys", None, None, "--draw");
+        let args = claude_args("sys", None, None, None, "--draw");
         assert_eq!(args[0], "-p");
         let fmt = args.iter().position(|a| a == "--output-format").unwrap();
         assert_eq!(args[fmt + 1], "json");
@@ -492,13 +524,35 @@ mod tests {
         assert!(args.contains(&"Bash(curl:*)".to_string()));
         assert!(!args.contains(&"--resume".to_string()));
         assert!(!args.contains(&"--model".to_string()));
+        assert!(!args.contains(&"--add-dir".to_string()));
+        assert!(!args.iter().any(|a| a.starts_with("Read(")));
         assert_eq!(args[args.len() - 2], "--");
         assert_eq!(args[args.len() - 1], "--draw");
     }
 
     #[test]
+    fn the_claude_cli_runs_in_an_empty_folder_of_its_own() {
+        let dir = claude_workdir_in(std::path::Path::new("/cache/app"));
+        assert_eq!(dir, std::path::Path::new("/cache/app/claude-cli"));
+        // never the conversation's files: those are reached by the Read rule alone
+        assert!(!dir.starts_with("/cache/app/chat-attachments"));
+    }
+
+    #[test]
+    fn claude_args_open_only_the_conversation_folder_to_reading() {
+        let dir = std::path::Path::new("/cache/chat-attachments/c1");
+        let args = claude_args("sys", None, None, Some(dir), "look");
+        let tools = args.iter().position(|a| a == "--allowedTools").unwrap();
+        assert_eq!(args[tools + 1], "Bash(curl:*)");
+        assert_eq!(args[tools + 2], "Read(//cache/chat-attachments/c1/**)");
+        let add = args.iter().position(|a| a == "--add-dir").unwrap();
+        assert_eq!(args[add + 1], "/cache/chat-attachments/c1");
+        assert!(add < args.iter().position(|a| a == "--").unwrap());
+    }
+
+    #[test]
     fn claude_args_resume_the_session_and_carry_the_chosen_model() {
-        let args = claude_args("sys", Some("s-1"), Some("claude-sonnet-5"), "hi");
+        let args = claude_args("sys", Some("s-1"), Some("claude-sonnet-5"), None, "hi");
         let resume = args.iter().position(|a| a == "--resume").unwrap();
         assert_eq!(args[resume + 1], "s-1");
         let model = args.iter().position(|a| a == "--model").unwrap();

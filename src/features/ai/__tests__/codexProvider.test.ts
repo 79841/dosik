@@ -23,6 +23,8 @@ describe("codexProvider (#119)", () => {
       prompt: expect.stringMatching(/\/api\/chat\/[^/]+\/ops[\s\S]*draw a flow$/),
       systemPrompt: expect.stringContaining("curl"),
       sessionId: "th_1",
+      conversation: null,
+      images: null,
       model: null,
     });
     expect(result).toEqual({ text: "drew it", sessionId: "th_2" });

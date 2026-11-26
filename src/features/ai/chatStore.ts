@@ -1,6 +1,8 @@
+import { invoke } from "@tauri-apps/api/core";
 import { nanoid } from "nanoid";
 import { create } from "zustand";
 
+import type { ChatAttachment } from "./attachments";
 import { chatRoom, clampChatWidth, loadChatWidth, saveChatWidth } from "./panelWidth";
 import { bindKeyStore, keychainAvailable, scheduleKeySave } from "./keychain";
 import { loadPanelPrefs, savePanelPrefs } from "./panelPrefs";
@@ -12,7 +14,8 @@ import {
   saveAiSettings,
 } from "./settings";
 
-export type ChatRole = "user" | "assistant" | "activity" | "error";
+/** `notice`: a line the app adds about a message — a file that went by name only */
+export type ChatRole = "user" | "assistant" | "activity" | "error" | "notice";
 
 export interface ChatMessage {
   id: string;
@@ -26,6 +29,13 @@ export interface ChatMessage {
    * referred to (#55). The CLI path resumes its own transcript and ignores this.
    */
   payload?: string;
+  /**
+   * The files that went with a user message — the API paths replay them with
+   * every later turn, as they replay `payload`.
+   */
+  attachments?: ChatAttachment[];
+  /** the provider refused this turn: its files are no longer replayed */
+  filesFailed?: true;
 }
 
 /** what the right panel shows — the chat or the Mermaid preview (#194) */
@@ -51,6 +61,10 @@ interface ChatState {
   cliSessionId: string | null;
   /** which conversation is on screen — New chat starts the next one; a turn out belongs to the one it began in */
   conversation: number;
+  /** the conversation's id for its files on disk (`chat_files.rs`) — new with New chat */
+  conversationId: string;
+  /** the files waiting in the composer for the next message */
+  attachments: ChatAttachment[];
   /** panel width in px, dragged by the left edge (#129) */
   width: number;
 
@@ -64,7 +78,22 @@ interface ChatState {
   togglePanel: (view: PanelView) => void;
   setMermaidMode: (mode: MermaidMode) => void;
   setBusy: (busy: boolean) => void;
-  addMessage: (role: ChatRole, text: string, payload?: string) => void;
+  /** returns the new message's id */
+  addMessage: (
+    role: ChatRole,
+    text: string,
+    payload?: string,
+    attachments?: ChatAttachment[],
+  ) => string;
+  /**
+   * A turn the provider refused: its files leave the replay (and `payload`
+   * goes back to the words alone), or every later turn would send them again
+   * and fail the same way. The message keeps them, to show what was sent.
+   */
+  forgetTurnFiles: (id: string, payload: string) => void;
+  addAttachments: (attachments: ChatAttachment[]) => void;
+  removeAttachment: (id: string) => void;
+  clearAttachments: () => void;
   clearMessages: () => void;
   setSettings: (settings: AiSettings) => void;
   setCliSessionId: (id: string | null) => void;
@@ -89,6 +118,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   settings: loadAiSettings(),
   cliSessionId: null,
   conversation: 0,
+  conversationId: nanoid(12),
+  attachments: [],
   width: loadChatWidth(),
 
   toggleOpen: () => {
@@ -107,12 +138,44 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   setMermaidMode: (mermaidMode) => set({ mermaidMode }),
   setBusy: (busy) => set({ busy }),
-  addMessage: (role, text, payload) =>
+  addMessage: (role, text, payload, attachments) => {
+    const id = nanoid(6);
     set((s) => ({
-      messages: [...s.messages, { id: nanoid(6), role, text, ...(payload ? { payload } : {}) }],
+      messages: [
+        ...s.messages,
+        {
+          id,
+          role,
+          text,
+          ...(payload ? { payload } : {}),
+          ...(attachments?.length ? { attachments } : {}),
+        },
+      ],
+    }));
+    return id;
+  },
+  forgetTurnFiles: (id, payload) =>
+    set((s) => ({
+      messages: s.messages.map((m) => {
+        // the files stay on the message, to show what went; only the replay drops them
+        return m.id === id ? { ...m, payload, filesFailed: true as const } : m;
+      }),
     })),
-  clearMessages: () =>
-    set((s) => ({ messages: [], cliSessionId: null, conversation: s.conversation + 1 })),
+  addAttachments: (attachments) =>
+    set((s) => ({ attachments: [...s.attachments, ...attachments] })),
+  removeAttachment: (id) => set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) })),
+  clearAttachments: () => set({ attachments: [] }),
+  clearMessages: () => {
+    const old = get().conversationId;
+    set((s) => ({
+      messages: [],
+      cliSessionId: null,
+      conversation: s.conversation + 1,
+      conversationId: nanoid(12),
+    }));
+    // the CLI's copies of that conversation's files are no longer needed
+    invoke("discard_chat_files", { conversation: old }).catch(() => undefined);
+  },
   setSettings: (settings) => {
     const previous = get().settings;
     for (const vendor of Object.keys(settings.keys) as AiVendor[]) {

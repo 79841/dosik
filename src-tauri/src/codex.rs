@@ -54,20 +54,33 @@ const INSTALL_HINT: &str =
 /// conversation. The sandbox is `workspace-write` (scoped to the working
 /// folder we give it) with network access on so curl can reach the bridge,
 /// and approvals off — a headless run has nobody to ask.
-pub fn codex_args(session_id: Option<&str>, model: Option<&str>, prompt: &str) -> Vec<String> {
-    let mut args: Vec<String> = vec![
-        "exec".into(),
-        "--json".into(),
-        "--skip-git-repo-check".into(),
-        "--sandbox".into(),
-        "workspace-write".into(),
-        // `exec` has no --ask-for-approval flag (that is the TUI's); the config
-        // override is accepted everywhere and makes the intent explicit
-        "-c".into(),
-        "approval_policy=never".into(),
-        "-c".into(),
-        "sandbox_workspace_write.network_access=true".into(),
-    ];
+pub fn codex_args(
+    session_id: Option<&str>,
+    model: Option<&str>,
+    images: &[std::path::PathBuf],
+    prompt: &str,
+) -> Vec<String> {
+    let mut args: Vec<String> = vec!["exec".into()];
+    // pictures that go with the message, each its own `--image=` so the
+    // option's list form takes nothing after it — an `exec` option, before `resume`
+    for image in images {
+        args.push(format!("--image={}", image.display()));
+    }
+    args.extend(
+        [
+            "--json",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "workspace-write",
+            // `exec` has no --ask-for-approval flag (that is the TUI's); the config
+            // override is accepted everywhere and makes the intent explicit
+            "-c",
+            "approval_policy=never",
+            "-c",
+            "sandbox_workspace_write.network_access=true",
+        ]
+        .map(String::from),
+    );
     // the composer's model (#252) — an `exec` option, so before `resume`
     if let Some(model) = model {
         args.push("-m".into());
@@ -239,6 +252,9 @@ pub async fn codex_cli_chat(
     system_prompt: String,
     session_id: Option<String>,
     model: Option<String>,
+    // the conversation the pictures were staged for, and those pictures
+    conversation: Option<String>,
+    images: Option<Vec<String>>,
 ) -> Result<CliChatResponse, CliError> {
     if cfg!(windows) {
         return Err(CliError::new(
@@ -247,6 +263,21 @@ pub async fn codex_cli_chat(
         ));
     }
     let workspace = workspace_dir(&app).map_err(|m| CliError::new(CliErrorKind::Unknown, m))?;
+    let images = match (
+        crate::chat_files::existing_dir(&app, conversation.as_deref())
+            .map_err(|m| CliError::new(CliErrorKind::Unknown, m))?,
+        images.unwrap_or_default(),
+    ) {
+        (_, images) if images.is_empty() => Vec::new(),
+        (Some(dir), images) => crate::chat_files::inside(&dir, &images)
+            .map_err(|m| CliError::new(CliErrorKind::Unknown, m))?,
+        (None, _) => {
+            return Err(CliError::new(
+                CliErrorKind::Unknown,
+                "the message's pictures were not staged",
+            ))
+        }
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let cli = find_codex_cli().ok_or_else(|| {
             CliError::new(
@@ -264,8 +295,13 @@ pub async fn codex_cli_chat(
             .map_err(|m| CliError::new(CliErrorKind::Unknown, m))?;
 
         let mut cmd = cli_command(cli);
-        cmd.args(codex_args(session_id.as_deref(), model.as_deref(), &prompt))
-            .current_dir(&workspace);
+        cmd.args(codex_args(
+            session_id.as_deref(),
+            model.as_deref(),
+            &images,
+            &prompt,
+        ))
+        .current_dir(&workspace);
         let output = cmd.output().map_err(|e| {
             CliError::new(
                 CliErrorKind::SpawnFailed,
@@ -384,7 +420,7 @@ mod tests {
 
     #[test]
     fn args_run_headless_in_a_network_enabled_sandbox_and_resume_a_thread() {
-        let fresh = codex_args(None, None, "draw it");
+        let fresh = codex_args(None, None, &[], "draw it");
         assert_eq!(fresh[0], "exec");
         assert!(fresh.contains(&"--json".to_string()));
         assert!(fresh.contains(&"--skip-git-repo-check".to_string()));
@@ -399,7 +435,7 @@ mod tests {
         assert_eq!(fresh[fresh.len() - 2], "--");
         assert_eq!(fresh[fresh.len() - 1], "draw it");
 
-        let resumed = codex_args(Some("th_9"), None, "-- looks like a flag");
+        let resumed = codex_args(Some("th_9"), None, &[], "-- looks like a flag");
         let resume = resumed.iter().position(|a| a == "resume").unwrap();
         assert_eq!(resumed[resume + 1], "th_9");
         assert_eq!(resumed[resumed.len() - 1], "-- looks like a flag");
@@ -408,8 +444,22 @@ mod tests {
     }
 
     #[test]
+    fn args_hand_pictures_over_right_after_exec_one_flag_each() {
+        let images = [
+            std::path::PathBuf::from("/c/chat-attachments/c1/m1/a.png"),
+            std::path::PathBuf::from("/c/chat-attachments/c1/m1/b.png"),
+        ];
+        let args = codex_args(Some("th_9"), None, &images, "look");
+        assert_eq!(args[0], "exec");
+        assert_eq!(args[1], "--image=/c/chat-attachments/c1/m1/a.png");
+        assert_eq!(args[2], "--image=/c/chat-attachments/c1/m1/b.png");
+        assert_eq!(args[3], "--json");
+        assert!(2 < args.iter().position(|a| a == "resume").unwrap());
+    }
+
+    #[test]
     fn args_carry_the_chosen_model_before_the_resume_subcommand() {
-        let args = codex_args(Some("th_9"), Some("gpt-6-astra"), "go");
+        let args = codex_args(Some("th_9"), Some("gpt-6-astra"), &[], "go");
         let m = args.iter().position(|a| a == "-m").unwrap();
         assert_eq!(args[m + 1], "gpt-6-astra");
         // an `exec` option: it goes before `resume` and the prompt

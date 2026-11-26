@@ -1,13 +1,16 @@
 import type { AgentOp } from "../../shared/lib/types";
+import type { ChatAttachment } from "./attachments";
 import type { ChatMessage } from "./chatStore";
 import {
   applyForChat,
   type ChatTarget,
   captureChatTarget,
   describeApply,
+  pictureForChat,
   readForChat,
 } from "./chatTarget";
 import { apiSystemPrompt } from "./systemPrompt";
+import { type OpenAiContentPart, openAiContent, replayedFiles } from "./turnContent";
 
 interface TurnCallbacks {
   onText: (text: string) => void;
@@ -20,7 +23,7 @@ export const MAX_TOOL_ROUNDS = 20;
 
 /** Responses API input items — only the shapes this loop produces */
 export type ResponsesInputItem =
-  | { role: "user" | "assistant"; content: string }
+  | { role: "user" | "assistant"; content: string | OpenAiContentPart[] }
   | { type: "function_call_output"; call_id: string; output: string };
 
 interface FunctionCallItem {
@@ -38,15 +41,19 @@ type OutputItem = FunctionCallItem | MessageItem | { type: string };
 /**
  * Rebuilds the conversation from stored chat messages — the same rule as the
  * Anthropic path (`historyToParams`): user turns replay their `payload` (the
- * selection block, #55), assistant turns their text, nothing else.
+ * selection block, #55) and their files (#275), assistant turns their text,
+ * nothing else.
  */
-export const historyToInput = (history: ChatMessage[]): ResponsesInputItem[] =>
-  history
+export const historyToInput = (history: ChatMessage[]): ResponsesInputItem[] => {
+  const files = replayedFiles(history);
+  return history
     .filter((m) => m.role === "user" || m.role === "assistant")
-    .map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.role === "user" ? (m.payload ?? m.text) : m.text,
-    }));
+    .map((m) =>
+      m.role === "user"
+        ? { role: "user" as const, content: openAiContent(m.payload ?? m.text, files.get(m.id)) }
+        : { role: "assistant" as const, content: m.text },
+    );
+};
 
 /** the two tools, same names/descriptions as the Anthropic path so the system prompt fits both */
 export const OPENAI_TOOLS = [
@@ -86,7 +93,54 @@ export const OPENAI_TOOLS = [
       required: ["ops"],
     },
   },
+  {
+    type: "function",
+    name: "view_image",
+    description:
+      "Look at the picture an image node holds. Reading the diagram, an image node's src is a placeholder; call this with the node's id and the picture follows in the next message.",
+    parameters: {
+      type: "object",
+      properties: { id: { type: "string", description: "The image node's id" } },
+      required: ["id"],
+      additionalProperties: false,
+    },
+  },
 ];
+
+/**
+ * `view_image`: a function's output is text only, so the picture follows the
+ * outputs as a user item — `null` when there is none to show (the output says why).
+ */
+export const viewImage = (
+  rawArgs: string,
+  target: ChatTarget,
+): { output: string; picture: ResponsesInputItem | null } => {
+  let id = "";
+  try {
+    id = String((JSON.parse(rawArgs || "{}") as { id?: unknown }).id ?? "");
+  } catch {
+    return {
+      output: JSON.stringify({ ok: false, error: "view_image: arguments were not valid JSON" }),
+      picture: null,
+    };
+  }
+  const found = pictureForChat(target, id);
+  if (!found.ok)
+    return { output: JSON.stringify({ ok: false, error: found.error }), picture: null };
+  return {
+    output: JSON.stringify({ ok: true, note: `the picture of image node ${id} follows` }),
+    picture: {
+      role: "user",
+      content: [
+        { type: "input_text", text: `The picture of image node ${id} (from view_image):` },
+        {
+          type: "input_image",
+          image_url: `data:${found.picture.mime};base64,${found.picture.base64}`,
+        },
+      ],
+    },
+  };
+};
 
 const runTool = (
   name: string,
@@ -143,13 +197,15 @@ export const sendWithOpenAi = async (
   callbacks: TurnCallbacks,
   fetchImpl: typeof fetch = fetch,
   target: ChatTarget = captureChatTarget(),
+  /** this turn's files — pictures and PDFs go as input parts */
+  attachments: ChatAttachment[] = [],
 ): Promise<void> => {
   // the first request carries the conversation; after that the server holds
   // the transcript (`previous_response_id`) and each request sends only the
   // tool outputs produced in the round before — never an output twice
   let input: ResponsesInputItem[] = [
     ...historyToInput(history),
-    { role: "user", content: userMessage },
+    { role: "user", content: openAiContent(userMessage, attachments) },
   ];
   let previousResponseId: string | null = null;
   let sawText = false;
@@ -172,7 +228,15 @@ export const sendWithOpenAi = async (
     } catch (error) {
       throw new Error(describeNetworkFailure(error));
     }
-    if (!response.ok) throw new Error(await describeFailure(response));
+    if (!response.ok) {
+      const message = await describeFailure(response);
+      // the status rides along on the first request only: that one carries
+      // the turn's files, so its 400 or 413 may be them (`chatActions`); a
+      // later round sends tool outputs alone
+      throw previousResponseId === null
+        ? Object.assign(new Error(message), { status: response.status })
+        : new Error(message);
+    }
     let body: { id: string; status?: string; output?: OutputItem[] };
     try {
       body = (await response.json()) as typeof body;
@@ -212,11 +276,20 @@ export const sendWithOpenAi = async (
       break;
     }
     if (calls.length === 0) break;
-    input = calls.map((call) => ({
-      type: "function_call_output",
-      call_id: call.call_id,
-      output: runTool(call.name, call.arguments, callbacks, target),
-    }));
+    const pictures: ResponsesInputItem[] = [];
+    input = calls.map((call) => {
+      if (call.name === "view_image") {
+        const seen = viewImage(call.arguments, target);
+        if (seen.picture) pictures.push(seen.picture);
+        return { type: "function_call_output", call_id: call.call_id, output: seen.output };
+      }
+      return {
+        type: "function_call_output",
+        call_id: call.call_id,
+        output: runTool(call.name, call.arguments, callbacks, target),
+      };
+    });
+    input.push(...pictures);
     // the user left the diagram: no further round, the chat reports the stop
     if (target.stopped) return;
   }

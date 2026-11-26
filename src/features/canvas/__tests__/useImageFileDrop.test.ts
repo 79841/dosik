@@ -89,3 +89,24 @@ describe("image drop — goes only into the document it was dropped on (#218)", 
     expect(toasts()).toHaveLength(1);
   });
 });
+
+describe("drops on a region that takes its own files (#275)", () => {
+  it("the chat panel's drop is not the canvas's", async () => {
+    const { dropTakenElsewhere, TAKES_FILE_DROPS } = await import("../../../shared/lib/fileDrops");
+    const panel = document.createElement("aside");
+    panel.setAttribute(TAKES_FILE_DROPS, "");
+    const inside = document.createElement("p");
+    panel.append(inside);
+    document.body.append(panel);
+    const original = document.elementFromPoint;
+    try {
+      document.elementFromPoint = vi.fn(() => inside);
+      expect(dropTakenElsewhere({ x: 10, y: 10 })).toBe(true);
+      document.elementFromPoint = vi.fn(() => document.body);
+      expect(dropTakenElsewhere({ x: 10, y: 10 })).toBe(false);
+    } finally {
+      document.elementFromPoint = original;
+      panel.remove();
+    }
+  });
+});

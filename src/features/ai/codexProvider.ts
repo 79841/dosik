@@ -21,6 +21,8 @@ export const sendWithCodexCli = (
   target: ChatTarget = captureChatTarget(),
   /** the composer's model (#252); null leaves the CLI on its own default */
   model: string | null = null,
+  /** the conversation's staged files: its id, and the pictures to hand over (`cliFiles.ts`) */
+  files: { conversation: string; images: string[] } | null = null,
 ): Promise<CliChatResult> =>
   withChatRoute(target, userMessage, async ({ systemPrompt, prompt }) => {
     try {
@@ -29,6 +31,8 @@ export const sendWithCodexCli = (
         systemPrompt,
         sessionId,
         model,
+        conversation: files?.conversation ?? null,
+        images: files?.images ?? null,
       });
       return { text: result.text, sessionId: result.session_id };
     } catch (error) {
