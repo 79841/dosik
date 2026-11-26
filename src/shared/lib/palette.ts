@@ -205,6 +205,13 @@ export const ACCENT_SOFT = "bg-selected text-ink";
 export const FOCUS_RING =
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
 /**
+ * A filled text field in focus: a 1px `focus` ring around its fill — thin,
+ * as the caret already says where typing goes. Forced-colors mode drops the
+ * ring (a box-shadow), so focus also leaves a transparent outline that the
+ * system then paints (`outline-hidden`).
+ */
+export const FOCUS_FIELD = "outline-none focus:outline-hidden focus:ring-1 focus:ring-focus";
+/**
  * The same outline drawn inside the control — for one that touches the
  * window's edge (the Windows caption buttons), where an outline outside it
  * would be cut off.

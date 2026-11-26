@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { FOCUS_RING } from "../../lib/palette";
 import { IconButton } from "../IconButton";
 
 describe("IconButton (#158)", () => {
@@ -68,6 +69,15 @@ describe("IconButton (#158)", () => {
     expect(button).toHaveAttribute("aria-labelledby", tooltip.id);
     expect(button).not.toHaveAttribute("aria-label");
     expect(button).not.toHaveAttribute("aria-describedby");
+  });
+
+  it("shows the design system's keyboard ring, not the webview's", () => {
+    render(
+      <IconButton label="New chat" onClick={() => {}}>
+        <svg />
+      </IconButton>,
+    );
+    expect(screen.getByRole("button", { name: "New chat" })).toHaveClass(...FOCUS_RING.split(" "));
   });
 
   it("Sizes are 24·28·36 — the default is the toolbar's 36 (#217 D30)", () => {

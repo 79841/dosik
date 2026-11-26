@@ -1,7 +1,7 @@
 import { Check, ChevronDown, Plug } from "lucide-react";
 import { Fragment, useEffect, useId, useRef, useState } from "react";
 
-import { FOCUS_ITEM } from "../../shared/lib/palette";
+import { FOCUS_ITEM, FOCUS_RING } from "../../shared/lib/palette";
 import { useMenuKeys } from "../../shared/lib/useMenuKeys";
 import { useOutsideDismiss } from "../../shared/lib/useOutsideDismiss";
 import { openSettings } from "../settings/settingsStore";
@@ -104,7 +104,7 @@ export const ModelPicker = () => {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={toggle}
-        className="flex h-6 min-w-0 items-center gap-1 rounded-(--radius-control) px-1.5 text-[10.5px] font-normal text-muted transition-colors hover:bg-hover hover:text-ink aria-expanded:bg-selected aria-expanded:text-ink"
+        className={`flex h-6 min-w-0 items-center gap-1 rounded-(--radius-control) px-1.5 text-[10.5px] font-normal text-muted transition-colors hover:bg-hover hover:text-ink aria-expanded:bg-selected aria-expanded:text-ink ${FOCUS_RING}`}
       >
         <span className="truncate">{modelShortLabel(vendor, settings.models[vendor])}</span>
         <ChevronDown size={11} strokeWidth={2} aria-hidden="true" className="flex-none" />

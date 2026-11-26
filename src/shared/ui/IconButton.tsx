@@ -1,5 +1,7 @@
 import { useId } from "react";
 
+import { FOCUS_RING } from "../lib/palette";
+
 /**
  * The design system's icon-button heights (#217 D30, #219): chrome band 24,
  * rows and the toolbar row 28, the canvas islands 32, 36 before the compact pass
@@ -108,7 +110,7 @@ export const IconButton = ({
       disabled={disabled}
       // a pressed toggle and an open menu's button wear `selected` (the design
       // system's "pressed toggle or open menu button"), over the hover wash
-      className={`group/icon relative flex items-center justify-center gap-0.5 transition-colors aria-expanded:bg-selected aria-pressed:bg-selected aria-pressed:text-ink disabled:opacity-35 disabled:hover:bg-transparent ${busy ? "cursor-default text-muted" : "text-icon hover:bg-hover"} ${SIZE_CLASS[size]}`}
+      className={`group/icon relative flex items-center justify-center gap-0.5 transition-colors ${FOCUS_RING} aria-expanded:bg-selected aria-pressed:bg-selected aria-pressed:text-ink disabled:opacity-35 disabled:hover:bg-transparent ${busy ? "cursor-default text-muted" : "text-icon hover:bg-hover"} ${SIZE_CLASS[size]}`}
     >
       {children}
       <span

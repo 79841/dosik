@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeDoc, makeEdge, makeNode } from "../../../shared/lib/__tests__/testFixtures";
+import { FOCUS_RING_INSET } from "../../../shared/lib/palette";
 import { useDiagramStore } from "../../../shared/lib/store";
 import { useThemeStore } from "../../../shared/lib/theme";
 import { Toaster } from "../../../shared/ui/Toaster";
@@ -41,6 +42,20 @@ beforeEach(() => {
   useChatStore.setState({ mermaidMode: "preview" });
   useThemeStore.getState().setTheme("light");
   load();
+});
+
+describe("keyboard focus on the Mermaid wells", () => {
+  it("rings the drawing and the code inset — they fill the panel, whose edge would cut an outer ring", async () => {
+    useDiagramStore.getState().loadDoc(makeDoc([makeNode({ id: "a", label: "Start" })], []), null);
+    render(<MermaidPreview />);
+    for (const well of [
+      await screen.findByRole("img", { name: /Mermaid diagram/ }),
+      screen.getByLabelText("Mermaid code"),
+    ]) {
+      expect(well).toHaveClass(...FOCUS_RING_INSET.split(" "));
+      expect(well.className).not.toMatch(/ring-2/);
+    }
+  });
 });
 
 describe("Mermaid preview (#194)", () => {

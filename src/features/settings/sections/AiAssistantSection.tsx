@@ -1,7 +1,7 @@
 import { RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { FOCUS_RING } from "../../../shared/lib/palette";
+import { FOCUS_FIELD } from "../../../shared/lib/palette";
 import { PLAIN_TEXT } from "../../../shared/ui/plainText";
 import {
   checkCli,
@@ -250,7 +250,7 @@ const KeyRows = ({ vendor }: { vendor: AiVendor }) => {
             e.preventDefault();
             save();
           }}
-          className={`h-7 w-[200px] flex-none rounded-(--radius-button) border-0 bg-frame px-2.5 text-[12px] text-ink placeholder:text-muted ${FOCUS_RING}`}
+          className={`h-7 w-[200px] flex-none rounded-(--radius-button) border-0 bg-frame px-2.5 text-[12px] text-ink placeholder:text-muted ${FOCUS_FIELD}`}
         />
         <Button kind="primary" disabled={empty} onClick={save}>
           Save

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { makeDoc, makeEdge, makeNode } from "../../../shared/lib/__tests__/testFixtures";
 import { EDITOR_TOAST_BOTTOM, TOAST_BOTTOM } from "../../../shared/lib/editorLayout";
+import { FOCUS_FIELD } from "../../../shared/lib/palette";
 import { useDiagramStore } from "../../../shared/lib/store";
 import { handleCanvasKeyDown } from "../../canvas/canvasKeymap";
 import { EDIT_BAR_BOTTOM, EDIT_BAR_HEIGHT, EditBar, TOAST_LIFT } from "../EditBar";
@@ -101,6 +102,13 @@ describe("bottom edit bar (#159)", () => {
     open("Color");
     fireEvent.click(screen.getByTitle("teal"));
     expect(useDiagramStore.getState().nodes.map((n) => n.data.color)).toEqual(["teal", "teal"]);
+  });
+
+  it("the popover's text fields wear the 1px field ring in focus", () => {
+    select(["a"]);
+    render(<EditBar />);
+    open("Text");
+    expect(screen.getByRole("textbox", { name: "Label" })).toHaveClass(...FOCUS_FIELD.split(" "));
   });
 
   it("Text edits the label — for images it's called alt text", () => {

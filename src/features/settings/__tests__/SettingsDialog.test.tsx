@@ -23,6 +23,7 @@ const { useAiStatusStore } = await import("../../ai/aiStatusStore");
 const { useThemeStore } = await import("../../../shared/lib/theme");
 const { useIntegrationsStore } = await import("../sections/IntegrationsSection");
 const { useDiagramStore } = await import("../../../shared/lib/store");
+const { FOCUS_FIELD } = await import("../../../shared/lib/palette");
 const { handleCanvasKeyDown } = await import("../../canvas/canvasKeymap");
 const { makeDoc, makeNode } = await import("../../../shared/lib/__tests__/testFixtures");
 const { useLibraryStore } = await import("../../library/libraryStore");
@@ -727,6 +728,17 @@ describe("AI assistant", () => {
       openai: "api-key",
     });
     expect(within(claude).getByLabelText("Anthropic API key")).toBeInTheDocument();
+  });
+
+  it("the key field wears the 1px field ring in focus, as every filled field does", async () => {
+    const user = userEvent.setup();
+    render(<SettingsDialog />);
+    act(() => openSettings("AI assistant"));
+    const claude = within(dialog()).getByRole("region", { name: "Claude" });
+    await user.click(within(claude).getByRole("radio", { name: "API key" }));
+    expect(within(claude).getByLabelText("Anthropic API key")).toHaveClass(
+      ...FOCUS_FIELD.split(" "),
+    );
   });
 
   it("a stored key shows its end, Replace and Remove; Check asks the vendor", async () => {

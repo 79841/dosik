@@ -9,6 +9,7 @@ import {
   ACCENT_SOFT,
   ACCENT_SURFACE,
   FOCUS_ITEM,
+  FOCUS_FIELD,
   FOCUS_RING,
   THEME_PRIMARY,
   TEXT_MUTED,
@@ -282,6 +283,16 @@ describe("chrome colours come only from the design system (#216 T4)", () => {
 
   it("no Tailwind default shadow — a lift is shadow-raised, -lifted, -popover, -overlay or -segment", () => {
     expect(hits(/(?<![\w-])(?:[\w-]+:)*!?shadow-(?:2xs|xs|sm|md|lg|xl|2xl)(?![\w-])/g)).toEqual([]);
+  });
+
+  it("a field in focus wears the 1px focus ring — no hand-written 2px or tinted focus rings", () => {
+    expect(FOCUS_FIELD).toContain("focus:ring-1");
+    expect(FOCUS_FIELD).toContain("focus:ring-focus");
+    expect(
+      hits(
+        /(?:focus|focus-visible|focus-within|has-\[[^\]]*:focus\]):ring-(?!1(?![\w/.-])|focus(?![\w/.-]))[\w/.-]+/g,
+      ),
+    ).toEqual([]);
   });
 
   it("keyboard focus uses the single focus ring token — no hand-written focus outlines (#178)", () => {

@@ -1,6 +1,6 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
-import { FOCUS_RING } from "../../shared/lib/palette";
+import { FOCUS_FIELD } from "../../shared/lib/palette";
 import { readClipboardText } from "../../shared/lib/systemClipboard";
 import { isMacPlatform } from "../../shared/lib/windowChrome";
 import { DialogCaption } from "../../shared/ui/DialogCaption";
@@ -208,7 +208,7 @@ export const MermaidDialog = ({
             setText(e.target.value);
           }}
           placeholder={"flowchart LR\n  A --> B"}
-          className={`mt-3 h-48 w-full resize-none rounded-lg bg-frame p-3 font-mono text-[12px] leading-[18px] text-ink placeholder:text-muted ${FOCUS_RING}`}
+          className={`mt-3 h-48 w-full resize-none rounded-lg bg-frame p-3 font-mono text-[12px] leading-[18px] text-ink placeholder:text-muted ${FOCUS_FIELD}`}
           {...PLAIN_TEXT}
         />
         {error ? (

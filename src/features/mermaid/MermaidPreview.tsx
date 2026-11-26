@@ -2,7 +2,7 @@ import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { Copy, Info } from "lucide-react";
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { TEXT_MUTED, TEXT_MUTED_HOVER } from "../../shared/lib/palette";
+import { FOCUS_RING_INSET, TEXT_MUTED, TEXT_MUTED_HOVER } from "../../shared/lib/palette";
 import { useDiagramStore } from "../../shared/lib/store";
 import { documentMayHaveChanged } from "../../shared/lib/store/document";
 import { type ThemeMode, useThemeStore } from "../../shared/lib/theme";
@@ -259,7 +259,7 @@ export const MermaidPreview = () => {
           // to the pane's width (an inline max-width), so a wide drawing shrinks
           // to fit; a tall one overflows downward, and m-auto then lets it
           // scroll from the top instead of cutting it off
-          className="flex h-full overflow-auto p-4 outline-none focus-visible:ring-2 focus-visible:ring-primary/40 [&>svg]:m-auto [&>svg]:h-auto"
+          className={`flex h-full overflow-auto p-4 ${FOCUS_RING_INSET} [&>svg]:m-auto [&>svg]:h-auto`}
         />
       </div>
       {/* scrolls on its own, so it takes focus: the keyboard can scroll it too */}
@@ -268,7 +268,7 @@ export const MermaidPreview = () => {
         hidden={mode !== "code"}
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrollable region must be reachable by keyboard
         tabIndex={0}
-        className="min-h-0 flex-1 overflow-auto px-4 py-3 outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+        className={`min-h-0 flex-1 overflow-auto px-4 py-3 ${FOCUS_RING_INSET}`}
       >
         <pre className="m-0 font-mono text-[11.5px] leading-relaxed text-ink">
           {/* the code itself, highlighted — the fences are Markdown's, and Copy adds them (#198) */}

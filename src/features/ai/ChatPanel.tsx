@@ -9,7 +9,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import { ACCENT_BUTTON, TEXT_MUTED } from "../../shared/lib/palette";
+import { ACCENT_BUTTON, FOCUS_RING, TEXT_MUTED } from "../../shared/lib/palette";
 import { useDiagramStore } from "../../shared/lib/store";
 import { ICON_STROKE, IconButton, SMALL_ICON_SIZE } from "../../shared/ui/IconButton";
 import { PLAIN_TEXT } from "../../shared/ui/plainText";
@@ -49,7 +49,7 @@ const SelectionChip = () => {
           title="Clear selection"
           onClick={clearSelection}
           aria-label="Clear selection"
-          className="flex h-4 w-4 flex-none items-center justify-center rounded-[3px] text-icon transition-colors hover:bg-hover"
+          className={`flex h-4 w-4 flex-none items-center justify-center rounded-[3px] text-icon transition-colors hover:bg-hover ${FOCUS_RING}`}
         >
           <X size={11} strokeWidth={2.2} aria-hidden="true" />
         </button>
@@ -308,8 +308,10 @@ export const ChatPanel = () => {
           </div>
 
           <div className="flex-none px-2 pb-2">
-            {/* a filled field on the panel is `frame` (#216 Q2) */}
-            <div className="rounded-(--radius-island) bg-frame pt-2 pr-2 pb-1.5 pl-2.5 focus-within:ring-2 focus-within:ring-primary/40">
+            {/* a filled field on the panel is `frame` (#216 Q2). In focus, the
+                message field rings the whole composer in 1px `focus`; the
+                buttons inside keep their own keyboard ring instead */}
+            <div className="rounded-(--radius-island) bg-frame pt-2 pr-2 pb-1.5 pl-2.5 has-[textarea:focus]:ring-1 has-[textarea:focus]:ring-focus">
               <SelectionChip />
               <textarea
                 {...PLAIN_TEXT}
@@ -328,7 +330,7 @@ export const ChatPanel = () => {
                 rows={2}
                 aria-label="Message"
                 placeholder="Ask the AI to draw or edit…"
-                className="block max-h-32 w-full resize-none overflow-y-auto bg-transparent text-[12px] leading-normal text-ink outline-none placeholder:text-muted"
+                className="block max-h-32 w-full resize-none overflow-y-auto bg-transparent text-[12px] leading-normal text-ink outline-none placeholder:text-muted focus:outline-hidden"
               />
               <div className="mt-1 flex items-center gap-2">
                 <ModelPicker />
@@ -338,7 +340,7 @@ export const ChatPanel = () => {
                   disabled={busy || !input.trim()}
                   title="Send (Enter)"
                   aria-label="Send"
-                  className={`ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] ${ACCENT_BUTTON} disabled:bg-primary/35 disabled:text-primary-fg/70 disabled:hover:bg-primary/35`}
+                  className={`ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-[7px] ${ACCENT_BUTTON} ${FOCUS_RING} disabled:bg-primary/35 disabled:text-primary-fg/70 disabled:hover:bg-primary/35`}
                 >
                   <ArrowUp size={14} strokeWidth={2} aria-hidden="true" />
                 </button>

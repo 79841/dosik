@@ -10,6 +10,7 @@ import {
   ZOOM_ISLAND_HEIGHT,
   ZOOM_ISLAND_WIDTH,
 } from "../../../shared/lib/editorLayout";
+import { FOCUS_RING } from "../../../shared/lib/palette";
 import { useDiagramStore } from "../../../shared/lib/store";
 import { MARKER_REF_X } from "../../canvas/edgeMarkers";
 import type { MarkerShape } from "../../../shared/lib/types";
@@ -344,6 +345,13 @@ describe("edit bar — Fragment / Order", () => {
     await user.selectOptions(screen.getByLabelText("Fragment kind"), "opt");
     view.rerender(<EditBar />);
     expect(screen.queryByLabelText("Branches")).not.toBeInTheDocument();
+  });
+
+  it("the selects show the design system's keyboard ring", () => {
+    renderBar("Fragment");
+    for (const name of ["Fragment kind", "Branches"]) {
+      expect(screen.getByLabelText(name)).toHaveClass(...FOCUS_RING.split(" "));
+    }
   });
 
   it("applies a changed branch count", async () => {

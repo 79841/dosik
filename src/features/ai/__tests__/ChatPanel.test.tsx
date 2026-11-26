@@ -11,6 +11,7 @@ import { useToastStore } from "../../../shared/lib/toastStore";
 import { likeRust } from "../../../test/rustAnswers";
 import { handleAppKeyDown } from "../../chrome/appKeymap";
 import { openDocument, resetTabsForTests } from "../../library/tabActions";
+import { FOCUS_RING } from "../../../shared/lib/palette";
 import { clampChatWidth, MAX_CHAT_WIDTH, MIN_CHAT_WIDTH } from "../panelWidth";
 
 vi.mock("../cliProvider", () => ({
@@ -502,6 +503,31 @@ describe("messages and composer (#219 D15, T26)", () => {
     const box = screen.getByPlaceholderText("Ask the AI to draw or edit…").parentElement;
     expect(box).toContainElement(chip);
     expect(box).toHaveClass("bg-frame");
+  });
+
+  it("marks the focused composer with a 1px focus ring, not a 2px one", () => {
+    render(<ChatPanel />);
+    const box = screen.getByPlaceholderText("Ask the AI to draw or edit…").parentElement;
+    expect(box).toHaveClass("has-[textarea:focus]:ring-1", "has-[textarea:focus]:ring-focus");
+    expect(box?.className).not.toMatch(/ring-2(\s|$)/);
+    // the ring is the message field's: focus on a button inside leaves the composer plain
+    expect(box?.className).not.toMatch(/focus-within:/);
+    // forced-colors mode drops the ring (a box-shadow); the field then shows the system's outline
+    expect(screen.getByPlaceholderText("Ask the AI to draw or edit…")).toHaveClass(
+      "focus:outline-hidden",
+    );
+  });
+
+  it("gives the buttons inside the composer the design system's keyboard ring, not the webview's", () => {
+    select({ node: true });
+    render(<ChatPanel />);
+    for (const button of [
+      screen.getByRole("button", { name: "Clear selection" }),
+      screen.getByRole("button", { name: /Claude|GPT/ }),
+      screen.getByRole("button", { name: "Send" }),
+    ]) {
+      expect(button).toHaveClass(...FOCUS_RING.split(" "));
+    }
   });
 
   it("sends on Enter and breaks the line on Shift+Enter — Send is off when empty or busy", async () => {

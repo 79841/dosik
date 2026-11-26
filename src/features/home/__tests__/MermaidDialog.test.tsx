@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { FOCUS_FIELD } from "../../../shared/lib/palette";
 import { readClipboardText } from "../../../shared/lib/systemClipboard";
 import { isMacPlatform } from "../../../shared/lib/windowChrome";
 import { MermaidImportError } from "../../mermaid/import/plan";
@@ -54,6 +55,11 @@ describe("From Mermaid… dialog (#220 D15, T22)", () => {
     expect(field()).toHaveFocus();
     expect(field()).toHaveClass("font-mono");
     expect(field()).toHaveAttribute("spellcheck", "false");
+  });
+
+  it("the code field wears the 1px field ring in focus, as every filled field does", () => {
+    renderDialog();
+    expect(field()).toHaveClass(...FOCUS_FIELD.split(" "));
   });
 
   it("fills the field on open when the clipboard holds Mermaid", async () => {

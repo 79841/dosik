@@ -16,6 +16,8 @@ import {
   ACCENT_SOFT,
   ACCENT_SURFACE,
   DEFAULT_NODE_SIZE,
+  FOCUS_FIELD,
+  FOCUS_RING,
   PALETTE_COLORS,
   SHAPE_KINDS,
   SHAPE_LABELS,
@@ -49,9 +51,8 @@ import { PLAIN_TEXT } from "../../shared/ui/plainText";
  * on blur, free text survives an agent editing the same node (`useExternalDraft`).
  */
 
-const FIELD =
-  "w-full rounded-md bg-frame px-3 py-1.5 text-[12.5px] text-ink outline-none focus:ring-2 focus:ring-primary/40";
-const SELECT = "w-full rounded-md bg-frame px-2 py-1.5 text-[12.5px] text-ink outline-none";
+const FIELD = `w-full rounded-md bg-frame px-3 py-1.5 text-[12.5px] text-ink ${FOCUS_FIELD}`;
+const SELECT = `w-full rounded-md bg-frame px-2 py-1.5 text-[12.5px] text-ink ${FOCUS_RING}`;
 const SOFT_BUTTON =
   "rounded-md bg-frame px-2 py-1.5 text-[12px] text-muted-strong hover:bg-selected disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-frame";
 const HINT = `text-[11px] leading-snug ${TEXT_MUTED}`;
@@ -90,7 +91,7 @@ export const CommitOnBlurNumber = ({
   return (
     <input
       type="number"
-      className="w-16 rounded-md bg-frame px-2 py-1 text-[13px] text-ink outline-none focus:ring-2 focus:ring-primary/40"
+      className={`w-16 rounded-md bg-frame px-2 py-1 text-[13px] text-ink ${FOCUS_FIELD}`}
       value={draft ?? Math.round(value)}
       aria-label={label}
       onChange={(e) => setDraft(e.target.value)}
@@ -306,7 +307,7 @@ export const MemberList = ({
               ? "id uuid PK"
               : "+ name: string"
         }
-        className="resize-none rounded-md bg-frame px-2 py-1.5 font-normal text-[12px] normal-case tracking-normal text-ink outline-none focus:ring-2 focus:ring-primary/40"
+        className={`resize-none rounded-md bg-frame px-2 py-1.5 font-normal text-[12px] normal-case tracking-normal text-ink ${FOCUS_FIELD}`}
         onBlur={(e) => {
           if (finish(e.target.value)) onCommit(nodeId, { [field]: e.target.value.split("\n") });
         }}
@@ -338,7 +339,7 @@ export const StereotypeInput = ({
       value={draft}
       onChange={(e) => setDraft(e.target.value)}
       onFocus={onFocus}
-      className="w-full rounded-md bg-frame px-2 py-1.5 text-[12px] text-ink outline-none focus:ring-2 focus:ring-primary/40"
+      className={`w-full rounded-md bg-frame px-2 py-1.5 text-[12px] text-ink ${FOCUS_FIELD}`}
       onBlur={(e) => {
         if (finish(e.target.value)) onCommit(nodeId, { stereotype: e.target.value });
       }}
@@ -722,7 +723,7 @@ export const FrameSection = ({ e, update }: { e: E; update: UpdateNodeData }) =>
         <label className="flex items-center gap-2 text-[13px] text-muted-strong">
           Branches
           <select
-            className="rounded-md bg-frame px-2 py-1 text-[13px] text-ink outline-none"
+            className={`rounded-md bg-frame px-2 py-1 text-[13px] text-ink ${FOCUS_RING}`}
             value={node.data.branches ?? MIN_FRAGMENT_BRANCHES}
             aria-label="Branches"
             onChange={(ev) => update(node.id, { branches: Number(ev.target.value) })}
