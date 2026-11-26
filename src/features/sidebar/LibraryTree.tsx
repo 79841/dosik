@@ -17,7 +17,13 @@ import {
   renameFolderTo,
 } from "../library/libraryActions";
 import { diagramMenuItems, folderMenuItems, projectsMenuItems } from "../library/libraryMenus";
-import { indentClass, NameInput, SKELETON_DELAY_MS } from "../library/libraryParts";
+import {
+  indentClass,
+  NameInput,
+  RowPaint,
+  SKELETON_DELAY_MS,
+  useListWidth,
+} from "../library/libraryParts";
 import { refreshLibraryQuietly, useLibraryStore } from "../library/libraryStore";
 import {
   canHoldFolders,
@@ -379,6 +385,8 @@ const TreeBody = ({
   const focusNext = useRef<TreeKey | null>(null);
   /** the tree list — where the focus may be taken back from (#218 D15) */
   const treeBox = useRef<HTMLUListElement>(null);
+  // its visible width, for the rows' fills and rings and the rename field (Sidebar-Deep)
+  useListWidth(treeBox);
 
   const shown = (key: TreeKey | null): key is TreeKey =>
     key !== null && rows.some((r) => r.key === key);
@@ -836,6 +844,20 @@ const TreeBody = ({
         ? node.count
         : null;
     const chevronTone = isSelected ? "text-ink" : "text-icon";
+    // the row's fill, on its fill box — the list's visible width, so it never
+    // ends square at the list's edge (Sidebar-Deep)
+    // its name is being changed: the field takes the name's place — and the
+    // tail's, so the count or `…` sticks over no end of it (Sidebar-Deep)
+    const renamingThis = node.kind !== "diagram" && renaming === node.folder.id;
+    const fillTone = dropInto
+      ? DROP_TARGET
+      : isSelected
+        ? "bg-selected"
+        : tinted
+          ? "bg-hover"
+          : drag
+            ? ""
+            : "group-hover/row:bg-hover";
     const children = node.kind === "diagram" ? [] : node.children;
     return (
       <li
@@ -871,25 +893,27 @@ const TreeBody = ({
             openRow(node);
           }}
           // as wide as the widest row: names are never cut, the list scrolls
-          // sideways instead (Sidebar-Deep); --row-bg is the fill the tail fades into
+          // sideways instead (Sidebar-Deep) — so the row paints nothing itself:
+          // its fill and rings are on boxes the list's visible width (RowPaint;
+          // isolate keeps the fill under the content, inside the row); --row-bg
+          // is the fill the tail fades into
           // select-none: a press that turns into a drag picks no words (#230 D9)
           // its offset: out of a drag's preview's way (#260 R2) — a transform,
           // so nothing in a row may be position: fixed (#206)
           style={offset ? { transform: `translateY(${offset}px)` } : undefined}
-          className={`group/row relative flex h-[30px] cursor-default select-none items-center gap-1 rounded-[5px] text-[13px] text-ink ${
+          className={`group/row relative isolate flex h-[30px] cursor-default select-none items-center gap-1 rounded-[5px] text-[13px] text-ink ${
             settling ? "" : ROW_GLIDE
-          } ${count !== null ? "pr-0" : "pr-2"} ${indentClass(level)} ${
-            dropInto
-              ? `${DROP_TARGET} ${isSelected ? "font-semibold" : "font-medium"}`
-              : isSelected
-                ? "bg-selected font-semibold [--row-bg:var(--selected)]"
-                : tinted
-                  ? "bg-hover font-medium [--row-bg:var(--hover)]"
-                  : drag
-                    ? "font-medium [--row-bg:var(--frame)]"
-                    : "font-medium [--row-bg:var(--frame)] hover:bg-hover hover:[--row-bg:var(--hover)]"
+          } ${count !== null && !renamingThis ? "pr-0" : "pr-2"} ${indentClass(level)} ${
+            dropInto || isSelected
+              ? `${isSelected ? "font-semibold" : "font-medium"} [--row-bg:var(--selected)]`
+              : tinted
+                ? "font-medium [--row-bg:var(--hover)]"
+                : drag
+                  ? "font-medium [--row-bg:var(--frame)]"
+                  : "font-medium [--row-bg:var(--frame)] hover:[--row-bg:var(--hover)]"
           }`}
         >
+          <RowPaint layer="fill" className={fillTone} />
           {expandable ? (
             <span
               data-chevron
@@ -911,9 +935,10 @@ const TreeBody = ({
             <span aria-hidden="true" className="w-3.5 flex-none" />
           )}
           <NodeGlyph node={node} open={open} greyed={missing} />
-          {node.kind !== "diagram" && renaming === node.folder.id ? (
+          {node.kind !== "diagram" && renamingThis ? (
             <NameInput
               size="sm"
+              list={treeBox}
               name={node.folder.name}
               label={node.kind === "project" ? "Project name" : "Folder name"}
               onDone={(name) => {
@@ -932,7 +957,7 @@ const TreeBody = ({
               {shownName(node)}
             </span>
           )}
-          {actions || count !== null ? (
+          {(actions || count !== null) && !renamingThis ? (
             <span
               data-tail
               // a row with no count shows its tail only with the `…`
@@ -977,8 +1002,12 @@ const TreeBody = ({
               ) : null}
             </span>
           ) : null}
-          {/* last in the row: painted over the sticky tail's fill */}
-          {dropInto ? <span data-drop-ring="" aria-hidden="true" className={DROP_RING} /> : null}
+          {/* last in the row, over the sticky tail's fill: the drop ring and
+              the keyboard focus ring (FOCUS_TREE_ROW) — only the tab stop takes
+              the focus (roving tabindex), and a sticky box costs a layer each */}
+          {node.key === tabStop || dropInto ? (
+            <RowPaint layer="ring" className={dropInto ? DROP_RING : ""} />
+          ) : null}
         </div>
         {expandable ? (
           <FoldGroup

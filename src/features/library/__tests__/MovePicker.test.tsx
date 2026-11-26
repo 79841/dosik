@@ -291,6 +291,49 @@ describe("Move to… picker (#229 D13)", () => {
     expect(line(/^Flows/)).toHaveClass("pr-2");
   });
 
+  it("hover and keyboard fills stay inside the list's visible width, all four corners rounded — a box, not the row (#280, Sidebar-Deep c)", () => {
+    show({ current: "drf" });
+    const fill = (name: RegExp) => line(name).querySelector("[data-fill]") as HTMLElement | null;
+    // rows are as wide as the widest row: a fill on one would end square at the list's edge
+    expect(line(/^Flows/)).not.toHaveClass("hover:bg-hover");
+    expect(fill(/^Flows/)).toHaveClass(
+      "group-hover/row:bg-hover",
+      "sticky",
+      "left-0",
+      "block",
+      "h-full",
+      "w-(--list-w)",
+      "rounded-[inherit]",
+    );
+    expect(fill(/^Flows/)!.parentElement).toHaveClass(
+      "pointer-events-none",
+      "absolute",
+      "inset-0",
+      "-z-10",
+    );
+    expect(line(/^Flows/)).toHaveClass(
+      "group/row",
+      "relative",
+      "isolate",
+      "hover:[--row-bg:var(--hover)]",
+    );
+    // the keyboard's fill is the same box
+    expect(row(/^Flows/)).toHaveClass("focus-visible:[&>[data-row]_[data-fill]]:bg-hover");
+    expect(row(/^Flows/)).not.toHaveClass("focus-visible:[&>[data-row]]:bg-hover");
+    // the current parent takes no hover
+    expect(fill(/^Drafts/)).not.toHaveClass("group-hover/row:bg-hover");
+  });
+
+  it("the list keeps --list-w at its visible width — less a classic scroll bar (#280)", () => {
+    const client = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(215);
+    try {
+      show({ current: "drf" });
+      expect(tree().style.getPropertyValue("--list-w")).toBe("215px");
+    } finally {
+      client.mockRestore();
+    }
+  });
+
   it("on open, scrolls the current parent row's name into view, and keeps rows reached by keys in view (Sidebar-Deep c)", () => {
     const scroll = vi.fn();
     Element.prototype.scrollIntoView = scroll;

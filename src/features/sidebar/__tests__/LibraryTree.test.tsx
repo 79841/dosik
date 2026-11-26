@@ -104,6 +104,8 @@ const tree = () => screen.getByRole("tree", { name: "Projects" });
 const item = (name: string | RegExp) => within(tree()).getByRole("treeitem", { name });
 /** a row's own line — the treeitem also holds its children */
 const row = (name: string | RegExp) => item(name).querySelector("[data-row]") as HTMLElement;
+/** a row's fill — on its fill box, the list's visible width; the row paints nothing itself (#280) */
+const fill = (name: string | RegExp) => row(name).querySelector("[data-fill]") as HTMLElement;
 const chevron = (name: string | RegExp) =>
   item(name).querySelector("[data-row] [data-chevron]") as HTMLElement;
 const moreButton = (name: string | RegExp) =>
@@ -800,7 +802,11 @@ describe("sidebar tree (#217 R3)", () => {
             line.style.transform,
           ]),
       );
-    const ring = (name: RegExp) => row(name).querySelector(":scope > [data-drop-ring]");
+    /** the drop ring — on the row's ring box (#280), none while the row is no drop target */
+    const ring = (name: RegExp) => {
+      const box = row(name).querySelector("[data-ring]");
+      return box && DROP_RING.split(" ").every((c) => box.classList.contains(c)) ? box : null;
+    };
 
     const ordered = (): FolderMeta[] => [
       {
@@ -907,7 +913,7 @@ describe("sidebar tree (#217 R3)", () => {
       expect(preview()).toHaveStyle({ top: `${2 + 31}px` });
       expect(previewRow()).toHaveClass("pl-5");
       expect(moved()).toEqual({ Archive: "translateY(31px)" });
-      expect(row(/^Work/)).not.toHaveClass("bg-selected");
+      expect(fill(/^Work/)).not.toHaveClass("bg-selected");
       expect(ring(/^Work/)).toBeNull();
       firePointer("pointercancel", 70, 0);
     });
@@ -933,7 +939,7 @@ describe("sidebar tree (#217 R3)", () => {
       // Work, Archive, Sequence, Personal: into Work, unfolded
       firePointer("pointermove", 70, 102 + 15);
       expect(ring(/^Work/)).toBeNull();
-      expect(row(/^Work/)).not.toHaveClass("bg-selected");
+      expect(fill(/^Work/)).not.toHaveClass("bg-selected");
       firePointer("pointercancel", 0, 0);
     });
 
@@ -941,7 +947,7 @@ describe("sidebar tree (#217 R3)", () => {
       renderTree();
       dragTo(/^Login flow/, 70, rowTop(/^Archive/) + 13);
       expect(preview()).toBeNull();
-      expect(row(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
+      expect(fill(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
       expect(ring(/^Archive/)).not.toBeNull();
       expect(moved()).toEqual({});
       expect(item(/^Login flow/)).toHaveClass("opacity-0");
@@ -1084,7 +1090,7 @@ describe("sidebar tree (#217 R3)", () => {
       renderTree();
       const archive = rowTop(/^Archive/);
       dragTo(/^Login flow/, 70, archive + 13);
-      expect(row(/^Archive/)).toHaveClass("bg-selected", ...DROP_TARGET.split(" "));
+      expect(fill(/^Archive/)).toHaveClass("bg-selected", ...DROP_TARGET.split(" "));
       expect(item(/^Archive/)).toHaveAttribute("aria-selected", "false");
       expect(preview()).toBeNull();
       firePointer("pointerup", 70, archive + 13);
@@ -1102,7 +1108,7 @@ describe("sidebar tree (#217 R3)", () => {
       expect(item(/^Archive/)).toHaveAttribute("aria-selected", "true");
       const archive = rowTop(/^Archive/);
       dragTo(/^Login flow/, 70, archive + 13);
-      expect(row(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
+      expect(fill(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
       expect(ring(/^Archive/)).toHaveClass(...DROP_RING.split(" "));
       // the ring is the target's alone: the selected fill without a drop has none
       firePointer("pointerup", 400, 120);
@@ -1124,12 +1130,38 @@ describe("sidebar tree (#217 R3)", () => {
       dragTo(/^Login flow/, 70, rowTop(/^Archive/) + 13);
       const tail = row(/^Archive/).querySelector("[data-tail]");
       expect(tail).not.toBeNull();
-      // a row's own inset shadow paints under its children, the sticky tail's fill on top of it:
-      // the ring is its own layer, last in the row, so it paints over the tail
+      // an inset shadow under the row's children would lie under the sticky tail's fill:
+      // the ring is on its own layer over the content, last in the row, so it paints over the tail
       expect(row(/^Archive/).className).not.toMatch(/shadow-/);
-      expect(row(/^Archive/).lastElementChild).toBe(ring(/^Archive/));
-      expect(ring(/^Archive/)).toHaveClass("absolute", "inset-0", "z-10", "pointer-events-none");
-      expect(ring(/^Archive/)).toHaveAttribute("aria-hidden", "true");
+      expect(fill(/^Archive/).className).not.toMatch(/shadow-/);
+      const layer = ring(/^Archive/)!.parentElement!;
+      expect(row(/^Archive/).lastElementChild).toBe(layer);
+      expect(layer).toHaveClass("absolute", "inset-0", "z-10", "pointer-events-none");
+      expect(layer).toHaveAttribute("aria-hidden", "true");
+    });
+
+    it("the drop target's fill and ring stay inside the list's visible width, all four corners rounded — boxes, not the row (#280)", () => {
+      renderTree();
+      dragTo(/^Login flow/, 70, rowTop(/^Archive/) + 13);
+      // the row is as wide as the widest row: paint on it would end square at the list's edge
+      expect(row(/^Archive/)).not.toHaveClass("bg-selected");
+      expect(row(/^Archive/).className).not.toMatch(/shadow-/);
+      const rings = row(/^Archive/).querySelector("[data-ring]");
+      expect(fill(/^Archive/)).toHaveClass(
+        "bg-selected",
+        "sticky",
+        "left-0",
+        "w-(--list-w)",
+        "rounded-[inherit]",
+      );
+      expect(rings).toHaveClass("sticky", "left-0", "w-(--list-w)", "rounded-[inherit]");
+      expect(rings).toHaveClass("shadow-[inset_0_0_0_1.5px_var(--ink)]");
+      // the count's tail fades into the target's fill, not the sidebar's
+      expect(row(/^Archive/)).toHaveClass("[--row-bg:var(--selected)]");
+      // while a drag is on, no row takes the hover tint
+      expect(fill(/^Personal/)).not.toHaveClass("group-hover/row:bg-hover");
+      expect(fill(/^Personal/)).not.toHaveClass("bg-selected", "bg-hover");
+      firePointer("pointercancel", 70, 0);
     });
 
     it("the gap above the first row is the list's padding, inside its scroll box — the 2px a drag works out (#230, #260)", () => {
@@ -1247,7 +1279,7 @@ describe("sidebar tree (#217 R3)", () => {
       firePointer("pointermove", 60, start + 6);
       // over the hidden Work row, above the list: Login flow, at the visible edge
       firePointer("pointermove", 70, 60);
-      expect(row(/^Work/)).not.toHaveClass("bg-selected");
+      expect(fill(/^Work/)).not.toHaveClass("bg-selected");
       firePointer("pointerup", 70, 60);
       await waitFor(() => expect(calls("reorder_item")).toHaveLength(1));
       expect(calls("reorder_item")[0]![1]).toEqual({
@@ -1282,14 +1314,14 @@ describe("sidebar tree (#217 R3)", () => {
       renderTree();
       // Login flow over the lower half of Sequence: after it
       dragTo(/^Login flow/, 70, rowTop(/^Sequence/) + 20);
-      expect(row(/^Personal/)).not.toHaveClass(...DROP_TARGET.split(" "));
+      expect(fill(/^Personal/)).not.toHaveClass(...DROP_TARGET.split(" "));
       // Archive is gone: the same y is now over Personal
       act(() =>
         useLibraryStore.setState({
           folders: ordered().map((f) => ({ ...f, folders: [] })),
         }),
       );
-      expect(row(/^Personal/)).toHaveClass(...DROP_TARGET.split(" "));
+      expect(fill(/^Personal/)).toHaveClass(...DROP_TARGET.split(" "));
       firePointer("pointercancel", 70, 215);
     });
 
@@ -1406,12 +1438,12 @@ describe("sidebar tree (#217 R3)", () => {
       it("600ms on its middle: it unfolds and the preview stands at its top, a level deeper — dropped there, it stays open", async () => {
         renderTree();
         dragTo(/^Sequence, diagram/, 70, at(1, 15));
-        expect(row(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
+        expect(fill(/^Archive/)).toHaveClass(...DROP_TARGET.split(" "));
         wait(599);
         expect(item(/^Archive/)).toHaveAttribute("aria-expanded", "false");
         wait(1);
         expect(item(/^Archive/)).toHaveAttribute("aria-expanded", "true");
-        expect(row(/^Archive/)).not.toHaveClass("bg-selected");
+        expect(fill(/^Archive/)).not.toHaveClass("bg-selected");
         // Work, Archive, [Sequence], Deep, Old
         expect(preview()).toHaveStyle({ top: `${2 + 2 * 31}px` });
         expect(previewRow()).toHaveClass("pl-9");
@@ -1438,7 +1470,7 @@ describe("sidebar tree (#217 R3)", () => {
         wait(600);
         // Work, Archive, Deep, Old, Login flow, Sequence, Personal
         firePointer("pointermove", 70, at(2, 15));
-        expect(row(/^Deep,/)).toHaveClass(...DROP_TARGET.split(" "));
+        expect(fill(/^Deep,/)).toHaveClass(...DROP_TARGET.split(" "));
         wait(600);
         expect(item(/^Deep,/)).toHaveAttribute("aria-expanded", "true");
         expect(preview()).toHaveStyle({ top: `${2 + 3 * 31}px` });
@@ -1516,7 +1548,7 @@ describe("sidebar tree (#217 R3)", () => {
         firePointer("pointercancel", 0, 0);
         // Personal holds nothing
         dragTo(/^Login flow/, 70, at(4, 15));
-        expect(row(/^Personal/)).toHaveClass(...DROP_TARGET.split(" "));
+        expect(fill(/^Personal/)).toHaveClass(...DROP_TARGET.split(" "));
         wait(1000);
         expect(item(/^Personal/)).not.toHaveAttribute("aria-expanded");
         expect(unfolded("home")).toBe(false);
@@ -1758,7 +1790,7 @@ describe("sidebar tree (#217 R3)", () => {
         "Rename",
         "Delete",
       ]);
-      expect(row(/^Work/)).toHaveClass("bg-hover");
+      expect(fill(/^Work/)).toHaveClass("bg-hover");
       // the count stays, the `…` does not come up under the resting pointer
       expect(moreButton(/^Work/)).toHaveClass("hidden");
       expect(moreButton(/^Work/)).not.toHaveClass("group-hover/row:flex");
@@ -1792,7 +1824,7 @@ describe("sidebar tree (#217 R3)", () => {
       rightClick(row(/^Personal/), 50, 60);
       expect(screen.getAllByRole("menu")).toHaveLength(1);
       expect(screen.getByRole("menu", { name: "Personal" })).toHaveStyle({ left: "52px" });
-      expect(row(/^Work/)).not.toHaveClass("bg-hover");
+      expect(fill(/^Work/)).not.toHaveClass("bg-hover");
     });
 
     it("empty space and the PROJECTS header — New project · Add folder… (#256 R1); New project creates one at the top and renames it", async () => {
@@ -2662,6 +2694,164 @@ describe("sidebar tree (#217 R3)", () => {
     });
   });
 
+  /**
+   * Rows are as wide as the widest row and the list scrolls sideways
+   * (Sidebar-Deep): a row's fill and rings sit on boxes as wide as the list's
+   * visible part, stuck to its left edge, so they never end square at the
+   * list's edge (#280)
+   */
+  describe("a row's paint stays inside the list's visible width (#280, Sidebar-Deep)", () => {
+    /** the box over a row's content that carries its rings */
+    const rings = (name: string | RegExp) =>
+      row(name).querySelector("[data-ring]") as HTMLElement | null;
+    /** what each box shares: the list's visible width, at its left edge, the row's corners */
+    const VISIBLE_BOX = [
+      "sticky",
+      "left-0",
+      "block",
+      "h-full",
+      "w-(--list-w)",
+      "rounded-[inherit]",
+    ];
+
+    it("the list keeps --list-w at its visible width — its client width, read again as it changes (a classic scroll bar coming)", () => {
+      const watched = new Map<Element, ResizeObserverCallback>();
+      vi.stubGlobal(
+        "ResizeObserver",
+        class {
+          callback: ResizeObserverCallback;
+          constructor(callback: ResizeObserverCallback) {
+            this.callback = callback;
+          }
+          observe(el: Element) {
+            watched.set(el, this.callback);
+          }
+          unobserve() {}
+          disconnect() {}
+        },
+      );
+      let width = 232;
+      const client = vi
+        .spyOn(HTMLElement.prototype, "clientWidth", "get")
+        .mockImplementation(() => width);
+      try {
+        renderTree();
+        expect(tree().style.getPropertyValue("--list-w")).toBe("232px");
+        width = 215;
+        act(() => watched.get(tree())!([], {} as ResizeObserver));
+        expect(tree().style.getPropertyValue("--list-w")).toBe("215px");
+      } finally {
+        client.mockRestore();
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("a selected row's fill is not the row's own — a box the list's visible width, stuck to its left edge, all four corners rounded", () => {
+      renderTree();
+      fireEvent.click(row(/^Work/));
+      expect(item(/^Work/)).toHaveAttribute("aria-selected", "true");
+      expect(row(/^Work/)).not.toHaveClass("bg-selected");
+      expect(fill(/^Work/)).toHaveClass("bg-selected", ...VISIBLE_BOX);
+      // it sticks inside a layer over the whole row, under the row's content
+      const layer = fill(/^Work/)!.parentElement!;
+      expect(layer).toHaveClass(
+        "pointer-events-none",
+        "absolute",
+        "inset-0",
+        "-z-10",
+        "rounded-[inherit]",
+      );
+      expect(layer).toHaveAttribute("aria-hidden", "true");
+      expect(row(/^Work/)).toHaveClass("relative", "isolate", "rounded-[5px]");
+      // the tail still fades into the selected fill
+      expect(row(/^Work/)).toHaveClass("[--row-bg:var(--selected)]");
+    });
+
+    it("hover tints the same box, not the row", () => {
+      renderTree();
+      expect(row(/^Personal/)).not.toHaveClass("hover:bg-hover");
+      expect(fill(/^Personal/)).toHaveClass("group-hover/row:bg-hover", ...VISIBLE_BOX);
+      expect(fill(/^Personal/)).not.toHaveClass("bg-selected");
+      expect(row(/^Personal/)).toHaveClass("group/row", "hover:[--row-bg:var(--hover)]");
+    });
+
+    it("the keyboard focus ring is drawn on a box the same width, over the row's content and its tail", () => {
+      renderTree();
+      expect(rings(/^Work/)).toHaveClass(...VISIBLE_BOX);
+      const layer = rings(/^Work/)!.parentElement!;
+      expect(layer).toHaveClass("pointer-events-none", "absolute", "inset-0", "z-10");
+      expect(layer).toHaveAttribute("aria-hidden", "true");
+      expect(row(/^Work/).lastElementChild).toBe(layer);
+      expect(item(/^Work/)).toHaveClass(
+        "focus-visible:[&>[data-row]_[data-ring]]:outline-2",
+        "focus-visible:[&>[data-row]_[data-ring]]:-outline-offset-2",
+        "focus-visible:[&>[data-row]_[data-ring]]:outline-focus",
+      );
+      expect(item(/^Work/).className).not.toContain("[&>[data-row]]:outline");
+    });
+
+    it("only the tab stop carries a ring box — the one row the focus can be on (roving tabindex)", () => {
+      renderTree();
+      expect(item(/^Work/)).toHaveAttribute("tabindex", "0");
+      expect(rings(/^Work/)).not.toBeNull();
+      expect(rings(/^Personal/)).toBeNull();
+      act(() => item(/^Personal/).focus());
+      expect(rings(/^Personal/)).not.toBeNull();
+      expect(rings(/^Work/)).toBeNull();
+    });
+
+    describe("the rename field ends 8px in from the list's visible right edge, never past it", () => {
+      /** a field `at` px into its row, in a list `width` wide scrolled `scrolled` to the right */
+      const renameIn = (at: number, width: number, scrolled: number) => {
+        const scrolledTo = vi.fn();
+        const spies = [
+          vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (
+            this: HTMLElement,
+          ) {
+            return this.tagName === "INPUT" ? at : 0;
+          }),
+          vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(width),
+          vi.spyOn(Element.prototype, "scrollLeft", "get").mockReturnValue(scrolled),
+          vi.spyOn(Element.prototype, "scrollLeft", "set").mockImplementation(scrolledTo),
+        ];
+        try {
+          renderTree();
+          scrolledTo.mockClear();
+          act(() => useTreeStore.getState().setRenaming("work"));
+          const field = within(row(/^Work/)).getByRole("textbox", { name: "Project name" });
+          return { maxWidth: field.style.maxWidth, scrolledTo };
+        } finally {
+          for (const spy of spies) spy.mockRestore();
+        }
+      };
+
+      it("from where it starts to 8px short of the edge, as the list is scrolled when it opens", () => {
+        // a deep row (187 in), the list 232 wide scrolled 80: 117 of room
+        const { maxWidth, scrolledTo } = renameIn(187, 232, 80);
+        expect(maxWidth).toBe("max(96px, calc(var(--list-w) - 115px))");
+        expect(scrolledTo).not.toHaveBeenCalled();
+      });
+
+      it("never narrower than 96px — with less room (a deep row, the narrowest sidebar) the list scrolls to give it the 8px inset", () => {
+        // 184 wide, the field from 187: 11px short of the edge — 107 short of 96
+        const { maxWidth, scrolledTo } = renameIn(187, 184, 0);
+        expect(maxWidth).toBe("max(96px, calc(var(--list-w) - 195px))");
+        expect(scrolledTo).toHaveBeenCalledWith(107);
+      });
+
+      it("while a row is renamed its count / … tail is hidden — the field takes its place", () => {
+        renderTree();
+        expect(row(/^Work/).querySelector("[data-tail]")).not.toBeNull();
+        expect(row(/^Work/)).toHaveClass("pr-0");
+        act(() => useTreeStore.getState().setRenaming("work"));
+        expect(row(/^Work/).querySelector("[data-tail]")).toBeNull();
+        expect(within(row(/^Work/)).getByRole("textbox", { name: "Project name" })).toBeVisible();
+        // the 8px the tail carried comes back to the row
+        expect(row(/^Work/)).toHaveClass("pr-2");
+      });
+    });
+  });
+
   /** 30px rows in 13px, glyphs coloured by kind, a project's badge (#236 R1·R2·R4, T5) */
   describe("row and color display (#236)", () => {
     const marked = (): FolderMeta[] => [
@@ -2745,7 +2935,7 @@ describe("sidebar tree (#217 R3)", () => {
       renderTree();
       await user.click(chevron(/^Work/));
       await user.click(row(/^Checkout/));
-      expect(row(/^Checkout/)).toHaveClass("bg-selected");
+      expect(fill(/^Checkout/)).toHaveClass("bg-selected");
       const folder = row(/^Checkout/).querySelector("[data-folder-icon]")!;
       expect(folder).toHaveClass("text-glyph-folder");
       expect(folder).not.toHaveClass("text-ink");

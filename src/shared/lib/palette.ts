@@ -236,11 +236,13 @@ export const FOCUS_CARD =
 export const FOCUS_ITEM = "focus-visible:outline-hidden focus-visible:bg-hover";
 /**
  * Keyboard focus on a tree row (#217): the treeitem that takes focus also
- * holds its children, so the `focus` outline is drawn on its own row
- * (`[data-row]`) — inset, since the tree scrolls and would clip it.
+ * holds its children, so the `focus` outline is drawn on its own row — on the
+ * row's ring box (`[data-ring]`, `RowPaint`), the list's visible width, so it
+ * never runs past the list's edge — inset, since the tree scrolls and would
+ * clip it.
  */
 export const FOCUS_TREE_ROW =
-  "outline-hidden focus-visible:[&>[data-row]]:outline-2 focus-visible:[&>[data-row]]:-outline-offset-2 focus-visible:[&>[data-row]]:outline-focus";
+  "outline-hidden focus-visible:[&>[data-row]_[data-ring]]:outline-2 focus-visible:[&>[data-row]_[data-ring]]:-outline-offset-2 focus-visible:[&>[data-row]_[data-ring]]:outline-focus";
 /** the accent as a raw colour, for SVG strokes and inline styles */
 export const THEME_PRIMARY = `var(--ink, ${INK_LIGHT})`;
 
@@ -635,14 +637,14 @@ export const DEFAULT_NODE_SIZE: Record<ShapeKind, { width: number; height: numbe
  * A tree row a drag would drop into (#230 D9, canvas v39 `Sidebar-States` ④):
  * the selected fill and a 1.5px ink inset ring ({@link DROP_RING}). The ring is
  * what tells the target from the selected row, so it shows on the selected row
- * too (2026-11-07). `--row-bg` is the fill a row's sticky tail
- * fades into.
+ * too (2026-11-07). The fill is on the row's fill box (`[data-fill]`,
+ * `RowPaint`), the list's visible width; the row sets `--row-bg` to the same
+ * colour for its sticky tail to fade into.
  */
-export const DROP_TARGET = "bg-selected [--row-bg:var(--selected)]";
+export const DROP_TARGET = "bg-selected";
 /**
- * The drop target's 1.5px ink inset ring, on its own layer over the row: a
- * row's own inset shadow paints under its children, and the sticky tail's
- * fill (count, `…`) would cover the ring's right end.
+ * The drop target's 1.5px ink inset ring, on the row's ring box over its
+ * content (`[data-ring]`, `RowPaint`): an inset shadow under the content would
+ * be covered at its right end by the sticky tail's fill (count, `…`).
  */
-export const DROP_RING =
-  "pointer-events-none absolute inset-0 z-10 rounded-[inherit] shadow-[inset_0_0_0_1.5px_var(--ink)]";
+export const DROP_RING = "shadow-[inset_0_0_0_1.5px_var(--ink)]";

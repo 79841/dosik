@@ -16,7 +16,7 @@ import { ProjectBadge } from "../../shared/ui/ProjectBadge";
 import { type FolderMeta, itemKey, type ProjectMeta } from "./libraryApi";
 import { moveDiagram, moveFolderTo } from "./libraryActions";
 import { canPlace, findFolder, folderList, takesItems } from "./libraryTree";
-import { indentClass } from "./libraryParts";
+import { indentClass, RowPaint, useListWidth } from "./libraryParts";
 
 /**
  * Move to… (#229 D13) — the canvas's `#move-picker` (Hybrid-Project-Cards,
@@ -112,6 +112,8 @@ export const MovePicker = ({
 }) => {
   const ref = useRef<HTMLDivElement>(null);
   const tree = useRef<HTMLUListElement>(null);
+  // its visible width, less a classic scroll bar, for the rows' fills (Sidebar-Deep c)
+  useListWidth(tree);
   const titleId = useId();
   const movingId = useId();
   const roots = useMemo(() => folders.filter(takesItems), [folders]);
@@ -252,18 +254,20 @@ export const MovePicker = ({
         onFocus={(e) => {
           if (e.target === e.currentTarget) setFocusId(folder.id);
         }}
-        className="flex flex-none flex-col gap-px outline-hidden focus-visible:[&>[data-row]]:bg-hover focus-visible:[&>[data-row]]:[--row-bg:var(--hover)]"
+        className="flex flex-none flex-col gap-px outline-hidden focus-visible:[&>[data-row]_[data-fill]]:bg-hover focus-visible:[&>[data-row]]:[--row-bg:var(--hover)]"
       >
         {/* biome-ignore lint/a11y/useKeyWithClickEvents: the keyboard reaches the row through its treeitem (Enter) */}
         <div
           data-row=""
           onClick={() => pick(folder.id)}
           // as wide as the widest row: names are never cut, the list scrolls
-          // sideways (Sidebar-Deep c); --row-bg is the fill Current fades into
-          className={`flex h-[30px] cursor-default items-center gap-1 rounded-(--radius-control) text-[13px] font-medium text-ink [--row-bg:var(--surface)] ${
+          // sideways (Sidebar-Deep c) — so its fill is on a box the list's
+          // visible width (RowPaint); --row-bg is the fill Current fades into
+          className={`group/row relative isolate flex h-[30px] cursor-default items-center gap-1 rounded-(--radius-control) text-[13px] font-medium text-ink [--row-bg:var(--surface)] ${
             here ? "pr-0" : "pr-2"
-          } ${off ? "" : "hover:bg-hover hover:[--row-bg:var(--hover)]"} ${indentClass(level)}`}
+          } ${off ? "" : "hover:[--row-bg:var(--hover)]"} ${indentClass(level)}`}
         >
+          <RowPaint layer="fill" className={off ? "" : "group-hover/row:bg-hover"} />
           {expandable ? (
             <span
               data-chevron=""
