@@ -45,6 +45,14 @@ paths:
         its own node (`set_diagram`, `update_node`) and the picture stays; in `set_diagram`,
         an image node that keeps its id but leaves `src` out keeps its picture too.
 
+        An image node made from a file (dropped, picked, or pasted as a copied
+        file) also links that file in the app (`original`, a local path), and
+        its image view shows the file while it is still there. The link is the
+        app's: this read leaves it out, and ops never set it — an `original`
+        sent in `set_diagram` is ignored. It stays while the node keeps its
+        picture (the placeholder sent back, or `src` left out); a new `src`, or
+        another shape, drops it.
+
         A diagram is one canvas: the document is always a `DiagramDoc`. Its
         `project.path` names the folders the diagram is in — folders nest to
         any depth, so it can be several (Payments → Checkout → Flows) — the
@@ -372,7 +380,7 @@ components:
           description: "Only valid when the node is (or becomes) `shape: entity` — replaces all columns; one raw line each (`id uuid PK`)."
         src:
           type: string
-          description: "Only valid when the node is (or becomes) `shape: image` — a new picture, same rules as add_node. A node cannot become an image without one; one turned into another shape drops its picture. The node's own `elided:…` placeholder (from `GET /api/diagram`) means \"keep the picture\"."
+          description: "Only valid when the node is (or becomes) `shape: image` — a new picture, same rules as add_node. A node cannot become an image without one; one turned into another shape drops its picture. A new picture, or another shape, drops the node's link to the file it came from (`original`). The node's own `elided:…` placeholder (from `GET /api/diagram`) means \"keep the picture\"."
         x: { type: number }
         y: { type: number }
         width: { type: number }

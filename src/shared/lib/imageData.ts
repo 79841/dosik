@@ -60,15 +60,23 @@ export const isElidedSrc = (value: unknown): value is string =>
   typeof value === "string" && ELIDED_SRC.test(value);
 
 interface ImageNodeLike {
-  data: { shape?: string; src?: string };
+  data: { shape?: string; src?: string; original?: string };
 }
 
+/**
+ * Pictures as placeholders — and no `original`: the file an image came from is
+ * a local path (the user's name in it, often), the app's own business, not a
+ * model's. The app keeps it across a document sent back (`agentOps`).
+ */
 const elideNodes = <N extends ImageNodeLike>(nodes: N[]): N[] =>
-  nodes.map((node) =>
-    node.data.shape === "image" && isImageDataUrl(node.data.src)
-      ? { ...node, data: { ...node.data, src: elidedSrc(node.data.src) } }
-      : node,
-  );
+  nodes.map((node) => {
+    if (node.data.shape !== "image") return node;
+    const { original: _, ...data } = node.data;
+    return {
+      ...node,
+      data: isImageDataUrl(data.src) ? { ...data, src: elidedSrc(data.src) } : data,
+    };
+  });
 
 /**
  * A copy of `doc` whose pictures are `elidedSrc` placeholders — its nodes'
@@ -96,6 +104,31 @@ export const imageSrcError = (src: unknown): string | null => {
   }
   return null;
 };
+
+/** picture files an image node is made from, by extension — the list `images.rs` reads */
+export const IMAGE_FILE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp"];
+
+/**
+ * a local absolute path: "/…" or "C:\…" — never a network share ("\\server\…",
+ * "//server/…", or macOS's "/net/<host>/…" automount)
+ */
+const ABSOLUTE_PATH = /^(\/(?!\/|net\/)|[A-Za-z]:[\\/])/i;
+const PICTURE_FILE = new RegExp(`\\.(${IMAGE_FILE_EXTENSIONS.join("|")})$`, "i");
+const ORIGINAL_MAX_LENGTH = 4096;
+
+/**
+ * Whether `value` may be an image node's `original`: the file the picture was
+ * made from, linked rather than kept — the node stores a smaller copy, and the
+ * image view shows the file while it is still there. A local absolute path to
+ * a picture file only: the view reads it with `read_image_file`, which reads
+ * nothing else — and a document must not send it to a network share.
+ */
+export const isImageOriginal = (value: unknown): value is string =>
+  typeof value === "string" &&
+  value.length <= ORIGINAL_MAX_LENGTH &&
+  !value.includes("\0") &&
+  ABSOLUTE_PATH.test(value) &&
+  PICTURE_FILE.test(value);
 
 /** a new node's size: the picture's proportions, longest side at most IMAGE_NODE_MAX */
 export const fitImageSize = (width: number, height: number): { width: number; height: number } => {

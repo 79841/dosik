@@ -352,7 +352,8 @@ export const DiagramCanvas = () => {
         const pictures = droppedImageFiles(files);
         if (pictures.length > 0) {
           void placeBlobs(
-            pictures.map((file) => async () => file),
+            // a dropped File carries no path: nothing to link
+            pictures.map((file) => async () => ({ blob: file })),
             screenToFlowPosition({ x: event.clientX, y: event.clientY }),
           );
         }

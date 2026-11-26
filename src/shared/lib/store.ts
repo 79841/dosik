@@ -627,9 +627,9 @@ const diagramState: StateCreator<DiagramState> = (set, get) => ({
   consumeReveal: (key) =>
     set((state) => (state.revealRequest?.key === key ? { revealRequest: null } : {})),
 
-  addImage: (src, position, size) => {
+  addImage: (src, position, size, original) => {
     get().commit();
-    const node = createShapeNode("image", position, { src, ...size });
+    const node = createShapeNode("image", position, { src, original, ...size });
     set((state) => ({ nodes: [...state.nodes, node] }));
     return node.id;
   },
@@ -651,7 +651,10 @@ const diagramState: StateCreator<DiagramState> = (set, get) => ({
         // the bridge (#9, #160)
         fitDecorToShape(data, DEFAULT_ICON);
         // the picture belongs to the image shape (#8) — a node turned away drops it
-        if (data.shape !== "image" && "src" in data) delete data.src;
+        if (data.shape !== "image") {
+          delete data.src;
+          delete data.original;
+        }
         // entering or leaving the icon footprint starts from the new shape's size
         const base = sizeAfterShapeChange(n.data.shape, data.shape, {
           width: n.width,

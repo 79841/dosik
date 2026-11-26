@@ -420,3 +420,40 @@ describe("context menus use the menu keyboard too — useMenuKeys (#219)", () =>
     expect(useCanvasUiStore.getState().edgeMenu).toBeNull();
   });
 });
+
+describe("View image on the shape menu (#279)", () => {
+  const PNG = "data:image/png;base64,iVBORw0KGgo=";
+  const image = (id: string) => {
+    const base = makeNode({ id, shape: "image" });
+    return { ...base, data: { ...base.data, src: PNG } };
+  };
+  beforeEach(() => {
+    useCanvasUiStore.getState().setImageView(null);
+    useDiagramStore
+      .getState()
+      .loadDoc(makeDoc([image("img"), image("img2"), makeNode({ id: "a" })], []), null);
+  });
+
+  it("one image — View image comes first and opens the view, closing the menu", () => {
+    select(["img"]);
+    openOn("img");
+    render(<NodeContextMenu />);
+    const items = screen.getAllByRole("menuitem");
+    expect(items[0]).toHaveTextContent("View image");
+    fireEvent.click(items[0]!);
+    expect(useCanvasUiStore.getState().imageView).toBe("img");
+    expect(useCanvasUiStore.getState().nodeMenu).toBeNull();
+  });
+
+  it("several shapes, or one that is not an image — no View image", () => {
+    select(["img", "img2"]);
+    openOn("img");
+    const { unmount } = render(<NodeContextMenu />);
+    expect(screen.queryByRole("menuitem", { name: "View image" })).toBeNull();
+    unmount();
+    select(["a"]);
+    openOn("a");
+    render(<NodeContextMenu />);
+    expect(screen.queryByRole("menuitem", { name: "View image" })).toBeNull();
+  });
+});

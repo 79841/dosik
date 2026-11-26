@@ -44,9 +44,13 @@ fn read(path: &Path) -> Result<ImageFile, String> {
     let display = path.display();
     let mime =
         image_mime(path).ok_or_else(|| format!("{display}: not a png, jpeg, gif or webp image"))?;
-    let size = std::fs::metadata(path)
-        .map_err(|e| format!("{display}: {e}"))?
-        .len();
+    let metadata = std::fs::metadata(path).map_err(|e| format!("{display}: {e}"))?;
+    // a document can name the path now (an image's `original`): a FIFO or a
+    // folder named *.png must not hold the reading thread
+    if !metadata.is_file() {
+        return Err(format!("{display}: not a file"));
+    }
+    let size = metadata.len();
     if size > MAX_FILE_BYTES {
         return Err(format!(
             "{display}: the image is too large ({} MB; the limit is {} MB)",
@@ -79,6 +83,15 @@ mod tests {
     fn a_non_image_path_is_refused_before_it_is_read() {
         let error = read(Path::new("/etc/passwd")).unwrap_err();
         assert!(error.contains("not a png"), "{error}");
+    }
+
+    #[test]
+    fn a_folder_named_like_a_picture_is_refused() {
+        let dir = std::env::temp_dir().join(format!("dosik-image-dir-{}.png", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let error = read(&dir).unwrap_err();
+        assert!(error.contains("not a file"), "{error}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

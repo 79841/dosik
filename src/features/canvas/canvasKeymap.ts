@@ -6,6 +6,7 @@ import {
 } from "../../shared/lib/systemClipboard";
 import { mermaidSource } from "../mermaid/mermaidSource";
 import { awaitBeforePaste, markOwnClipboardText, pasteOntoCanvas } from "./imagePaste";
+import { openImageView, soleImage } from "./openImageView";
 import { openSelectionMenuFromKeyboard } from "./selectionMenu";
 
 /** what a copy puts on the system clipboard: the copied shapes' labels, one per line */
@@ -64,6 +65,35 @@ export const takesAllKeys = (target: HTMLElement | null): boolean => {
 const takesBareDestructiveKeys = (target: HTMLElement | null): boolean =>
   takesAllKeys(target) || target?.tagName === "SELECT" || !!target?.closest?.(".nodelete");
 
+/** what Enter and Space press themselves rather than reaching the canvas */
+const CONTROLS = "button, select, a[href], [role=menu], [role=toolbar], .nodelete";
+
+const isBareSpace = (e: KeyboardEvent): boolean =>
+  e.key === " " && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey;
+
+/**
+ * The image a Space press would open (#279), or null. The view opens when
+ * Space comes back up — Space held while the pointer drags pans the canvas
+ * (React Flow's `panActivationKeyCode`), so the press alone cannot decide.
+ */
+let spaceTap: string | null = null;
+
+/** a pointer press while Space is down: panning, not a tap */
+export const cancelSpaceTap = (): void => {
+  spaceTap = null;
+};
+
+/** Space released without a drag, the same single image still picked: show it large */
+export const handleCanvasKeyUp = (e: KeyboardEvent): void => {
+  if (!isBareSpace(e) || spaceTap === null) return;
+  const id = spaceTap;
+  spaceTap = null;
+  if (document.querySelector("dialog[open]")) return;
+  if (soleImage(useDiagramStore.getState().nodes)?.id !== id) return;
+  e.preventDefault();
+  openImageView(id);
+};
+
 /**
  * Every canvas-level keyboard shortcut, in one place.
  *
@@ -81,11 +111,22 @@ export const handleCanvasKeyDown = (e: KeyboardEvent): void => {
   const target = e.target as HTMLElement | null;
   if (takesAllKeys(target)) return;
 
+  if (isBareSpace(e)) {
+    // held (repeating) is Space+drag panning; on a control Space presses it;
+    // one already taken (the image view closing on it) is no tap
+    spaceTap =
+      !e.repeat && !e.defaultPrevented && !target?.closest?.(CONTROLS)
+        ? (soleImage(useDiagramStore.getState().nodes)?.id ?? null)
+        : null;
+    return;
+  }
+  spaceTap = null;
+
   // Enter starts editing the label of the single selected (or focused) node —
   // unless it lands on a control (a bar button, a menu item), where Enter is
   // that control's own activation (#159)
   if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey) {
-    if (target?.closest?.("button, select, [role=menu], [role=toolbar], .nodelete")) return;
+    if (target?.closest?.(CONTROLS)) return;
     const selected = useDiagramStore
       .getState()
       // an image has no label on show to edit — same as its double-click (#8)

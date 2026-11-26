@@ -21,7 +21,10 @@ vi.mock("../imageInput", async (importOriginal) => ({
 import { placeBlobs } from "../useImageFileDrop";
 
 const PICTURE: DecodedImage = { src: "data:image/png;base64,iVBORw0KGgo=", width: 40, height: 20 };
-const blob = () => async () => new Blob([], { type: "image/png" });
+const blob = (original?: string) => async () => ({
+  blob: new Blob([], { type: "image/png" }),
+  ...(original ? { original } : {}),
+});
 const store = () => useDiagramStore.getState();
 const images = (nodes = store().nodes) => nodes.filter((n) => n.data.shape === "image");
 const toasts = () => useToastStore.getState().toasts.map((t) => t.text);
@@ -45,7 +48,16 @@ describe("image drop — goes only into the document it was dropped on (#218)", 
     decode.next.shift()!(PICTURE);
     await dropping;
     expect(images()).toHaveLength(1);
+    expect(images()[0]!.data).not.toHaveProperty("original");
     expect(toasts()).toEqual([]);
+  });
+
+  it("a picture read from a file links that file (`original`)", async () => {
+    const dropping = placeBlobs([blob("/pics/shot.png")], { x: 100, y: 100 });
+    await settle();
+    decode.next.shift()!(PICTURE);
+    await dropping;
+    expect(images()[0]!.data.original).toBe("/pics/shot.png");
   });
 
   it("moving to another tab while reading — goes into no document, one toast", async () => {

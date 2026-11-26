@@ -7,8 +7,8 @@ import {
 import { pasteMermaid } from "../mermaid/import/pasteMermaid";
 import { mermaidSource } from "../mermaid/mermaidSource";
 import { pastePoint } from "./canvasViewport";
-import { blobFromBase64, pastedImagePaths, readImageFile } from "./imageFiles";
-import { watchDocument } from "./imageInput";
+import { blobFromBase64, pastedImagePaths, readPictureFile } from "./imageFiles";
+import { type PictureSource, watchDocument } from "./imageInput";
 import { placeBlobs } from "./useImageFileDrop";
 
 /** seams for tests — decoding needs `createImageBitmap` and a real `<canvas>`, which jsdom lacks */
@@ -17,14 +17,14 @@ export const imagePasteDeps = { placeBlobs };
 const LEFT_BEFORE_PASTE = "You left the diagram before it was pasted — paste again";
 
 /**
- * Each copied picture file, read as a drop reads it — copied files that hold
- * no picture say so and paste nothing, never their icons — or the one
- * picture copied as data.
+ * Each copied picture file, read (and linked) as a drop reads it — copied
+ * files that hold no picture say so and paste nothing, never their icons — or
+ * the one picture copied as data, which has no file to link.
  */
-const pictureLoads = (picture: ClipboardPicture): (() => Promise<Blob>)[] =>
+const pictureLoads = (picture: ClipboardPicture): (() => Promise<PictureSource>)[] =>
   picture.kind === "files"
-    ? pastedImagePaths(picture.paths).map((path) => () => readImageFile(path))
-    : [async () => blobFromBase64(picture.base64, picture.mime)];
+    ? pastedImagePaths(picture.paths).map((path) => () => readPictureFile(path))
+    : [async () => ({ blob: blobFromBase64(picture.base64, picture.mime) })];
 
 /** the labels a canvas copy last wrote to the system clipboard (`canvasKeymap`) */
 let ownText: string | null = null;

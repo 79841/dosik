@@ -5,7 +5,13 @@ import { useAgentBridge } from "./features/agent/useAgentBridge";
 import { ChatPanel } from "./features/ai/ChatPanel";
 import { initAiKeys } from "./features/ai/keychain";
 import { DiagramCanvas } from "./features/canvas/DiagramCanvas";
-import { handleCanvasKeyDown } from "./features/canvas/canvasKeymap";
+import {
+  cancelSpaceTap,
+  handleCanvasKeyDown,
+  handleCanvasKeyUp,
+} from "./features/canvas/canvasKeymap";
+import { useCanvasUiStore } from "./features/canvas/canvasUiStore";
+import { ImageView } from "./features/canvas/ImageView";
 import { ViewportReveal } from "./features/canvas/ViewportReveal";
 import { ZoomIsland } from "./features/canvas/ZoomIsland";
 import { handleAppKeyDown } from "./features/chrome/appKeymap";
@@ -53,7 +59,15 @@ import { useSettingsStore } from "./features/settings/settingsStore";
 export const Workspace = () => {
   useEffect(() => {
     window.addEventListener("keydown", handleCanvasKeyDown);
-    return () => window.removeEventListener("keydown", handleCanvasKeyDown);
+    // a Space tap opens the image view on release; a press of the pointer
+    // meanwhile makes it Space+drag panning instead (#279)
+    window.addEventListener("keyup", handleCanvasKeyUp);
+    window.addEventListener("pointerdown", cancelSpaceTap, true);
+    return () => {
+      window.removeEventListener("keydown", handleCanvasKeyDown);
+      window.removeEventListener("keyup", handleCanvasKeyUp);
+      window.removeEventListener("pointerdown", cancelSpaceTap, true);
+    };
   }, []);
   // the toasts rest on the row above the bottom islands while the editor is
   // up, selection or not (#231 D18) — the editor's own variable, so the edit
@@ -82,6 +96,8 @@ export const Workspace = () => {
         </div>
         <ChatPanel />
       </div>
+      {/* a modal over the whole window — the top layer, wherever it sits */}
+      <ImageView />
     </div>
   );
 };
@@ -134,6 +150,8 @@ const Frame = () => {
   const activeTab = useAppStore((s) => s.activeTab);
   // the Settings dialog shows the toasts while it is up — the sheet's would sit under it (#252)
   const settingsOpen = useSettingsStore((s) => s.open);
+  // the image view holds the notices while it is up, as Settings does (#279)
+  const imageViewOpen = useCanvasUiStore((s) => s.imageView !== null);
 
   // What keeps the documents safe renders nothing, so it lives here, outside
   // the content's boundary: a crash screen in the sheet still asks about
@@ -193,8 +211,8 @@ const Frame = () => {
           <ErrorBoundary>
             <Shell />
           </ErrorBoundary>
-          {/* every "Saved" / "Error: …" the app raises is shown here — or in Settings while it is up */}
-          {settingsOpen ? null : <Toaster />}
+          {/* every "Saved" / "Error: …" the app raises is shown here — or in Settings or the image view while one is up */}
+          {settingsOpen || imageViewOpen ? null : <Toaster />}
         </div>
       </div>
       {/* mounted through a drag that hides the sidebar, so the same gesture can

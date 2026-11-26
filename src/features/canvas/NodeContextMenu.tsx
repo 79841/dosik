@@ -11,6 +11,7 @@ import { hasExportableSelection } from "../export/selection";
 import { pickedShapes } from "../inspector/useSelectionEditing";
 import { useCanvasUiStore } from "./canvasUiStore";
 import { ExportSelectionItems } from "./ExportSelectionItems";
+import { openImageView, soleImage } from "./openImageView";
 
 /** the ids the edit items act on — the same pick the edit bar makes */
 const pickedIds = () => pickedShapes(useDiagramStore.getState().nodes).map((n) => n.id);
@@ -69,6 +70,10 @@ export const NodeContextMenu = () => {
         : s.nodes.find((n) => n.selected && n.data.shape !== "anchor");
     return shape?.data.color;
   });
+  // one image picked: the menu opens its view first (#279)
+  const viewable = useDiagramStore((s) =>
+    menu === null ? null : (soleImage(s.nodes)?.id ?? null),
+  );
   const groupable = useDiagramStore((s) => (menu === null ? false : canGroup(s.nodes)));
   const ungroupable = useDiagramStore((s) => (menu === null ? false : canUngroup(s.nodes)));
   const ref = useRef<HTMLDivElement>(null);
@@ -116,6 +121,19 @@ export const NodeContextMenu = () => {
       style={position}
       onKeyDown={onKeyDown}
     >
+      {viewable ? (
+        <>
+          <MenuItem
+            onClick={() => {
+              close();
+              openImageView(viewable);
+            }}
+          >
+            View image
+          </MenuItem>
+          <div className="my-1 h-px bg-line" />
+        </>
+      ) : null}
       {editable ? (
         <>
           <fieldset aria-label="Color" className="m-0 flex flex-wrap gap-1 border-0 px-2 py-1.5">

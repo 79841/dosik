@@ -120,7 +120,9 @@ describe("⌘V — a picture crosses as a file, not as pixels", () => {
     vi.mocked(invoke).mockResolvedValue({ mime: "image/png", base64: "iVBORw==" });
     const first = await loads[0]!();
     expect(invoke).toHaveBeenCalledWith("read_image_file", { path: "/pics/a.png" });
-    expect(first.type).toBe("image/png");
+    expect(first.blob.type).toBe("image/png");
+    // the node links the copied file (`original`)
+    expect(first.original).toBe("/pics/a.png");
     // the shape buffer and the text are not looked at once a picture is there
     expect(clipboard.text).toBeNull();
     place.mockRestore();
@@ -134,7 +136,8 @@ describe("⌘V — a picture crosses as a file, not as pixels", () => {
     await pasting;
     const [loads] = place.mock.calls[0]!;
     expect(loads).toHaveLength(1);
-    const blob = await loads[0]!();
+    const { blob, original } = await loads[0]!();
+    expect(original).toBeUndefined();
     expect(blob.type).toBe("image/png");
     expect(new Uint8Array(await blob.arrayBuffer())).toEqual(
       new Uint8Array([0x89, 0x50, 0x4e, 0x47]),

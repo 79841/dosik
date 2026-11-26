@@ -234,14 +234,18 @@ const IMAGE_DATA_URL = /^data:image\/(png|jpeg|gif|webp);base64,([A-Za-z0-9+/]+)
  * context whole; a few screenshots are megabytes of base64 (#155). The
  * live bridge elides on its own; this covers file mode.
  */
+// pictures as placeholders, and no `original` — the local path an image was
+// made from is the app's, not a model's (imageData.ts, bridge.rs)
 const elideNodes = (nodes) =>
   nodes.map((node) => {
-    const match = node.data?.shape === "image" && IMAGE_DATA_URL.exec(node.data.src ?? "");
-    if (!match) return node;
+    if (node.data?.shape !== "image") return node;
+    const { original: _, ...data } = node.data;
+    const match = IMAGE_DATA_URL.exec(data.src ?? "");
+    if (!match) return { ...node, data };
     const [, type, payload, padding] = match;
     const bytes = ((payload.length + padding.length) * 3) / 4 - padding.length;
     const src = `elided:image/${type};${Math.round(bytes / 1024)}KB`;
-    return { ...node, data: { ...node.data, src } };
+    return { ...node, data: { ...data, src } };
   });
 
 export const elideImages = (doc) => ({

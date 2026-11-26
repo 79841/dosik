@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { makeDoc, makeEdge, makeNode } from "../../../shared/lib/__tests__/testFixtures";
 import { useDiagramStore } from "../../../shared/lib/store";
 import { useToastStore } from "../../../shared/lib/toastStore";
-import { handleCanvasKeyDown } from "../canvasKeymap";
+import { cancelSpaceTap, handleCanvasKeyDown, handleCanvasKeyUp } from "../canvasKeymap";
+import { useCanvasUiStore } from "../canvasUiStore";
 
 // the system clipboard is Tauri's; here it holds no picture unless a test says so
 const clipboard = vi.hoisted(() => ({
@@ -584,5 +585,101 @@ describe("handleCanvasKeyDown", () => {
 
     expect(press("Enter").prevented).toBe(false);
     expect(useDiagramStore.getState().editRequestId).toBeNull();
+  });
+});
+
+describe("a Space tap opens the image view (#279) — Space held to drag still pans", () => {
+  const PNG = "data:image/png;base64,iVBORw0KGgo=";
+  const image = (id: string) => {
+    const base = makeNode({ id, shape: "image" });
+    return { ...base, data: { ...base.data, src: PNG } };
+  };
+  const space = (
+    type: "down" | "up",
+    { repeat = false, tagName = "DIV", control = false } = {},
+  ) => {
+    const event = {
+      key: " ",
+      metaKey: false,
+      ctrlKey: false,
+      shiftKey: false,
+      altKey: false,
+      repeat,
+      target: {
+        tagName,
+        getAttribute: () => null,
+        isContentEditable: false,
+        closest: (sel: string) => (control && sel.includes("button") ? {} : null),
+      },
+      preventDefault: () => undefined,
+    } as unknown as KeyboardEvent;
+    if (type === "down") handleCanvasKeyDown(event);
+    else handleCanvasKeyUp(event);
+  };
+  const viewed = () => useCanvasUiStore.getState().imageView;
+  const pick = (...ids: string[]) =>
+    useDiagramStore.setState((s) => ({
+      nodes: s.nodes.map((n) => ({ ...n, selected: ids.includes(n.id) })),
+    }));
+
+  beforeEach(() => {
+    useCanvasUiStore.getState().setImageView(null);
+    useDiagramStore
+      .getState()
+      .loadDoc(makeDoc([image("img"), image("img2"), makeNode({ id: "box" })], []), null);
+  });
+
+  it("one image picked, Space pressed and let go — the view opens on it", () => {
+    pick("img");
+    space("down");
+    expect(viewed()).toBeNull();
+    space("up");
+    expect(viewed()).toBe("img");
+  });
+
+  it("a pointer press while Space is down is panning — nothing opens", () => {
+    pick("img");
+    space("down");
+    cancelSpaceTap();
+    space("up");
+    expect(viewed()).toBeNull();
+  });
+
+  it("Space held (repeating) is panning too", () => {
+    pick("img");
+    space("down");
+    space("down", { repeat: true });
+    space("up");
+    expect(viewed()).toBeNull();
+  });
+
+  it("two images, a box, or nothing picked — nothing opens", () => {
+    for (const ids of [["img", "img2"], ["box"], []]) {
+      pick(...ids);
+      space("down");
+      space("up");
+      expect(viewed(), ids.join()).toBeNull();
+    }
+  });
+
+  it("Space typed in a field or pressed on a button is theirs", () => {
+    pick("img");
+    space("down", { tagName: "INPUT" });
+    space("up", { tagName: "INPUT" });
+    space("down", { control: true });
+    space("up", { control: true });
+    expect(viewed()).toBeNull();
+  });
+
+  it("another key in between, or the pick changing, cancels the tap", () => {
+    pick("img");
+    space("down");
+    press("c", { meta: true });
+    space("up");
+    expect(viewed()).toBeNull();
+    space("down");
+    pick("img2");
+    space("up");
+    expect(viewed()).toBeNull();
   });
 });

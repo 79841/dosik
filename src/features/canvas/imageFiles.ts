@@ -1,10 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 
+import { IMAGE_FILE_EXTENSIONS } from "../../shared/lib/imageData";
 import { toastError } from "../../shared/lib/toastStore";
+import type { PictureSource } from "./imageInput";
 
 /** extensions an image node can hold — the same list `images.rs` reads */
-export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp"];
+export const IMAGE_EXTENSIONS = IMAGE_FILE_EXTENSIONS;
 
 export const isImagePath = (path: string): boolean => {
   const dot = path.lastIndexOf(".");
@@ -72,11 +74,17 @@ export const readImageFile = async (path: string): Promise<Blob> => {
   return blobFromBase64(base64, mime);
 };
 
+/** a picture file read through Rust, with its path for the node to link (`original`) */
+export const readPictureFile = async (path: string): Promise<PictureSource> => ({
+  blob: await readImageFile(path),
+  original: path,
+});
+
 /** the palette's Image item: pick a file; null when the user cancels */
-export const pickImageFile = async (): Promise<Blob | null> => {
+export const pickImageFile = async (): Promise<PictureSource | null> => {
   const path = await open({
     multiple: false,
     filters: [{ name: "Image", extensions: IMAGE_EXTENSIONS }],
   });
-  return typeof path === "string" ? readImageFile(path) : null;
+  return typeof path === "string" ? readPictureFile(path) : null;
 };

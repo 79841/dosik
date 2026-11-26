@@ -59,6 +59,9 @@ const NOT_CAPTURED = [
   // `ViewportPortal` would put that shadow into PNG exports as a square block
   // (#219)
   "ZoomIsland.tsx",
+  // the image view (#279): a modal <dialog> in the top layer, mounted by the
+  // editor's sheet beside the canvas column — never in the viewport subtree
+  "ImageView.tsx",
 ];
 
 const sources = (dir: string): string[] =>

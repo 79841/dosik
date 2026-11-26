@@ -623,6 +623,17 @@ describe("get_diagram returns images as placeholders (#155)", () => {
     expect(elideImages(doc)).toEqual(elideImagesTs(doc));
   });
 
+  it("leaves out the file an image came from, as the app does — a local path is not the model's", () => {
+    const linked = {
+      ...doc,
+      nodes: [
+        { id: "i", data: { label: "", shape: "image", src: png, original: "/Users/a/x.png" } },
+      ],
+    };
+    expect(elideImages(linked).nodes[0].data).not.toHaveProperty("original");
+    expect(elideImages(linked)).toEqual(elideImagesTs(linked));
+  });
+
   it("handles one canvas only — no pages branch, same as the app (#229 D17)", () => {
     const book = {
       version: 2,

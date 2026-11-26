@@ -78,13 +78,21 @@ const agentDoc = (
   doc: { nodes: DiagramNode[]; edges: DiagramEdge[] },
   current: DiagramNode[],
 ): { errors: string[]; nodes: DiagramNode[] } => {
-  const pictures = new Map(current.map((n) => [n.id, n.data.src]));
+  const pictures = new Map(current.map((n) => [n.id, n.data]));
   const nodes = doc.nodes.map((n) => {
+    if (n.data.shape !== "image") return n;
+    // the file an image came from is the app's to link, never the document's
+    // sent: kept with the node's picture, gone with it
+    const { original: _, ...data } = n.data;
     const kept = pictures.get(n.id);
-    if (n.data.shape !== "image" || kept === undefined) return n;
-    return isElidedSrc(n.data.src) || n.data.src === undefined
-      ? { ...n, data: { ...n.data, src: kept } }
-      : n;
+    const keepsPicture =
+      kept?.src !== undefined &&
+      (data.src === undefined || isElidedSrc(data.src) || data.src === kept.src);
+    if (!keepsPicture) return { ...n, data };
+    return {
+      ...n,
+      data: { ...data, src: kept.src, ...(kept.original ? { original: kept.original } : {}) },
+    };
   });
   const errors = nodes.flatMap((n, i) => {
     if (n.data.shape !== "image" || n.data.src === undefined) return [];
@@ -447,8 +455,13 @@ export const createApplyOps =
               };
               // the rows belong to the entity shape (#5)
               if (data.shape !== "entity" || data.columns === undefined) delete data.columns;
-              // the picture belongs to the image shape, like the glyph to the icon
+              // the picture belongs to the image shape, like the glyph to the icon;
+              // the file it came from goes with it, and is no longer this
+              // picture's once another is sent
               if (data.shape !== "image") delete data.src;
+              if (data.shape !== "image" || (src !== undefined && src !== node.data.src)) {
+                delete data.original;
+              }
               // the glyph and the box decorations follow the shape (#9, #160)
               fitDecorToShape(data, DEFAULT_ICON);
               if (clearDestroy) delete data.destroyY;

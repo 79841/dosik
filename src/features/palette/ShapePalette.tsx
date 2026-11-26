@@ -225,10 +225,10 @@ export const ShapePalette = () => {
     // the picture goes to the diagram it was picked for, or nowhere (#218)
     const pickedFor = watchDocument(LEFT_BEFORE_PICTURE);
     void pickImageFile()
-      .then(async (blob) => {
-        if (!blob) return;
-        const image = await imageFromBlob(blob);
-        if (!pickedFor.left()) placeImage(image, viewportCenter());
+      .then(async (picked) => {
+        if (!picked) return;
+        const image = await imageFromBlob(picked.blob);
+        if (!pickedFor.left()) placeImage(image, viewportCenter(), picked.original);
       })
       .catch(toastError);
   };

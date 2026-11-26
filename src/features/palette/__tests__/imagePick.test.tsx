@@ -16,11 +16,14 @@ import { resetAutosaveForTests } from "../../library/useAutosave";
 
 // the file dialog and the decoding are the platform's; each answers when the test says so
 const picked = vi.hoisted(() => ({
-  file: null as null | ((blob: Blob | null) => void),
+  file: null as null | ((picture: { blob: Blob; original?: string } | null) => void),
 }));
 vi.mock("../../canvas/imageFiles", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../canvas/imageFiles")>()),
-  pickImageFile: vi.fn(() => new Promise<Blob | null>((resolve) => (picked.file = resolve))),
+  pickImageFile: vi.fn(
+    () =>
+      new Promise<{ blob: Blob; original?: string } | null>((resolve) => (picked.file = resolve)),
+  ),
 }));
 vi.mock("../../canvas/imageInput", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../canvas/imageInput")>()),
@@ -65,15 +68,17 @@ describe("palette Image — goes only into the document it was picked for (#218)
 
   it("lands at the screen center when nothing changed", async () => {
     await pickImage();
-    picked.file!(new Blob([], { type: "image/png" }));
+    picked.file!({ blob: new Blob([], { type: "image/png" }), original: "/pics/picked.png" });
     await vi.waitFor(() => expect(images()).toHaveLength(1));
+    // the picked file is linked for the image view
+    expect(images()[0]!.data.original).toBe("/pics/picked.png");
     expect(toasts()).toEqual([]);
   });
 
   it("moving to another tab while picking — goes into no document, shows a toast", async () => {
     await pickImage();
     openDocument(makeDoc([], [], "B"), { projectId: "b" });
-    picked.file!(new Blob([], { type: "image/png" }));
+    picked.file!({ blob: new Blob([], { type: "image/png" }) });
     await vi.waitFor(() =>
       expect(toasts()).toEqual([
         "You left the diagram before the picture was added — add it again",

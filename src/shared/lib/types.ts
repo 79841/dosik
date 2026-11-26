@@ -84,6 +84,12 @@ export interface ShapeNodeData extends Record<string, unknown> {
   methods?: string[];
   /** image only: the picture, a base64 data URL (png/jpeg/gif/webp) — see imageData.ts */
   src?: string;
+  /**
+   * image only: the file the picture was made from (an absolute path), when
+   * it came from one — `src` is a smaller copy, and the image view shows this
+   * file while it is still there (`isImageOriginal`)
+   */
+  original?: string;
   /** entity only: one raw column line per row, e.g. "id uuid PK" — see entityShape.ts */
   columns?: string[];
   /** box shapes and frames: a short tag (top-left) or step number (top-right) — see nodeDecor.ts (#160, #210) */

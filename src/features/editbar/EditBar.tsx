@@ -8,6 +8,7 @@ import {
   Frame,
   GitFork,
   Group,
+  Maximize2,
   MoveRight,
   RotateCcw,
   Route,
@@ -37,6 +38,7 @@ import { useContentWidth } from "../../shared/lib/sidebarLayout";
 import { useOutsideDismiss } from "../../shared/lib/useOutsideDismiss";
 import { ICON_STROKE, IconButton, TOOL_ICON_SIZE } from "../../shared/ui/IconButton";
 import type { DiagramEdge } from "../../shared/lib/types";
+import { openImageView, soleImage } from "../canvas/openImageView";
 import { useSelectionEditing } from "../inspector/useSelectionEditing";
 import { ShapePreview } from "../palette/ShapePreview";
 import {
@@ -225,6 +227,8 @@ export const EditBar = () => {
   const [measured, setMeasured] = useState({ canvas: 0, bar: 0 });
   // booleans, so the bar re-renders only when they flip (#171)
   const groupable = useDiagramStore((s) => canGroup(s.nodes));
+  // one image picked: the bar can show it large (#279)
+  const viewable = useDiagramStore((s) => soleImage(s.nodes)?.id ?? null);
   const ungroupable = useDiagramStore((s) => canUngroup(s.nodes));
   /**
    * Every way a section closes goes through here. A field mid-edit commits on
@@ -345,6 +349,19 @@ export const EditBar = () => {
           >
             <TextSection e={e} update={update} />
           </Panel>
+          {viewable ? (
+            <IconButton
+              label="View image"
+              size={32}
+              tooltip="above"
+              shortcut="Space"
+              keyshortcuts="Space"
+              popup="dialog"
+              onClick={() => openImageView(viewable)}
+            >
+              <Maximize2 {...icon} />
+            </IconButton>
+          ) : null}
           {node.data.shape === "icon" || takesDecor(node.data.shape) ? (
             <Panel label="Icon" glyph={<Boxes {...icon} />} {...panel("icon")}>
               <IconSection e={e} update={update} />

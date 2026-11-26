@@ -2,32 +2,40 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect } from "react";
 
 import { toastError } from "../../shared/lib/toastStore";
-import { droppedImagePaths, readImageFile } from "./imageFiles";
-import { imageFromBlob, LEFT_BEFORE_PICTURE, placeImage, watchDocument } from "./imageInput";
+import { droppedImagePaths, readPictureFile } from "./imageFiles";
+import {
+  imageFromBlob,
+  LEFT_BEFORE_PICTURE,
+  type PictureSource,
+  placeImage,
+  watchDocument,
+} from "./imageInput";
 
 /** each further file of a multi-file drop lands this far down and right of the last */
 export const DROP_STACK_OFFSET = 24;
 
 /**
- * Places decoded pictures around `at`, reporting each failure without
- * stopping the rest — in the diagram they were dropped (or pasted) on: once
- * another is on screen, the rest are not read and none lands there, and
- * `leftMessage` says so.
+ * Places decoded pictures around `at`, each linked to the file it was read
+ * from, reporting each failure without stopping the rest — in the diagram they
+ * were dropped (or pasted) on: once another is on screen, the rest are not
+ * read and none lands there, and `leftMessage` says so.
  */
 export const placeBlobs = async (
-  blobs: (() => Promise<Blob>)[],
+  pictures: (() => Promise<PictureSource>)[],
   at: { x: number; y: number },
   leftMessage = LEFT_BEFORE_PICTURE,
 ) => {
   const dropped = watchDocument(leftMessage);
-  for (const [index, load] of blobs.entries()) {
+  for (const [index, load] of pictures.entries()) {
     try {
-      const image = await imageFromBlob(await load());
+      const { blob, original } = await load();
+      const image = await imageFromBlob(blob);
       if (dropped.left()) return;
-      placeImage(image, {
-        x: at.x + index * DROP_STACK_OFFSET,
-        y: at.y + index * DROP_STACK_OFFSET,
-      });
+      placeImage(
+        image,
+        { x: at.x + index * DROP_STACK_OFFSET, y: at.y + index * DROP_STACK_OFFSET },
+        original,
+      );
     } catch (error) {
       toastError(error);
     }
@@ -59,7 +67,7 @@ export const useImageFileDrop = (
             y: event.payload.position.y / scale,
           });
           void placeBlobs(
-            paths.map((path) => () => readImageFile(path)),
+            paths.map((path) => () => readPictureFile(path)),
             at,
           );
         })

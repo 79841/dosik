@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+# TypeScript build caches (`tsc -b`); the build itself runs `tsc --noEmit`
+*.tsbuildinfo
 *.local
 
 # Editor directories and files

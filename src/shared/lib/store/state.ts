@@ -178,12 +178,14 @@ export interface DiagramState {
   setNodesColor: (nodeIds: string[], color: PaletteColor) => void;
   /**
    * Adds an image node (#8) with an already-validated data URL, at `position`
-   * (top-left) and `size`. One history frame; returns the new id.
+   * (top-left) and `size`, linked to `original` — the file it came from — when
+   * there is one. One history frame; returns the new id.
    */
   addImage: (
     src: string,
     position: { x: number; y: number },
     size: { width: number; height: number },
+    original?: string,
   ) => string;
   /**
    * Arranges shapes with dagre (#3) — the given ids, or every shape that is

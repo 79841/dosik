@@ -167,10 +167,29 @@ export const watchDocument = (message: string): { left: () => boolean } => {
   };
 };
 
-/** Adds the picture centred on `center` (flow coordinates). */
-export const placeImage = (image: DecodedImage, center: { x: number; y: number }): string => {
+/**
+ * A picture on its way in, and the file it was read from when there is one —
+ * the node links that file (`original`), and the image view shows it full size
+ * while it is still there.
+ */
+export interface PictureSource {
+  blob: Blob;
+  original?: string;
+}
+
+/** Adds the picture centred on `center` (flow coordinates), linked to the file it came from. */
+export const placeImage = (
+  image: DecodedImage,
+  center: { x: number; y: number },
+  original?: string,
+): string => {
   const size = fitImageSize(image.width, image.height);
   return useDiagramStore
     .getState()
-    .addImage(image.src, { x: center.x - size.width / 2, y: center.y - size.height / 2 }, size);
+    .addImage(
+      image.src,
+      { x: center.x - size.width / 2, y: center.y - size.height / 2 },
+      size,
+      original,
+    );
 };

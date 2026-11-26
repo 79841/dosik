@@ -54,6 +54,8 @@ interface CanvasUiState {
   snapTarget: SnapTarget | null;
   /** the anchor whose drag found `snapTarget` — its lines preview as landed there */
   snapFor: string | null;
+  /** the image node shown large over the window (`ImageView`) */
+  imageView: string | null;
 
   setArrowMode: (on: boolean) => void;
   /** `forAnchor`: the dragged anchor, when an existing line's end is what lands */
@@ -64,6 +66,7 @@ interface CanvasUiState {
   setEdgeLabelEdit: (state: EdgeLabelEditState | null) => void;
   setNodeLabelEdit: (nodeId: string | null) => void;
   setCopiedEdgeStyle: (style: Record<string, unknown> | null) => void;
+  setImageView: (nodeId: string | null) => void;
 }
 
 /**
@@ -97,6 +100,7 @@ export const useCanvasUiStore = create<CanvasUiState>((set, get) => ({
   copiedEdgeStyle: null,
   snapTarget: null,
   snapFor: null,
+  imageView: null,
 
   setArrowMode: (arrowMode) => set({ arrowMode }),
   setSnapTarget: (snapTarget, forAnchor) =>
@@ -114,6 +118,7 @@ export const useCanvasUiStore = create<CanvasUiState>((set, get) => ({
   setEdgeLabelEdit: (edgeLabelEdit) => set({ edgeLabelEdit }),
   setNodeLabelEdit: (nodeLabelEdit) => set({ nodeLabelEdit }),
   setCopiedEdgeStyle: (copiedEdgeStyle) => set({ copiedEdgeStyle }),
+  setImageView: (imageView) => set({ imageView }),
 }));
 
 // An entity deleted while ui state points at it (bridge ops, undo, file load)
@@ -132,7 +137,8 @@ useDiagramStore.subscribe((state, prevState) => {
     !ui.edgeMenu &&
     !ui.nodeMenu &&
     !ui.dropMenu &&
-    !ui.snapTarget
+    !ui.snapTarget &&
+    !ui.imageView
   )
     return;
   // a wholesale document swap (loadDoc / set_diagram) may reuse the same ids
@@ -149,4 +155,10 @@ useDiagramStore.subscribe((state, prevState) => {
   if (ui.nodeMenu && nodeGone(ui.nodeMenu.nodeId)) ui.setNodeMenu(null);
   if (ui.dropMenu && nodeGone(ui.dropMenu.fromId)) ui.setDropMenu(null);
   if (ui.snapTarget && nodeGone(ui.snapTarget.nodeId)) ui.setSnapTarget(null);
+  // the image view closes with its picture: the node gone, no longer an image,
+  // or another document on screen
+  const viewed = ui.imageView;
+  const stillImage = (id: string): boolean =>
+    !swapped && state.nodes.some((n) => n.id === id && n.data.shape === "image");
+  if (viewed && !stillImage(viewed)) ui.setImageView(null);
 });

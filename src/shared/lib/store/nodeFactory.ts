@@ -1,5 +1,5 @@
 import { entityNodeHeight, entityNodeWidth, sanitizeEntityColumns } from "../entityShape";
-import { imageSrcError } from "../imageData";
+import { imageSrcError, isImageOriginal } from "../imageData";
 import { nanoid } from "nanoid";
 import { resizeFloor } from "../resizeFloor";
 
@@ -143,6 +143,8 @@ export const createShapeNode = (
     description?: string;
     /** shape "image" only — the caller has validated it (imageData.ts) */
     src?: string;
+    /** shape "image" only — the file the picture came from (`isImageOriginal`) */
+    original?: string;
     /** shape "entity" only — raw column lines, cleaned here */
     columns?: string[];
   } = {},
@@ -189,6 +191,9 @@ export const createShapeNode = (
         ? { description: sanitizeDescription(options.description) }
         : {}),
       ...(shape === "image" && options.src ? { src: options.src } : {}),
+      ...(shape === "image" && isImageOriginal(options.original)
+        ? { original: options.original }
+        : {}),
       ...(columns ? { columns } : {}),
     },
   };
@@ -290,6 +295,10 @@ export const normalizeNode = (
       // a picture that is not a usable data URL is dropped, the node stays —
       // it renders as an empty frame the user can see and delete (#8)
       ...(shape === "image" && imageSrcError(raw.data.src) === null ? { src: raw.data.src } : {}),
+      // the file it came from: kept only as a picture's absolute path
+      ...(shape === "image" && isImageOriginal(raw.data.original)
+        ? { original: raw.data.original }
+        : {}),
     },
   };
 };

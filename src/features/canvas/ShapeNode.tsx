@@ -57,6 +57,7 @@ import { ClassSvg } from "./ClassSvg";
 import { EntitySvg } from "./EntitySvg";
 import { ENTITY_HEADER_H, ENTITY_TEXT_PAD } from "../../shared/lib/entityShape";
 import { IconNodeSvg } from "./IconNodeSvg";
+import { openImageView } from "./openImageView";
 import { FrameSvg } from "./FrameSvg";
 import { FragmentSvg, LifelineSvg } from "./SequenceSvg";
 import { ShapeSvg } from "./ShapeSvg";
@@ -306,8 +307,9 @@ export const ShapeNode = ({
         e.stopPropagation();
         // in a group, a double-click steps in and picks this shape alone (#171)
         useDiagramStore.getState().pickInGroup(id);
-        // an image carries no visible label to edit (#8)
+        // an image carries no visible label to edit (#8): it opens large (#279)
         if (!isImage) setEditing(true);
+        else if (data.src) openImageView(id);
       }}
     >
       <NodeResizer

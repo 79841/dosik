@@ -15,6 +15,7 @@ import { MARKER_REF_X } from "../../canvas/edgeMarkers";
 import type { MarkerShape } from "../../../shared/lib/types";
 import { EDIT_BAR_BOTTOM, EditBar, editBarPlacement } from "../EditBar";
 import { MARKER_OPTIONS } from "../sections";
+import { useCanvasUiStore } from "../../canvas/canvasUiStore";
 
 /** the bar, with one of its sections opened — what a click on that button does */
 const renderBar = (section?: string) => {
@@ -758,5 +759,61 @@ describe("when a frame is selected (#170 D8)", () => {
       useDiagramStore.getState().nodes.map((n) => [n.id, n.data.shape]),
     );
     expect(shapes).toEqual({ a: "ellipse", f: "frame" });
+  });
+});
+
+describe("edit bar — View image (#279)", () => {
+  const PNG = "data:image/png;base64,iVBORw0KGgo=";
+  const load = (shapes: { id: string; shape: string }[]) => {
+    useDiagramStore
+      .getState()
+      .loadDoc({ version: 1, title: "Untitled Diagram", nodes: [], edges: [] }, null);
+    useDiagramStore.getState().applyOps(
+      shapes.map(({ id, shape }, i) => ({
+        op: "add_node" as const,
+        node: {
+          id,
+          label: id,
+          shape: shape as never,
+          x: i * 200,
+          y: 0,
+          ...(shape === "image" ? { src: PNG } : {}),
+        },
+      })),
+    );
+  };
+  const select = (ids: string[]) =>
+    useDiagramStore.setState((s) => ({
+      nodes: s.nodes.map((n) => ({ ...n, selected: ids.includes(n.id) })),
+    }));
+
+  beforeEach(() => useCanvasUiStore.getState().setImageView(null));
+
+  it("one image picked — the button follows Alt text and opens the view", () => {
+    load([{ id: "img", shape: "image" }]);
+    select(["img"]);
+    renderBar();
+    const buttons = screen.getAllByRole("button");
+    const view = screen.getByRole("button", { name: "View image" });
+    expect(buttons.indexOf(view)).toBe(
+      buttons.indexOf(screen.getByRole("button", { name: "Alt text" })) + 1,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "View image" }));
+    expect(useCanvasUiStore.getState().imageView).toBe("img");
+  });
+
+  it("two images or a box — no button", () => {
+    load([
+      { id: "img", shape: "image" },
+      { id: "img2", shape: "image" },
+      { id: "box", shape: "rounded" },
+    ]);
+    select(["img", "img2"]);
+    const { unmount } = renderBar();
+    expect(screen.queryByRole("button", { name: "View image" })).toBeNull();
+    unmount();
+    select(["box"]);
+    renderBar();
+    expect(screen.queryByRole("button", { name: "View image" })).toBeNull();
   });
 });

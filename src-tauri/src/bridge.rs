@@ -147,6 +147,22 @@ fn with_project(mut doc: serde_json::Value, project: serde_json::Value) -> serde
 /// megabytes of base64 (#155). Sent back unchanged, the placeholder
 /// keeps its picture. `?images=inline` skips this for callers that render the
 /// document (the MCP server's export and render).
+/// Drops each image's `original` — the local path it was made from (the
+/// user's name in it, often) is the app's, never a reader's
+/// (`imageData.ts`, `tools.mjs`).
+fn strip_originals(doc: &mut serde_json::Value) {
+    let Some(nodes) = doc.get_mut("nodes").and_then(|n| n.as_array_mut()) else {
+        return;
+    };
+    for node in nodes {
+        if let Some(data) = node.get_mut("data").and_then(|d| d.as_object_mut()) {
+            if data.get("shape").and_then(|s| s.as_str()) == Some("image") {
+                data.remove("original");
+            }
+        }
+    }
+}
+
 fn elide_images(doc: &mut serde_json::Value) {
     // a diagram is one canvas (#229 D17): its nodes are all there is
     let Some(nodes) = doc.get_mut("nodes").and_then(|n| n.as_array_mut()) else {
@@ -330,6 +346,8 @@ fn handle_request(app: &AppHandle, mut request: tiny_http::Request) {
             } else {
                 match serde_json::from_str::<serde_json::Value>(&snapshot) {
                     Ok(mut doc) => {
+                        // the file an image came from stays in the app, pictures inline or not
+                        strip_originals(&mut doc);
                         if !wants_inline_images(&url) {
                             elide_images(&mut doc);
                         }
@@ -480,7 +498,7 @@ mod tests {
         // same input and answer as imageData.test.ts / openaiProvider.test.ts
         let png = format!("data:image/png;base64,{}", "A".repeat(40_000));
         let mut doc = json!({ "nodes": [
-            { "id": "i", "data": { "shape": "image", "src": png } },
+            { "id": "i", "data": { "shape": "image", "src": png, "original": "/Users/a/shot.png" } },
             { "id": "r", "data": { "shape": "rect", "src": "data:image/png;base64,AAAA" } },
             { "id": "e", "data": { "shape": "image" } }
         ] });
@@ -489,6 +507,19 @@ mod tests {
         // only images — anything else is left as it came
         assert_eq!(doc["nodes"][1]["data"]["src"], "data:image/png;base64,AAAA");
         assert!(doc["nodes"][2]["data"].get("src").is_none());
+    }
+
+    #[test]
+    fn every_read_leaves_the_file_an_image_came_from_out() {
+        let mut doc = json!({ "nodes": [
+            { "id": "i", "data": { "shape": "image", "src": "data:image/png;base64,AAAA", "original": "/Users/a/shot.png" } },
+            { "id": "r", "data": { "shape": "rect", "label": "original" } }
+        ] });
+        // pictures inline too: `strip_originals` runs before, and apart from, `elide_images`
+        strip_originals(&mut doc);
+        assert!(doc["nodes"][0]["data"].get("original").is_none());
+        assert_eq!(doc["nodes"][0]["data"]["src"], "data:image/png;base64,AAAA");
+        assert_eq!(doc["nodes"][1]["data"]["label"], "original");
     }
 
     #[test]

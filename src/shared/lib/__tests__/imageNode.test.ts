@@ -187,3 +187,139 @@ describe("Undo history does not duplicate images (#155)", () => {
     expect(cloned.some((c) => c.includes(PNG))).toBe(false);
   });
 });
+
+describe("An image remembers the file it was made from — `original`", () => {
+  const ORIGINAL = "/Users/someone/Desktop/shot.png";
+  const linked = (id: string, original: unknown, shape = "image") => {
+    const base = makeNode({ id, shape: shape as never });
+    return { ...base, data: { ...base.data, src: PNG, original } } as never;
+  };
+  beforeEach(() => useDiagramStore.getState().loadDoc(makeDoc([], []), null));
+
+  it("addImage keeps the path beside the stored copy", () => {
+    const id = useDiagramStore
+      .getState()
+      .addImage(PNG, { x: 0, y: 0 }, { width: 100, height: 50 }, ORIGINAL);
+    expect(node(id)?.data).toMatchObject({ src: PNG, original: ORIGINAL });
+    const plain = useDiagramStore
+      .getState()
+      .addImage(PNG, { x: 0, y: 0 }, { width: 10, height: 10 });
+    expect(node(plain)?.data).not.toHaveProperty("original");
+  });
+
+  it("reading a file keeps an absolute path to a picture, on an image only", () => {
+    useDiagramStore
+      .getState()
+      .loadDoc(
+        makeDoc(
+          [
+            linked("mac", ORIGINAL),
+            linked("win", "C:\\Users\\someone\\Pictures\\photo.JPG"),
+            linked("relative", "shot.png"),
+            linked("notPicture", "/Users/someone/.ssh/id_rsa"),
+            linked("tooLong", `/${"a".repeat(4100)}.png`),
+            linked("number", 42),
+            linked("unc", "\\\\server\\share\\x.png"),
+            linked("slashes", "//server/share/x.png"),
+            linked("automount", "/net/server/share/x.png"),
+            linked("automountCase", "/NET/server/share/x.png"),
+            linked("box", ORIGINAL, "rounded"),
+          ],
+          [],
+        ),
+        null,
+      );
+    expect(node("mac")?.data.original).toBe(ORIGINAL);
+    expect(node("win")?.data.original).toBe("C:\\Users\\someone\\Pictures\\photo.JPG");
+    for (const id of [
+      "relative",
+      "notPicture",
+      "tooLong",
+      "number",
+      "unc",
+      "slashes",
+      "automount",
+      "automountCase",
+      "box",
+    ]) {
+      expect(node(id)?.data, id).not.toHaveProperty("original");
+    }
+  });
+
+  it("turning the image into another shape drops the link with the picture", () => {
+    useDiagramStore.getState().loadDoc(makeDoc([linked("i", ORIGINAL)], []), null);
+    useDiagramStore.getState().updateNodeData("i", { shape: "rounded" });
+    expect(node("i")?.data).not.toHaveProperty("src");
+    expect(node("i")?.data).not.toHaveProperty("original");
+  });
+
+  it("update_node — a new picture or another shape drops the link; the placeholder keeps it", () => {
+    useDiagramStore
+      .getState()
+      .loadDoc(
+        makeDoc([linked("a", ORIGINAL), linked("b", ORIGINAL), linked("c", ORIGINAL)], []),
+        null,
+      );
+    const other = "data:image/png;base64,AAAA";
+    expect(
+      ops([
+        { op: "update_node", id: "a", set: { src: other } },
+        { op: "update_node", id: "b", set: { shape: "rounded" } },
+        { op: "update_node", id: "c", set: { src: elidedSrc(PNG), label: "kept" } },
+      ]).errors,
+    ).toEqual([]);
+    expect(node("a")?.data).not.toHaveProperty("original");
+    expect(node("b")?.data).not.toHaveProperty("original");
+    expect(node("c")?.data.original).toBe(ORIGINAL);
+    // the same picture sent back inline is no new picture
+    useDiagramStore.getState().loadDoc(makeDoc([linked("d", ORIGINAL)], []), null);
+    expect(ops([{ op: "update_node", id: "d", set: { src: PNG } }]).errors).toEqual([]);
+    expect(node("d")?.data.original).toBe(ORIGINAL);
+  });
+
+  it("set_diagram — the read document sent back keeps the link, with or without it", () => {
+    useDiagramStore
+      .getState()
+      .loadDoc(makeDoc([linked("a", ORIGINAL), linked("b", ORIGINAL)], []), null);
+    const read = elideImages({ nodes: useDiagramStore.getState().nodes, edges: [] });
+    const [a, b] = read.nodes;
+    const withoutLink = { ...b!, data: { ...b!.data } };
+    delete (withoutLink.data as { original?: string }).original;
+    expect(
+      ops([{ op: "set_diagram", doc: { nodes: [a, withoutLink], edges: [] } }]).errors,
+    ).toEqual([]);
+    expect(node("a")?.data.original).toBe(ORIGINAL);
+    expect(node("b")?.data.original).toBe(ORIGINAL);
+  });
+
+  it("set_diagram — a link is never taken from the document sent: not with a new picture, not on a new node", () => {
+    useDiagramStore.getState().loadDoc(makeDoc([linked("a", ORIGINAL)], []), null);
+    const other = "data:image/png;base64,AAAA";
+    const fresh = {
+      ...makeNode({ id: "n", shape: "image" }),
+      data: { label: "", shape: "image", src: PNG, original: "/Users/someone2/x.png" },
+    };
+    const a = { ...node("a")!, data: { ...node("a")!.data, src: other } };
+    expect(ops([{ op: "set_diagram", doc: { nodes: [a, fresh], edges: [] } }]).errors).toEqual([]);
+    expect(node("a")?.data).toMatchObject({ src: other });
+    expect(node("a")?.data).not.toHaveProperty("original");
+    expect(node("n")?.data).not.toHaveProperty("original");
+  });
+
+  it("a read for a model leaves the link out", () => {
+    useDiagramStore.getState().loadDoc(makeDoc([linked("a", ORIGINAL)], []), null);
+    const read = elideImages({ nodes: useDiagramStore.getState().nodes, edges: [] });
+    expect(read.nodes[0]!.data).not.toHaveProperty("original");
+    // the app's own document keeps it
+    expect(node("a")?.data.original).toBe(ORIGINAL);
+  });
+
+  it("copy and paste — the copy links the same file", () => {
+    useDiagramStore.getState().loadDoc(makeDoc([linked("i", ORIGINAL)], []), null);
+    useDiagramStore.setState((s) => ({ nodes: s.nodes.map((n) => ({ ...n, selected: true })) }));
+    useDiagramStore.getState().copySelection();
+    useDiagramStore.getState().paste();
+    const copies = useDiagramStore.getState().nodes.filter((n) => n.id !== "i");
+    expect(copies.map((n) => n.data.original)).toEqual([ORIGINAL]);
+  });
+});
