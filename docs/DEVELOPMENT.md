@@ -31,8 +31,8 @@ gh workflow run windows-build.yml --ref <branch> -f smoke=false  # build only
 
 The installer is the run's `dosik-windows-x64` artifact. The smoke check then installs it on a Windows 11 (ARM, 1024×768) and a Windows Server 2025 (1920×1080) runner and walks through the window frame with real mouse and key input ([`scripts/windows-smoke.ps1`](../scripts/windows-smoke.ps1)):
 
-- **Checked** (a failure fails the job): silent install, first window placement, the Snap layouts spot over Maximize, one window menu for a right click on the band and for Alt+Space, F11 covering the screen and returning to the same window, Maximize and a double click on the band, no developer tools on F12, the agent bridge, Ctrl+W
-- **Seen** (screenshots in the `smoke-<runner>` artifact): Snap layouts, the hover colours, the full screen toast, Settings still open after F5 / Ctrl+R, no browser menus
+- **Checked** (a failure fails the job): silent install, the app icon filling its square (other apps' icons are measured alongside), first window placement, the Snap layouts spot over Maximize, one window menu for a right click on the band and for Alt+Space, F11 covering the screen and returning to the same window, Maximize and a double click on the band, no developer tools on F12, the agent bridge, Ctrl+W
+- **Seen** (screenshots in the `smoke-<runner>` artifact): Snap layouts, the hover colours, the full screen toast, Settings still open after F5 / Ctrl+R, no browser menus, the app icon beside other apps' on the desktop, the taskbar, Alt+Tab and Start
 
 Each job's summary lists its checks. Dragging, the tray, sign-ins and connected apps still need a person.
 

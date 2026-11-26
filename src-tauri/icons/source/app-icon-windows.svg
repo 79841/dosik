@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="100 100 824 824">
+  <!-- The Windows framing of app-icon.svg (the same drawing, below this
+       comment): the view is cropped to the tile, so it fills the canvas.
+       Windows draws app icons edge to edge; the margin of the macOS icon grid
+       would leave Dosik smaller than the apps beside it. icon.ico is rendered
+       from this file. -->
+  <defs><linearGradient id="t" x1="0.3" y1="0" x2="0.7" y2="1"><stop offset="0" stop-color="#1F1F23"/><stop offset="1" stop-color="#0B0B0D"/></linearGradient></defs>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#t)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="182.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
+  <rect x="268" y="268" width="232" height="232" rx="40" fill="#F2F2F4"/>
+  <path d="M564 268H565.76A190.24 190.24 0 0 1 756 458.24V460A40 40 0 0 1 716 500H564A40 40 0 0 1 524 460V308A40 40 0 0 1 564 268Z" fill="#7A7A84"/>
+  <circle cx="384" cy="640" r="122.96" fill="#7A7A84"/>
+  <path d="M640 529.74L750.26 640L640 750.26L529.74 640Z" fill="#F2F2F4" stroke="#F2F2F4" stroke-width="36" stroke-linejoin="round"/>
+</svg>

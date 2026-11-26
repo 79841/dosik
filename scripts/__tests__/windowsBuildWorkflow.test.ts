@@ -129,4 +129,17 @@ describe("the smoke script", () => {
       expect(script).toContain(name);
     }
   });
+
+  it("measures the app icon and shows it beside other apps' wherever Windows draws it", () => {
+    expect(script).toContain("app icon fills its square");
+    for (const shot of [
+      "00c-desktop-installed",
+      "01-first",
+      "08b-alt-tab",
+      "11-start",
+      "12-start-search",
+    ]) {
+      expect(script).toContain(`Shot "${shot}"`);
+    }
+  });
 });

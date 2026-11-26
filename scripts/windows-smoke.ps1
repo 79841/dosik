@@ -147,7 +147,7 @@ public class W {
 } catch { Log "add-type error=$($_.Exception.Message)"; $_.Exception.LoaderExceptions | ForEach-Object { Log "loader $_" } }
 [W]::SetProcessDPIAware() | Out-Null
 
-$VK_ESC = 0x1B; $VK_SPACE = 0x20; $VK_ALT = 0x12; $VK_CTRL = 0x11
+$VK_ESC = 0x1B; $VK_SPACE = 0x20; $VK_ALT = 0x12; $VK_CTRL = 0x11; $VK_TAB = 0x09; $VK_WIN = 0x5B
 $VK_F5 = 0x74; $VK_F11 = 0x7A; $VK_F12 = 0x7B; $VK_F = 0x46; $VK_R = 0x52; $VK_W = 0x57; $VK_COMMA = 0xBC
 # the design tokens: caption-button 46 px, chrome-height 40 px
 $CAPTION_BUTTON = 46; $CHROME_HEIGHT = 40
@@ -308,6 +308,33 @@ function Focus($tag) {
   Check "the app has the keyboard ($tag)" $front "in front before: $(if ($seen) { ($seen | Select-Object -Unique) -join ', ' } else { 'the app' })"
 }
 
+# an executable's icon as Windows hands it out (the large icon, 32 px at 100%):
+# how much of its square the drawing spans, from its at-least-half-opaque box
+# (an icon that cannot be read is logged and left out, not the end of the run)
+function IconSpan($path) {
+  if (-not (Test-Path $path)) { return $null }
+  try {
+    $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($path)
+    $bmp = $icon.ToBitmap()
+    $l = $bmp.Width; $t = $bmp.Height; $r = -1; $b = -1
+    for ($y = 0; $y -lt $bmp.Height; $y++) {
+      for ($x = 0; $x -lt $bmp.Width; $x++) {
+        if ($bmp.GetPixel($x, $y).A -ge 128) {
+          if ($x -lt $l) { $l = $x }; if ($x -gt $r) { $r = $x }
+          if ($y -lt $t) { $t = $y }; if ($y -gt $b) { $b = $y }
+        }
+      }
+    }
+    $span = [Math]::Min(($r - $l + 1) / $bmp.Width, ($b - $t + 1) / $bmp.Height)
+    $result = [pscustomobject]@{ Span = $span; Text = "$($r - $l + 1)x$($b - $t + 1) of $($bmp.Width)x$($bmp.Height)" }
+    $bmp.Dispose(); $icon.Dispose()
+    return $result
+  } catch {
+    Log "icon $path error=$($_.Exception.Message)"
+    return $null
+  }
+}
+
 function Finish() {
   $script:finishing = $true
   $failed = @($checks | Where-Object { -not $_.Ok })
@@ -315,7 +342,7 @@ function Finish() {
   $lines = @("### Windows smoke: $os", "", "| | Check | Detail |", "|---|---|---|")
   foreach ($c in $checks) { $lines += "| $(if ($c.Ok) { 'pass' } else { '**FAIL**' }) | $($c.Name) | $($c.Detail -replace '[|\r\n]+', ' / ') |" }
   $lines += ""
-  $lines += "$($checks.Count - $failed.Count) of $($checks.Count) checks passed. Snap layouts, the toast, Settings after F5 and the missing browser menus are in the screenshots."
+  $lines += "$($checks.Count - $failed.Count) of $($checks.Count) checks passed. Snap layouts, the toast, Settings after F5, the missing browser menus and the app icon beside other apps' (desktop, taskbar, Alt+Tab, Start) are in the screenshots."
   # UTF-8 without a byte order mark, which the job summary would show
   $text = ($lines -join "`n") + "`n"
   $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -353,6 +380,23 @@ Check "silent install" ($p.ExitCode -eq 0 -and (Test-Path $exe)) "exit=$($p.Exit
 $reg = Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Dosik' -ErrorAction SilentlyContinue
 Check "uninstall entry" ([bool]$reg.InstallLocation -and [bool]$reg.DisplayVersion) "InstallLocation=$($reg.InstallLocation) DisplayVersion=$($reg.DisplayVersion)"
 if (-not (Test-Path $exe)) { Finish }
+
+# ---- the app icon: Windows draws app icons edge to edge, so the tile fills
+# the icon's square - with the margin of the macOS icon grid it looks smaller
+# than its neighbours. Other apps' icons are measured alongside, for the log
+$mine = IconSpan $exe
+$others = @(
+  @("Explorer", "$env:WINDIR\explorer.exe"),
+  @("Edge", "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"),
+  @("Chrome", "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"),
+  @("Firefox", "$env:ProgramFiles\Mozilla Firefox\firefox.exe")
+) | ForEach-Object { $s = IconSpan $_[1]; if ($s) { "$($_[0]) $($s.Text)" } }
+Check "app icon fills its square" ($mine -and $mine.Span -ge 0.95) "Dosik $(if ($mine) { $mine.Text } else { 'none' }); $($others -join ', ')"
+$links = @([Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs')) | ForEach-Object { "$_\Dosik.lnk=$(Test-Path "$_\Dosik.lnk")" }
+Log "shortcuts $($links -join ' ')"
+(New-Object -ComObject Shell.Application).MinimizeAll()
+Start-Sleep -Seconds 2
+Shot "00c-desktop-installed"
 
 # ---- first window: where it lands, and whether it changes once shown
 $proc = Start-Process $exe -PassThru
@@ -521,6 +565,17 @@ $res = Bridge 'GET' '/api/diagram' $null
 $nodes = ([regex]::Matches($res.body, '"id"\s*:\s*"[ab]"')).Count
 Check "diagram keeps the Korean label" ($res.status -eq 200 -and $res.body.Contains($ko) -and $nodes -eq 2) "status=$($res.status) nodes=$nodes"
 
+# ---- Alt+Tab (seen): the switcher with the app's icon over its window; Esc
+# before Alt goes up leaves it without switching. The window saw Alt go down
+# and up with nothing between, so it may be left in menu mode: one more Esc
+Focus "Alt+Tab"
+[W]::Key($VK_ALT, $false); Start-Sleep -Milliseconds 100
+[W]::Tap($VK_TAB); Start-Sleep -Seconds 2
+Shot "08b-alt-tab"
+[W]::Tap($VK_ESC); Start-Sleep -Milliseconds 100
+[W]::Key($VK_ALT, $true); Start-Sleep -Milliseconds 500
+[W]::Tap($VK_ESC); Start-Sleep -Milliseconds 500
+
 # ---- Ctrl+W: the tab, then on Home the window - the app quits
 [W]::Click($pt.body[0], $pt.body[1]); Start-Sleep -Milliseconds 500
 Focus "Ctrl+W"
@@ -535,5 +590,16 @@ Focus "Ctrl+W on Home"
 $exited = $proc.WaitForExit(15000)
 Check "Ctrl+W on Home quits" (-not [W]::IsWindow($script:h) -and $exited) "window=$([W]::IsWindow($script:h)) exited=$exited"
 Shot "10-ctrl-w-home"
+
+# ---- Start (seen): the app among the recent ones, then found by name. A
+# runner may have opened Start on its own, which the Win key would close
+[W]::Tap($VK_ESC); Start-Sleep -Milliseconds 500
+[W]::Tap($VK_WIN); Start-Sleep -Seconds 3
+Shot "11-start"
+foreach ($vk in @(0x44, 0x4F, 0x53, 0x49, 0x4B)) { [W]::Tap($vk); Start-Sleep -Milliseconds 150 }
+Start-Sleep -Seconds 4
+Shot "12-start-search"
+[W]::Tap($VK_ESC); Start-Sleep -Milliseconds 500
+[W]::Tap($VK_ESC)
 
 Finish
