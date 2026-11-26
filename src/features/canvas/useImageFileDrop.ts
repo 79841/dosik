@@ -10,11 +10,16 @@ export const DROP_STACK_OFFSET = 24;
 
 /**
  * Places decoded pictures around `at`, reporting each failure without
- * stopping the rest — in the diagram they were dropped on: once another is on
- * screen, the rest are not read and none lands there.
+ * stopping the rest — in the diagram they were dropped (or pasted) on: once
+ * another is on screen, the rest are not read and none lands there, and
+ * `leftMessage` says so.
  */
-export const placeBlobs = async (blobs: (() => Promise<Blob>)[], at: { x: number; y: number }) => {
-  const dropped = watchDocument(LEFT_BEFORE_PICTURE);
+export const placeBlobs = async (
+  blobs: (() => Promise<Blob>)[],
+  at: { x: number; y: number },
+  leftMessage = LEFT_BEFORE_PICTURE,
+) => {
+  const dropped = watchDocument(leftMessage);
   for (const [index, load] of blobs.entries()) {
     try {
       const image = await imageFromBlob(await load());

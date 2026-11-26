@@ -16,20 +16,28 @@ export const IMAGE_FILE_MAX_BYTES = 25 * 1024 * 1024;
 const MB = 1024 * 1024;
 
 /**
- * The pictures among dropped files, by name. When there were files but none
- * of them a picture (a PDF, a HEIC), says so — a drop that silently did
- * nothing left the user unsure whether dropping works at all (#155).
+ * The pictures among dropped (or pasted) files, by name. When there were
+ * files but none of them a picture (a PDF, a HEIC), says so — a drop that
+ * silently did nothing left the user unsure whether dropping works at all (#155).
  */
-const pickPictures = <T>(items: T[], name: (item: T) => string): T[] => {
+const pickPictures = <T>(
+  items: T[],
+  name: (item: T) => string,
+  how: "dropped" | "pasted" = "dropped",
+): T[] => {
   const images = items.filter((item) => isImagePath(name(item)));
   if (items.length > 0 && images.length === 0) {
-    toastError(new Error(`Only ${IMAGE_EXTENSIONS.join(", ")} pictures can be dropped here`));
+    toastError(new Error(`Only ${IMAGE_EXTENSIONS.join(", ")} pictures can be ${how} here`));
   }
   return images;
 };
 
 /** the pictures among files Tauri took from a drop, as paths (macOS) */
 export const droppedImagePaths = (paths: string[]): string[] => pickPictures(paths, (p) => p);
+
+/** the pictures among files copied in Finder or Explorer and pasted */
+export const pastedImagePaths = (paths: string[]): string[] =>
+  pickPictures(paths, (p) => p, "pasted");
 
 /**
  * The pictures among files dropped on the page itself — on Windows, where the
@@ -48,15 +56,20 @@ export const droppedImageFiles = (files: File[]): File[] =>
     return false;
   });
 
+/** a picture's file as Rust hands it over — base64 in JSON */
+export const blobFromBase64 = (base64: string, mime: string): Blob => {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+};
+
 /** reads a picture file through Rust — the webview cannot open a path itself (#8) */
 export const readImageFile = async (path: string): Promise<Blob> => {
   const { mime, base64 } = await invoke<{ mime: string; base64: string }>("read_image_file", {
     path,
   });
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: mime });
+  return blobFromBase64(base64, mime);
 };
 
 /** the palette's Image item: pick a file; null when the user cancels */

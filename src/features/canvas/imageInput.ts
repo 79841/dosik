@@ -139,23 +139,6 @@ export const imageFromBlob = async (blob: Blob): Promise<DecodedImage> => {
   }
 };
 
-/** Raw pixels (the system clipboard hands these over) as a stored picture. */
-export const imageFromRgba = (rgba: Uint8Array, width: number, height: number): DecodedImage => {
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const context = canvas.getContext("2d");
-  if (!context) throw new Error("Could not prepare the image");
-  context.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
-  const plan = planImage({ type: "image/png", bytes: 0, width, height });
-  const size = plan.action === "scale" ? plan : { width, height };
-  return checked({
-    src: encodeWithin((type) => draw(canvas, size.width, size.height, type), "image/png"),
-    width: size.width,
-    height: size.height,
-  });
-};
-
 const checked = (image: DecodedImage): DecodedImage => {
   const error = isImageDataUrl(image.src) ? imageSrcError(image.src) : "Not an image";
   if (error) throw new Error(`The image cannot be added: ${error}`);

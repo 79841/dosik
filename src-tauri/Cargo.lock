@@ -957,10 +957,15 @@ dependencies = [
 name = "dosik"
 version = "1.0.0"
 dependencies = [
+ "arboard",
  "base64 0.22.1",
  "keyring",
  "notify",
  "notify-debouncer-mini",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "png 0.18.1",
  "serde",
  "serde_json",
  "tauri",

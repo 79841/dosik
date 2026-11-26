@@ -1,6 +1,7 @@
 mod app_menu;
 mod bridge;
 mod chat;
+mod clipboard_picture;
 mod codex;
 mod images;
 mod library;
@@ -302,6 +303,8 @@ pub fn run() {
             open_notices,
             read_text_file,
             images::read_image_file,
+            clipboard_picture::read_clipboard_picture,
+            clipboard_picture::clipboard_has_picture,
             write_text_file,
             write_binary_file,
             library::list_library,

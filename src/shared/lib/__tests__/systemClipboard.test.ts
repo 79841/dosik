@@ -1,56 +1,42 @@
-import { readImage, readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { describe, expect, it, vi } from "vitest";
+import { invoke } from "@tauri-apps/api/core";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  hasClipboardImage,
-  readClipboardImage,
+  hasClipboardPicture,
+  readClipboardPicture,
   readClipboardText,
   writeClipboardText,
 } from "../systemClipboard";
 
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
-  readImage: vi.fn(),
   readText: vi.fn(),
   writeText: vi.fn(),
 }));
 
-const fakeImage = (close = vi.fn(async () => {})) => ({
-  size: vi.fn(async () => ({ width: 1, height: 1 })),
-  rgba: vi.fn(async () => new Uint8Array(4)),
-  close,
-});
+describe("a clipboard picture crosses as a file, through Rust", () => {
+  beforeEach(() => vi.mocked(invoke).mockReset());
 
-describe("closes the clipboard image resource after reading (#155)", () => {
-  it("reading for paste", async () => {
-    const image = fakeImage();
-    vi.mocked(readImage).mockResolvedValueOnce(image as never);
-    expect(await readClipboardImage()).toMatchObject({ width: 1, height: 1 });
-    expect(image.close).toHaveBeenCalledOnce();
+  it("reads what Rust found — copied picture files or a picture's bytes", async () => {
+    const files = { kind: "files", paths: ["/a.png"] };
+    vi.mocked(invoke).mockResolvedValueOnce(files);
+    expect(await readClipboardPicture()).toEqual(files);
+    expect(invoke).toHaveBeenLastCalledWith("read_clipboard_picture");
   });
 
-  it("also when only checking it exists — without fetching pixels", async () => {
-    const image = fakeImage();
-    vi.mocked(readImage).mockResolvedValueOnce(image as never);
-    expect(await hasClipboardImage()).toBe(true);
-    expect(image.close).toHaveBeenCalledOnce();
-    expect(image.rgba).not.toHaveBeenCalled();
+  it("null when there is none or no Tauri — does not throw", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(null);
+    expect(await readClipboardPicture()).toBeNull();
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("no Tauri"));
+    expect(await readClipboardPicture()).toBeNull();
   });
 
-  it("closes even when the read fails, and a failed close does not change the result", async () => {
-    const image = fakeImage(
-      vi.fn(async () => {
-        throw new Error("gone");
-      }),
-    );
-    image.rgba.mockRejectedValueOnce(new Error("decode"));
-    vi.mocked(readImage).mockResolvedValueOnce(image as never);
-    expect(await readClipboardImage()).toBeNull();
-    expect(image.close).toHaveBeenCalledOnce();
-  });
-
-  it("has nothing to close when there is no image", async () => {
-    vi.mocked(readImage).mockRejectedValueOnce(new Error("no image"));
-    expect(await hasClipboardImage()).toBe(false);
+  it("checks for one without carrying it over", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce(true);
+    expect(await hasClipboardPicture()).toBe(true);
+    expect(invoke).toHaveBeenLastCalledWith("clipboard_has_picture");
+    vi.mocked(invoke).mockRejectedValueOnce(new Error("no Tauri"));
+    expect(await hasClipboardPicture()).toBe(false);
   });
 });
 

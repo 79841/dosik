@@ -1,6 +1,6 @@
 import { useDiagramStore } from "../../shared/lib/store";
 import {
-  hasClipboardImage,
+  hasClipboardPicture,
   readClipboardText,
   writeClipboardText,
 } from "../../shared/lib/systemClipboard";
@@ -16,14 +16,15 @@ const copiedLabels = (): string =>
     .join("\n");
 
 /**
- * ⌘V pastes a picture on the system clipboard before copied shapes, and
- * Mermaid code too (#200), so either, copied earlier in another app, would win
- * over the shapes copied just now (#8). Only then is the system clipboard
+ * ⌘V pastes a picture on the system clipboard before copied shapes — copied
+ * files too, if only to say they hold no picture — and Mermaid code (#200), so
+ * any of them, copied earlier in another app, would win over the shapes
+ * copied just now (#8). Only then is the system clipboard
  * overwritten — with the labels — and otherwise left alone: a URL copied in a
  * browser must survive copying a box to move it (#155).
  */
 const supersedeClipboard = async (): Promise<void> => {
-  if (!(await hasClipboardImage())) {
+  if (!(await hasClipboardPicture())) {
     const text = await readClipboardText();
     if (!text || !mermaidSource(text)) return;
   }

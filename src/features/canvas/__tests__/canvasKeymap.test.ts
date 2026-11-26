@@ -7,14 +7,17 @@ import { handleCanvasKeyDown } from "../canvasKeymap";
 
 // the system clipboard is Tauri's; here it holds no picture unless a test says so
 const clipboard = vi.hoisted(() => ({
-  readClipboardImage: vi.fn(
-    async () => null as null | { rgba: Uint8Array; width: number; height: number },
+  readClipboardPicture: vi.fn(
+    async () => null as null | { kind: "data"; mime: string; base64: string },
   ),
   writeClipboardText: vi.fn(async () => {}),
-  hasClipboardImage: vi.fn(async () => false),
+  hasClipboardPicture: vi.fn(async () => false),
   readClipboardText: vi.fn(async () => null as string | null),
 }));
 vi.mock("../../../shared/lib/systemClipboard", () => clipboard);
+
+/** a screenshot on the clipboard, as Rust hands it over */
+const SCREENSHOT = { kind: "data" as const, mime: "image/png", base64: "iVBORw==" };
 
 /** lets the async half of Cmd+V (the clipboard read) finish */
 const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -162,7 +165,7 @@ describe("handleCanvasKeyDown", () => {
 
   it("copying shapes while an image is on the clipboard overwrites it with the label — so the old image doesn't hijack ⌘V (#8)", async () => {
     clipboard.writeClipboardText.mockClear();
-    clipboard.hasClipboardImage.mockResolvedValueOnce(true);
+    clipboard.hasClipboardPicture.mockResolvedValueOnce(true);
     press("c", { meta: true });
     await settle();
     expect(clipboard.writeClipboardText).toHaveBeenCalledWith("a");
@@ -177,7 +180,7 @@ describe("handleCanvasKeyDown", () => {
 
   it("cut does the same — overwrites only when there is an image", async () => {
     clipboard.writeClipboardText.mockClear();
-    clipboard.hasClipboardImage.mockResolvedValueOnce(true);
+    clipboard.hasClipboardPicture.mockResolvedValueOnce(true);
     press("x", { meta: true });
     await settle();
     expect(clipboard.writeClipboardText).toHaveBeenCalledWith("a");
@@ -187,17 +190,15 @@ describe("handleCanvasKeyDown", () => {
     const { registerPointerAt } = await import("../canvasViewport");
     const off = registerPointerAt(() => ({ x: 700, y: 300 }));
     const pasteImage = await import("../imagePaste");
-    const place = vi
-      .spyOn(pasteImage.imagePasteDeps, "placeFromRgba")
-      .mockImplementation(() => "img");
-    clipboard.readClipboardImage.mockResolvedValueOnce({
-      rgba: new Uint8Array(4),
-      width: 1,
-      height: 1,
-    });
+    const place = vi.spyOn(pasteImage.imagePasteDeps, "placeBlobs").mockResolvedValue();
+    clipboard.readClipboardPicture.mockResolvedValueOnce(SCREENSHOT);
     press("v", { meta: true });
     await settle();
-    expect(place).toHaveBeenCalledWith(expect.any(Uint8Array), 1, 1, { x: 700, y: 300 });
+    expect(place).toHaveBeenCalledWith(
+      [expect.any(Function)],
+      { x: 700, y: 300 },
+      expect.any(String),
+    );
     off();
     place.mockRestore();
   });
@@ -206,14 +207,8 @@ describe("handleCanvasKeyDown", () => {
     press("c", { meta: true });
     const paste = vi.spyOn(useDiagramStore.getState(), "paste");
     const pasteImage = await import("../imagePaste");
-    const place = vi
-      .spyOn(pasteImage.imagePasteDeps, "placeFromRgba")
-      .mockImplementation(() => "img");
-    clipboard.readClipboardImage.mockResolvedValueOnce({
-      rgba: new Uint8Array(4),
-      width: 1,
-      height: 1,
-    });
+    const place = vi.spyOn(pasteImage.imagePasteDeps, "placeBlobs").mockResolvedValue();
+    clipboard.readClipboardPicture.mockResolvedValueOnce(SCREENSHOT);
 
     press("v", { meta: true });
     await settle();
@@ -282,14 +277,8 @@ describe("handleCanvasKeyDown", () => {
 
   it("an image takes precedence over Mermaid", async () => {
     const pasteImage = await import("../imagePaste");
-    const place = vi
-      .spyOn(pasteImage.imagePasteDeps, "placeFromRgba")
-      .mockImplementation(() => "img");
-    clipboard.readClipboardImage.mockResolvedValueOnce({
-      rgba: new Uint8Array(4),
-      width: 1,
-      height: 1,
-    });
+    const place = vi.spyOn(pasteImage.imagePasteDeps, "placeBlobs").mockResolvedValue();
+    clipboard.readClipboardPicture.mockResolvedValueOnce(SCREENSHOT);
     press("v", { meta: true });
     await settle();
     expect(place).toHaveBeenCalledOnce();
@@ -309,7 +298,7 @@ describe("handleCanvasKeyDown", () => {
 
   it("does not read the label the app wrote on copy as Mermaid — a shape named 'pie chart' pastes as a shape", async () => {
     useDiagramStore.getState().updateNodeData("a", { label: "pie chart" });
-    clipboard.hasClipboardImage.mockResolvedValueOnce(true);
+    clipboard.hasClipboardPicture.mockResolvedValueOnce(true);
     press("c", { meta: true });
     await settle();
     expect(clipboard.writeClipboardText).toHaveBeenLastCalledWith("pie chart");
@@ -325,7 +314,7 @@ describe("handleCanvasKeyDown", () => {
   it("⌘V right after ⌘C reads after the copy overwrote the clipboard — so old Mermaid isn't drawn", async () => {
     clipboard.writeClipboardText.mockClear();
     // the copy's look at the clipboard is slow (IPC); the paste comes before it ends
-    clipboard.hasClipboardImage.mockImplementationOnce(
+    clipboard.hasClipboardPicture.mockImplementationOnce(
       () => new Promise((r) => setTimeout(() => r(true), 30)),
     );
     const paste = vi.spyOn(useDiagramStore.getState(), "paste");

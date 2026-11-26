@@ -1,52 +1,37 @@
-import { readImage, readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { invoke } from "@tauri-apps/api/core";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
 
 /**
- * The OS clipboard, through the Tauri plugin (#8).
- *
- * Read through Rust rather than a DOM `paste` event: WebKit only dispatches
- * one when an editable element has focus, and the canvas is not editable.
- * Outside Tauri (`pnpm dev`) the plugin is absent and these quietly do nothing.
+ * The OS clipboard, through Rust rather than DOM clipboard events (#8): WebKit
+ * only dispatches `paste` when an editable element has focus, and the canvas
+ * is not editable. Outside Tauri (`pnpm dev`) these quietly do nothing.
  */
-type ClipboardImage = Awaited<ReturnType<typeof readImage>>;
 
 /**
- * Every `readImage()` leaves a Rust resource holding the picture's full RGBA
- * (a Retina screenshot is ~30 MB) until it is closed — nothing collects it
- * otherwise, short of closing the window (#155). Closing must not fail
- * the read it follows.
+ * A picture on the clipboard, as a file (`clipboard_picture.rs`): picture
+ * files copied in Finder or Explorer, or a picture's own bytes — never its
+ * raw pixels, which take seconds to cross for a full-screen screenshot.
  */
-const release = async (image: ClipboardImage | undefined): Promise<void> => {
-  await image?.close().catch(() => undefined);
-};
+export type ClipboardPicture =
+  | { kind: "files"; paths: string[] }
+  | { kind: "data"; mime: string; base64: string };
 
-export const readClipboardImage = async (): Promise<{
-  rgba: Uint8Array;
-  width: number;
-  height: number;
-} | null> => {
-  let image: ClipboardImage | undefined;
+/** the picture ⌘V would paste, or null when the clipboard holds none */
+export const readClipboardPicture = async (): Promise<ClipboardPicture | null> => {
   try {
-    image = await readImage();
-    const { width, height } = await image.size();
-    return { rgba: await image.rgba(), width, height };
+    return await invoke<ClipboardPicture | null>("read_clipboard_picture");
   } catch {
-    // no picture on the clipboard (text, files, nothing) or no Tauri
+    // no Tauri
     return null;
-  } finally {
-    await release(image);
   }
 };
 
-/** whether a picture is on the clipboard — without carrying its pixels over (#155) */
-export const hasClipboardImage = async (): Promise<boolean> => {
-  let image: ClipboardImage | undefined;
+/** whether a picture is on the clipboard — without carrying it over */
+export const hasClipboardPicture = async (): Promise<boolean> => {
   try {
-    image = await readImage();
-    return true;
+    return await invoke<boolean>("clipboard_has_picture");
   } catch {
     return false;
-  } finally {
-    await release(image);
   }
 };
 

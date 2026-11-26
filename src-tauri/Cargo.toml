@@ -41,6 +41,17 @@ notify-debouncer-mini = "0.7"
 # Names are compared in composed form, as macOS opens one file by either form
 unicode-normalization = "0.1"
 
+# ⌘V reads a picture off the clipboard as the file it was copied as
+# (clipboard_picture.rs). The versions the clipboard plugin already uses
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSArray", "NSData", "NSString", "NSURL"] }
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSPasteboardItem"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+arboard = "3.6"
+png = "0.18"
+
 # The window frame off macOS (window_frame.rs): the window menu, Snap layouts
 # on Maximize, the webview's browser keys. The versions Tauri already uses
 [target.'cfg(windows)'.dependencies]

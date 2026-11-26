@@ -1,20 +1,30 @@
 import { useDiagramStore } from "../../shared/lib/store";
-import { readClipboardImage, readClipboardText } from "../../shared/lib/systemClipboard";
-import { toastError } from "../../shared/lib/toastStore";
+import {
+  type ClipboardPicture,
+  readClipboardPicture,
+  readClipboardText,
+} from "../../shared/lib/systemClipboard";
 import { pasteMermaid } from "../mermaid/import/pasteMermaid";
 import { mermaidSource } from "../mermaid/mermaidSource";
 import { pastePoint } from "./canvasViewport";
-import { imageFromRgba, placeImage, watchDocument } from "./imageInput";
+import { blobFromBase64, pastedImagePaths, readImageFile } from "./imageFiles";
+import { watchDocument } from "./imageInput";
+import { placeBlobs } from "./useImageFileDrop";
 
-/** seams for tests — the canvas work needs a real `<canvas>`, which jsdom lacks */
-export const imagePasteDeps = {
-  placeFromRgba: (
-    rgba: Uint8Array,
-    width: number,
-    height: number,
-    at: { x: number; y: number },
-  ): string => placeImage(imageFromRgba(rgba, width, height), at),
-};
+/** seams for tests — decoding needs `createImageBitmap` and a real `<canvas>`, which jsdom lacks */
+export const imagePasteDeps = { placeBlobs };
+
+const LEFT_BEFORE_PASTE = "You left the diagram before it was pasted — paste again";
+
+/**
+ * Each copied picture file, read as a drop reads it — copied files that hold
+ * no picture say so and paste nothing, never their icons — or the one
+ * picture copied as data.
+ */
+const pictureLoads = (picture: ClipboardPicture): (() => Promise<Blob>)[] =>
+  picture.kind === "files"
+    ? pastedImagePaths(picture.paths).map((path) => () => readImageFile(path))
+    : [async () => blobFromBase64(picture.base64, picture.mime)];
 
 /** the labels a canvas copy last wrote to the system clipboard (`canvasKeymap`) */
 let ownText: string | null = null;
@@ -34,26 +44,23 @@ export const awaitBeforePaste = (write: Promise<void>): void => {
 
 /**
  * ⌘V on the canvas (#8): a picture on the system clipboard becomes an image
- * node under the pointer (`pastePoint`, #200); Mermaid code there is drawn (#200);
- * otherwise the in-app shape buffer pastes as before. The clipboard wins
- * because it holds the newer copy — copying shapes writes their labels over a
- * picture or Mermaid code (`canvasKeymap`), and those labels, even one that
- * reads as Mermaid, paste the shapes.
+ * node under the pointer (`pastePoint`, #200) — picture files copied in
+ * Finder or Explorer one each, a step apart as when dropped; Mermaid code
+ * there is drawn (#200); otherwise the in-app shape buffer pastes as before.
+ * The clipboard wins because it holds the newer copy — copying shapes writes
+ * their labels over a picture or Mermaid code (`canvasKeymap`), and those
+ * labels, even one that reads as Mermaid, paste the shapes.
  *
  * Reading the clipboard awaits Rust: whatever it holds goes to the diagram ⌘V
  * was pressed in, or nowhere (#218).
  */
 export const pasteOntoCanvas = async (): Promise<void> => {
-  const pressedIn = watchDocument("You left the diagram before it was pasted — paste again");
+  const pressedIn = watchDocument(LEFT_BEFORE_PASTE);
   await pendingWrite;
-  const image = await readClipboardImage();
+  const picture = await readClipboardPicture();
   if (pressedIn.left()) return;
-  if (image) {
-    try {
-      imagePasteDeps.placeFromRgba(image.rgba, image.width, image.height, pastePoint());
-    } catch (error) {
-      toastError(error);
-    }
+  if (picture) {
+    await imagePasteDeps.placeBlobs(pictureLoads(picture), pastePoint(), LEFT_BEFORE_PASTE);
     return;
   }
   const text = await readClipboardText();
