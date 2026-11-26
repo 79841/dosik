@@ -239,6 +239,19 @@ describe("a text file too long to go inside the message", () => {
   });
 });
 
+describe("what a sent message keeps for its chips", () => {
+  it("the selection it carried, as the composer's chip read it", async () => {
+    useDiagramStore.setState({ nodes: [{ ...makeNode({ id: "a" }), selected: true }] });
+    await sendChatTurn("this one");
+    expect(useChatStore.getState().messages[0]?.selection).toBe("1 node");
+  });
+
+  it("no selection, nothing kept", async () => {
+    await sendChatTurn("hi");
+    expect(useChatStore.getState().messages[0]).not.toHaveProperty("selection");
+  });
+});
+
 describe("the composer's files in the store", () => {
   it("adds, removes and clears", () => {
     const store = useChatStore.getState();

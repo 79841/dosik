@@ -9,7 +9,7 @@ import { stageForCli } from "./cliFiles";
 import { sendWithClaudeCli } from "./cliProvider";
 import { sendWithCodexCli } from "./codexProvider";
 import { sendWithOpenAi } from "./openaiProvider";
-import { withSelectionContext } from "./selectionContext";
+import { selectionChipLabel, summarizeSelection, withSelectionContext } from "./selectionContext";
 import { type AiVendor, activeAuth, activeKey, activeModel } from "./settings";
 import { nameOnly, tooLongToInline, withAttachmentText } from "./turnContent";
 
@@ -87,7 +87,13 @@ export const sendChatTurn = async (rawText: string): Promise<SendResult> => {
   // files) so a later turn still sees which shapes an earlier "this" pointed
   // at (#55) and what was attached
   const payload = withAttachmentText(selection, attachments);
-  const sent = store.addMessage("user", text, payload, attachments);
+  // what went with it stays on the message, for its chips (#277)
+  const summary = summarizeSelection(diagram.nodes, diagram.edges);
+  const sent = store.addMessage("user", text, {
+    payload,
+    attachments,
+    ...(summary ? { selection: selectionChipLabel(summary) } : {}),
+  });
   store.clearAttachments();
   if (auth === "api-key") {
     const unread = nameOnly(attachments);

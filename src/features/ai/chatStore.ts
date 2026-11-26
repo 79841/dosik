@@ -36,6 +36,8 @@ export interface ChatMessage {
   attachments?: ChatAttachment[];
   /** the provider refused this turn: its files are no longer replayed */
   filesFailed?: true;
+  /** the canvas selection a user message carried, as its chip read then (#277) */
+  selection?: string;
 }
 
 /** what the right panel shows — the chat or the Mermaid preview (#194) */
@@ -82,8 +84,7 @@ interface ChatState {
   addMessage: (
     role: ChatRole,
     text: string,
-    payload?: string,
-    attachments?: ChatAttachment[],
+    extra?: Pick<ChatMessage, "payload" | "attachments" | "selection">,
   ) => string;
   /**
    * A turn the provider refused: its files leave the replay (and `payload`
@@ -138,7 +139,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
   setMermaidMode: (mermaidMode) => set({ mermaidMode }),
   setBusy: (busy) => set({ busy }),
-  addMessage: (role, text, payload, attachments) => {
+  addMessage: (role, text, extra = {}) => {
     const id = nanoid(6);
     set((s) => ({
       messages: [
@@ -147,8 +148,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
           id,
           role,
           text,
-          ...(payload ? { payload } : {}),
-          ...(attachments?.length ? { attachments } : {}),
+          ...(extra.payload ? { payload: extra.payload } : {}),
+          ...(extra.attachments?.length ? { attachments: extra.attachments } : {}),
+          ...(extra.selection ? { selection: extra.selection } : {}),
         },
       ],
     }));

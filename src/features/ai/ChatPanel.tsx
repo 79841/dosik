@@ -33,7 +33,7 @@ import {
   roomFor,
 } from "./attachments";
 import { sendChatTurn } from "./chatActions";
-import { panelToggleId, SIDE_PANEL_ID, useChatStore } from "./chatStore";
+import { type ChatMessage, panelToggleId, SIDE_PANEL_ID, useChatStore } from "./chatStore";
 import { ModelPicker } from "./ModelPicker";
 import { chatRoom, clampChatWidth, MAX_CHAT_WIDTH, MIN_CHAT_WIDTH } from "./panelWidth";
 import { selectionChipLabel, summarizeSelection } from "./selectionContext";
@@ -56,21 +56,52 @@ const SelectionChip = () => {
   const summary = useMemo(() => summarizeSelection(nodes, edges), [nodes, edges]);
 
   if (!summary) return null;
-  return (
-    // the design's chip: 22 tall on the line tint, inside the composer (#219 D15)
-    <div className="flex min-w-0">
-      <span className="flex h-[22px] min-w-0 items-center gap-1 rounded-(--radius-control) bg-line pl-[7px] pr-[3px] text-[10.5px] font-medium text-ink">
-        <span className="truncate">Selection · {selectionChipLabel(summary)}</span>
+  return <SelectionChipView label={selectionChipLabel(summary)} onClear={clearSelection} />;
+};
+
+/**
+ * The selection as a chip — in the composer with its x, and on a sent
+ * message, without one, as the selection that message carried (#277).
+ */
+const SelectionChipView = ({ label, onClear }: { label: string; onClear?: () => void }) => (
+  // the design's chip: 22 tall on the line tint, inside the composer (#219 D15)
+  <div className="flex min-w-0">
+    <span
+      className={`flex h-[22px] min-w-0 items-center gap-1 rounded-(--radius-control) bg-line text-[10.5px] font-medium text-ink ${
+        onClear ? "pr-[3px] pl-[7px]" : "px-[7px]"
+      }`}
+    >
+      <span className="truncate">Selection · {label}</span>
+      {onClear ? (
         <button
           type="button"
           title="Clear selection"
-          onClick={clearSelection}
+          onClick={onClear}
           aria-label="Clear selection"
           className={`flex h-4 w-4 flex-none items-center justify-center rounded-[3px] text-icon transition-colors hover:bg-hover ${FOCUS_RING}`}
         >
           <X size={11} strokeWidth={2.2} aria-hidden="true" />
         </button>
-      </span>
+      ) : null}
+    </span>
+  </div>
+);
+
+/**
+ * What went with a sent message (#277, Chat-States 6): the selection it
+ * carried, then its files — as the composer showed them, without the x. A
+ * selected image node's picture rides along unseen here: the selection chip
+ * already stands for it.
+ */
+const SentChips = ({ message }: { message: ChatMessage }) => {
+  const files = (message.attachments ?? []).filter((a) => !a.fromNode);
+  if (!message.selection && files.length === 0) return null;
+  return (
+    <div className="flex flex-wrap justify-end gap-1">
+      {message.selection ? <SelectionChipView label={message.selection} /> : null}
+      {files.map((a) => (
+        <AttachmentChip key={a.id} attachment={a} />
+      ))}
     </div>
   );
 };
@@ -503,18 +534,23 @@ export const ChatPanel = () => {
                   </p>
                 );
               }
-              // a message of files alone shows no empty bubble
-              if (m.role === "user" && !m.text) return null;
+              if (m.role === "user") {
+                const bubble = m.text ? (
+                  // the design's bubble: its own corner tucked in toward the panel edge
+                  <div className="ml-auto max-w-full whitespace-pre-wrap rounded-[10px_10px_3px_10px] bg-hover px-2.5 py-2">
+                    {m.text}
+                  </div>
+                ) : null;
+                return (
+                  <div key={m.id} className="ml-auto flex max-w-[75%] flex-col items-end gap-1">
+                    <SentChips message={m} />
+                    {bubble}
+                  </div>
+                );
+              }
+              // an answer: plain text, no bubble
               return (
-                <div
-                  key={m.id}
-                  className={`whitespace-pre-wrap ${
-                    m.role === "user"
-                      ? // the design's bubble: its own corner tucked in toward the panel edge
-                        "ml-auto max-w-[75%] rounded-[10px_10px_3px_10px] bg-hover px-2.5 py-2"
-                      : "mr-auto max-w-full"
-                  }`}
-                >
+                <div key={m.id} className="mr-auto max-w-full whitespace-pre-wrap">
                   {m.text}
                 </div>
               );

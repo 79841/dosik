@@ -257,3 +257,48 @@ describe("the line about a file that went by name only", () => {
     expect(line.querySelector("svg")).not.toBeNull();
   });
 });
+
+describe("what went with a sent message", () => {
+  const PICTURE: ChatAttachment = {
+    ...NOTES,
+    id: "p1",
+    name: "img1.png",
+    kind: "image",
+    mime: "image/png",
+    fromNode: "img1",
+  };
+
+  it("shows the selection it carried and its files as chips above the bubble, without an x", () => {
+    act(() =>
+      useChatStore.getState().addMessage("user", "use these", {
+        attachments: [NOTES, PICTURE],
+        selection: "1 node",
+      }),
+    );
+    render(<ChatPanel />);
+    const bubble = screen.getByText("use these");
+    const message = bubble.parentElement!;
+    expect(message).toHaveClass("ml-auto", "flex-col", "items-end");
+    const chips = message.firstElementChild!;
+    expect(chips).toHaveTextContent("Selection · 1 node");
+    expect(chips).toHaveTextContent("notes.md");
+    // the selected image node's picture: the selection chip stands for it
+    expect(chips).not.toHaveTextContent("img1.png");
+    expect(screen.queryByRole("button", { name: /Remove/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clear selection" })).toBeNull();
+  });
+
+  it("a message of files alone is its chips — no empty bubble", () => {
+    act(() => useChatStore.getState().addMessage("user", "", { attachments: [NOTES] }));
+    render(<ChatPanel />);
+    expect(screen.getByText("notes.md")).toBeInTheDocument();
+    expect(document.querySelector(".bg-hover.rounded-\\[10px_10px_3px_10px\\]")).toBeNull();
+  });
+
+  it("a plain message stays a plain bubble", () => {
+    act(() => useChatStore.getState().addMessage("user", "hello"));
+    render(<ChatPanel />);
+    expect(screen.getByText("hello")).toHaveClass("bg-hover");
+    expect(screen.getByText("hello").previousElementSibling).toBeNull();
+  });
+});
