@@ -4,13 +4,12 @@ import { type RefObject, useState } from "react";
 import { focusStillWith } from "../../shared/lib/focusGuard";
 import { Menu, type MenuItem } from "../../shared/ui/Menu";
 import { useAppStore } from "../library/appStore";
-import { type FolderMeta, itemKey } from "../library/libraryApi";
+import type { FolderMeta } from "../library/libraryApi";
 import { newFolder } from "../library/libraryActions";
 import { canHoldFolders } from "../library/libraryTree";
 import { viewInHome } from "../library/navigation";
 import { screenStamp, stillOnScreen } from "../library/screenStamp";
 import { useHomeMode } from "./homeMode";
-import { useHomeSelection } from "./homeSelection";
 import { MermaidDialog } from "./MermaidDialog";
 import { startDiagram } from "./newDiagram";
 import { START_OPTIONS } from "./startOptions";
@@ -28,8 +27,8 @@ export const inSheet = (from: Element | null | undefined): (() => boolean) => {
 /**
  * New folder from Home, inside `parent` (#231 D8 — on Home it replaces #229
  * D11's "go into it and name it in the header"): once it is made, its card —
- * first in `parent`'s view (#230) — is selected and its name line becomes
- * the name field; the request waits in the app store for that card — on the
+ * first in `parent`'s view (#230) — opens its name in the caption bar as
+ * the name field, which takes the focus; the request waits in the app store for that card — on the
  * board too, where the card is in its frame (#231 D13), unless the new
  * folder went into a collapsed project's stack, where no field opens (the
  * board drops the request). Home stays where it is. `enter`: `parent` is
@@ -57,7 +56,6 @@ export const newFolderFromHome = (
       return;
     }
     if (enter) viewInHome({ kind: "folder", folder: parent }, focusHeading);
-    useHomeSelection.getState().select(parent, itemKey("folder", id));
     // stamped with the screen it is for — after `enter`, the folder's view
     useAppStore.getState().requestFolderRename(id);
   });

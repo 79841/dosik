@@ -16,7 +16,6 @@ import { resetPreviewCacheForTests } from "../diagramPreview";
 import { FolderView } from "../FolderView";
 import { cardGrid } from "../homeGrid";
 import { useHomeMode } from "../homeMode";
-import { useHomeSelection } from "../homeSelection";
 import { likeRust } from "../../../test/rustAnswers";
 
 vi.mock("../../../shared/lib/systemClipboard", () => ({
@@ -62,6 +61,13 @@ const card = (title: string) => screen.getByRole("article", { name: title });
 /** the dashed card's name where a folder can still go (#231 D9) */
 const NEW_CARD =
   "New diagram, Blank, Flowchart, Sequence, Class, ERD or paste Mermaid · or a new folder";
+/** the view Home shows, as Home picks it: the folder the app's Home view names */
+const Home265 = () => {
+  const folders = useLibraryStore((s) => s.folders)!;
+  const view = useAppStore((s) => s.homeView);
+  const id = view.kind === "folder" ? view.folder : "pay";
+  return <FolderView key={id} folder={findFolder(folders, id)!.folder} folders={folders} />;
+};
 /** the view as Home draws it: the folder and the listing from the store, as they change */
 const Live = ({ id }: { id: string }) => {
   const folders = useLibraryStore((s) => s.folders)!;
@@ -70,7 +76,6 @@ const Live = ({ id }: { id: string }) => {
 
 describe("project view (#220 D11, T27)", () => {
   beforeEach(() => {
-    useHomeSelection.getState().clear();
     useHomeMode.setState({ size: null });
     resetAutosaveForTests();
     resetPreviewCacheForTests();
@@ -134,61 +139,59 @@ describe("project view (#220 D11, T27)", () => {
     expect(list.className).not.toContain(cardGrid("medium").split(" ").at(-1)!);
   });
 
-  it("pressing a card selects it — view unchanged, pressing another card moves the selection (D7, T14)", async () => {
+  it("one click on a card opens it — a diagram in its tab, no selection kept (#265)", async () => {
     const user = userEvent.setup();
     renderProject("pay");
-    const focus = useAppStore.getState().homeFocus;
-    await user.click(mainOf("Checkout service"));
-    expect(mainOf("Checkout service")).toHaveAttribute("aria-current", "true");
-    expect(card("Checkout service")).toHaveClass("ring-[1.5px]", "ring-ink");
-    expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "pay" });
-    expect(useAppStore.getState().homeFocus).toBe(focus);
     await user.click(mainOf("Ledger schema"));
-    expect(mainOf("Ledger schema")).toHaveAttribute("aria-current", "true");
-    expect(mainOf("Checkout service")).not.toHaveAttribute("aria-current");
-    // and a double click opens it in a tab
-    await user.dblClick(mainOf("Ledger schema"));
     await waitFor(() => expect(useDiagramStore.getState().projectId).toBe("le"));
+    expect(useAppStore.getState().view).toBe("editor");
+    expect(screen.queryByRole("button", { current: true })).toBeNull();
+    expect(card("Ledger schema").className).not.toMatch(/ring-\[1\.5px\]/);
   });
 
-  it("one Tab stop — the selected card, else the first card; the dashed card is separate (T15)", () => {
-    const { unmount } = renderProject("pay");
+  it("one Tab stop — the first card, then the card the focus went to last; the dashed card is separate (T15)", () => {
+    renderProject("pay");
     const stops = () =>
       within(screen.getByRole("list", { name: "Items in Payments" }))
         .getAllByRole("button")
         .filter((b) => b.tabIndex === 0)
         .map((b) => b.getAttribute("aria-label"));
     expect(stops()).toEqual(["Checkout service, diagram, edited 2 min ago", NEW_CARD]);
-    unmount();
-    useHomeSelection.getState().select("pay", "diagram:le");
-    renderProject("pay");
+    act(() => mainOf("Ledger schema").focus());
     expect(stops()).toEqual(["Ledger schema, diagram, edited 1 hour ago", NEW_CARD]);
   });
 
-  it("a selection in another folder draws no ring in this view", () => {
-    useHomeSelection.getState().select("empty", "diagram:le");
-    renderProject("pay");
-    expect(screen.queryByRole("button", { current: true })).toBeNull();
+  it("the Tab stop goes back to the first card when the card that had it leaves the view", () => {
+    const { rerender } = renderProject("pay");
+    act(() => mainOf("Ledger schema").focus());
+    expect(mainOf("Ledger schema")).toHaveAttribute("tabindex", "0");
+    const gone = library();
+    gone[0]!.diagrams = gone[0]!.diagrams.filter((d) => d.id !== "le");
+    act(() => useLibraryStore.setState({ folders: gone }));
+    rerender(<FolderView folder={folder("pay")} folders={useLibraryStore.getState().folders!} />);
+    expect(mainOf("Checkout service")).toHaveAttribute("tabindex", "0");
+    expect(mainOf("Broken")).toHaveAttribute("tabindex", "-1");
   });
 
-  it("←→ — focus and selection move together to the previous·next card, stopping at the ends; Home·End (T15)", async () => {
+  it("←→ — the focus and the Tab stop move to the previous·next card, stopping at the ends; Home·End (T15)", async () => {
     const user = userEvent.setup();
     renderProject("pay");
     act(() => mainOf("Checkout service").focus());
     await user.keyboard("{ArrowRight}");
     expect(mainOf("Ledger schema")).toHaveFocus();
-    expect(mainOf("Ledger schema")).toHaveAttribute("aria-current", "true");
     expect(mainOf("Ledger schema")).toHaveAttribute("tabindex", "0");
+    expect(mainOf("Checkout service")).toHaveAttribute("tabindex", "-1");
     await user.keyboard("{ArrowRight}{ArrowRight}");
     expect(mainOf("Broken")).toHaveFocus();
     await user.keyboard("{Home}");
     expect(mainOf("Checkout service")).toHaveFocus();
-    expect(useHomeSelection.getState().key).toBe("diagram:co");
     await user.keyboard("{ArrowLeft}");
     expect(mainOf("Checkout service")).toHaveFocus();
     await user.keyboard("{End}");
     expect(mainOf("Broken")).toHaveFocus();
-    expect(useHomeSelection.getState()).toMatchObject({ folder: "pay", key: "diagram:br" });
+    expect(mainOf("Broken")).toHaveAttribute("tabindex", "0");
+    // the arrows only move — nothing opened
+    expect(useAppStore.getState().view).toBe("home");
   });
 
   it("↑↓ — by the grid's column count (grid-template-columns at that moment) (T15)", async () => {
@@ -204,7 +207,6 @@ describe("project view (#220 D11, T27)", () => {
     expect(mainOf("Broken")).toHaveFocus();
     await user.keyboard("{ArrowUp}");
     expect(mainOf("Checkout service")).toHaveFocus();
-    expect(useHomeSelection.getState().key).toBe("diagram:co");
   });
 
   it("↑↓ — three cards in 5 columns (including auto-fill's empty tracks) are one row, so it stays put (#236 R5)", async () => {
@@ -221,32 +223,26 @@ describe("project view (#220 D11, T27)", () => {
     expect(mainOf("Broken")).toHaveFocus();
   });
 
-  it("Escape — clears the selection and keeps focus; not consumed when nothing is selected (T15)", async () => {
-    const user = userEvent.setup();
+  it("Escape is not the grid's — nothing to let go, the key goes on (#265)", () => {
     renderProject("pay");
-    await user.click(mainOf("Ledger schema"));
-    const pressEscape = () => fireEvent.keyDown(mainOf("Ledger schema"), { key: "Escape" });
-    expect(pressEscape()).toBe(false);
-    expect(useHomeSelection.getState().key).toBeNull();
-    expect(mainOf("Ledger schema")).not.toHaveAttribute("aria-current");
+    act(() => mainOf("Ledger schema").focus());
+    expect(fireEvent.keyDown(mainOf("Ledger schema"), { key: "Escape" })).toBe(true);
     expect(mainOf("Ledger schema")).toHaveFocus();
-    expect(pressEscape()).toBe(true);
   });
 
-  it("the grid does not take arrows·Escape inside a card menu", async () => {
-    const user = userEvent.setup();
+  it("the grid does not take arrows inside a card menu", () => {
     renderProject("pay");
-    await user.click(mainOf("Ledger schema"));
+    act(() => mainOf("Ledger schema").focus());
     fireEvent.keyDown(mainOf("Ledger schema"), { key: "F10", shiftKey: true });
     const menu = screen.getByRole("menu", { name: "More for Ledger schema" });
     fireEvent.keyDown(menu, { key: "ArrowDown" });
-    expect(useHomeSelection.getState().key).toBe("diagram:le");
+    expect(mainOf("Broken")).not.toHaveFocus();
+    expect(mainOf("Ledger schema")).toHaveAttribute("tabindex", "0");
     fireEvent.keyDown(menu, { key: "Escape" });
-    expect(useHomeSelection.getState().key).toBe("diagram:le");
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
-  it("card Delete — view unchanged, header focus, no selection left (#231 T7)", async () => {
+  it("card Delete — view unchanged, header focus (#231 T7)", async () => {
     const user = userEvent.setup();
     mockedAsk.mockResolvedValue(true);
     const gone = library();
@@ -256,7 +252,6 @@ describe("project view (#220 D11, T27)", () => {
     );
     const { rerender } = renderProject("pay");
     const focus = useAppStore.getState().homeFocus;
-    await user.click(mainOf("Ledger schema"));
     await user.click(within(card("Ledger schema")).getByRole("button", { name: /^More/ }));
     await user.click(screen.getByRole("menuitem", { name: "Delete" }));
     await waitFor(() => expect(calls("delete_project")[0]![1]).toEqual({ id: "le" }));
@@ -264,7 +259,6 @@ describe("project view (#220 D11, T27)", () => {
     expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "pay" });
     rerender(<FolderView folder={folder("pay")} folders={useLibraryStore.getState().folders!} />);
     expect(screen.queryByRole("article", { name: "Ledger schema" })).toBeNull();
-    expect(screen.queryByRole("button", { current: true })).toBeNull();
   });
 
   it("dashed card → New menu → in this project", async () => {
@@ -340,7 +334,6 @@ describe("nested folder view (#229 D5, T39)", () => {
   let listing: FolderMeta[] = [];
 
   beforeEach(() => {
-    useHomeSelection.getState().clear();
     resetAutosaveForTests();
     resetPreviewCacheForTests();
     resetTabsForTests();
@@ -407,7 +400,7 @@ describe("nested folder view (#229 D5, T39)", () => {
     expect(screen.getByRole("button", { name: "Checkout, folder, 3 items" })).toBeInTheDocument();
   });
 
-  it("dashed card New folder — view unchanged, the new card is first and selected, its name row is the name field (#231 D8, T20)", async () => {
+  it("dashed card New folder — view unchanged, the new card is first, its caption bar's name is the name field (#231 D8, T20)", async () => {
     const user = userEvent.setup();
     mockedInvoke.mockImplementation(
       likeRust(async (cmd, args) => {
@@ -436,7 +429,8 @@ describe("nested folder view (#229 D5, T39)", () => {
     const list = screen.getByRole("list", { name: "Items in Checkout" });
     const first = within(list).getAllByRole("article")[0]!;
     expect(first).toContainElement(input);
-    expect(first).toHaveClass("ring-[1.5px]", "ring-ink");
+    expect(first.querySelector("[data-caption-bar]")).toContainElement(input);
+    expect(first.className).not.toMatch(/ring-\[1\.5px\]/);
     expect(input).toHaveFocus();
     expect(input).toHaveValue("New folder");
     expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "chk" });
@@ -447,7 +441,29 @@ describe("nested folder view (#229 D5, T39)", () => {
     await waitFor(() => expect(calls("rename_folder")[0]![1]).toEqual({ id, name: "Specs" }));
     const main = within(first).getByRole("button", { name: /^New folder, folder, 0 items$/ });
     await waitFor(() => expect(main).toHaveFocus());
-    expect(main).toHaveAttribute("aria-current", "true");
+    expect(main).toHaveAttribute("tabindex", "0");
+    expect(main).not.toHaveAttribute("aria-current");
+  });
+
+  it("a double click on a folder card enters it once — its second click on the new view's dashed card opens no menu", () => {
+    showHomeTab({ kind: "folder", folder: "pay" });
+    render(<Home265 />);
+    const archive = screen.getByRole("button", { name: /^Checkout, folder/ });
+    // the first click: into Checkout, whose view draws its own cards in the same places
+    fireEvent.mouseDown(archive, { detail: 1 });
+    fireEvent.click(archive, { detail: 1 });
+    expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "chk" });
+    // the second press of the same double click lands on whatever is there now
+    const under = screen.getByRole("button", { name: NEW_CARD });
+    fireEvent.mouseDown(under, { detail: 2 });
+    fireEvent.click(under, { detail: 2 });
+    fireEvent.doubleClick(under, { detail: 2 });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "chk" });
+    // a new click is a click again
+    fireEvent.mouseDown(under, { detail: 1 });
+    fireEvent.click(under, { detail: 1 });
+    expect(screen.getByRole("menu")).toBeInTheDocument();
   });
 
   it("after card Move to…, focus goes to a remaining neighbor card — not dropped to body (#229)", async () => {
@@ -462,12 +478,9 @@ describe("nested folder view (#229 D5, T39)", () => {
         .querySelector("[data-row]")!,
     );
     await waitFor(() => expect(calls("move_project")).toHaveLength(1));
-    // the card after it: Archive (Flows · Order flow · Archive) — focus and selection go together
-    await waitFor(() =>
-      expect(document.activeElement).toBe(
-        screen.getByRole("button", { name: "Archive, folder, 0 items" }),
-      ),
-    );
-    expect(useHomeSelection.getState()).toMatchObject({ folder: "chk", key: "folder:arc" });
+    // the card after it: Archive (Flows · Order flow · Archive) — the focus and the Tab stop go together
+    const archive = () => screen.getByRole("button", { name: "Archive, folder, 0 items" });
+    await waitFor(() => expect(document.activeElement).toBe(archive()));
+    expect(archive()).toHaveAttribute("tabindex", "0");
   });
 });

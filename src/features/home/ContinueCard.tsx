@@ -1,17 +1,19 @@
 import { ArrowRight } from "lucide-react";
-import { useId } from "react";
+import { type MouseEvent, useId } from "react";
 
+import { clickOpens } from "../../shared/lib/doubleClickGuard";
 import { ProjectBadge } from "../../shared/ui/ProjectBadge";
 import { openFromLibrary } from "../library/navigation";
 import { relativeTime } from "../library/relativeTime";
 import { DiagramThumbnail } from "./DiagramThumbnail";
 import { type DiagramEntry, pathNames } from "./homeModel";
 import { DOT_GRID_16, PathText } from "./homeParts";
-import { INK_FILL } from "./homeStyles";
+import { INK_FILL, TILE_LINE } from "./homeStyles";
 
 /**
  * CONTINUE (#220 D9): the diagram edited last — its picture, where it lives
- * (#231 D10, `Main`), title and edit, and Resume. A diagram open in a tab is
+ * (#231 D10, `Main`), title and edit, and Resume. A hairline round it, no
+ * shadow (card C, #265). A diagram open in a tab is
  * only switched to. The well is Resume for the pointer; the keyboard has the
  * button.
  */
@@ -20,11 +22,14 @@ export const ContinueCard = ({ entry }: { entry: DiagramEntry }) => {
   const { diagram } = entry;
   const { title } = diagram;
   const [project] = entry.path;
-  const resume = () => void openFromLibrary(diagram.id);
+  // one open per double click — the rest would land on the tab it opened
+  const resume = (e: MouseEvent) => {
+    if (clickOpens(e)) void openFromLibrary(diagram.id);
+  };
   return (
     <article
       aria-labelledby={titleId}
-      className="flex min-h-[280px] flex-wrap gap-5 rounded-xl bg-surface p-2.5 shadow-raised"
+      className={`flex min-h-[280px] flex-wrap gap-5 rounded-xl bg-surface p-2.5 ${TILE_LINE}`}
     >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: the keyboard resumes with the Resume button — the well is no tab stop of its own (D9) */}
       <div

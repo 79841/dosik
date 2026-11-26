@@ -15,7 +15,7 @@ import { openDocument, resetTabsForTests, showHomeTab } from "../../library/tabA
 import { resetAutosaveForTests } from "../../library/useAutosave";
 import { Dashboard } from "../Dashboard";
 import { resetPreviewCacheForTests } from "../diagramPreview";
-import { CARD_SIZES, cardGrid, RECENT_WIDE_AT, recentShowClass } from "../homeGrid";
+import { CARD_SIZES, cardGrid, recentShowClass } from "../homeGrid";
 import { useHomeMode } from "../homeMode";
 import { useStartingStore } from "../newDiagram";
 import { likeRust } from "../../../test/rustAnswers";
@@ -60,8 +60,8 @@ const library = (): FolderMeta[] => [
 
 const book = (title: string): DiagramDoc => ({ version: 1, title, nodes: [], edges: [] });
 
-/** a recent card's meta line — "{path} · {time}" (#231 D10) */
-const metaOf = (card: HTMLElement) => card.lastElementChild as HTMLElement;
+/** a recent card's meta line — "{path} · {time}" (#231 D10), first in its caption block (#265) */
+const metaOf = (card: HTMLElement) => card.lastElementChild!.firstElementChild as HTMLElement;
 /** the Continue card's path chip, found by its first name */
 const chipOf = (card: HTMLElement, first: string) =>
   within(card).getByText(first).parentElement as HTMLElement;
@@ -173,6 +173,62 @@ describe("Home dashboard (#220 D5·D6·D9·D10, T24)", () => {
     );
   });
 
+  it("card C — no shadow on the dashboard: START tiles and Continue have a hairline, Blank none, Recent cards a darker line and a caption block (#265)", () => {
+    const { container } = render(<Dashboard />);
+    expect(container.innerHTML).not.toMatch(/shadow-raised|shadow-lifted/);
+    // the darker line is the cards' (Recent); the START tiles and Continue keep line-strong
+    const tileLine = ["outline-[0.5px]", "-outline-offset-[0.5px]", "outline-line-strong"];
+    const cardLine = ["outline-[0.5px]", "-outline-offset-[0.5px]", "outline-edge"];
+    // the focus ring of a lined card is a shadow round its line, not its outline — and in
+    // high contrast, where shadows go, the outline thickens instead
+    const ring = [
+      "focus-visible:shadow-[0_0_0_2px_var(--surface),0_0_0_4px_var(--focus)]",
+      "forced-colors:focus-visible:outline-2",
+    ];
+    for (const name of ["Flowchart", "Sequence", "Class", "ERD", "From Mermaid…, Paste text"]) {
+      const tile = screen.getByRole("button", { name });
+      expect(tile).toHaveClass(...tileLine, ...ring, "hover:outline-edge");
+      expect(tile.className).not.toMatch(/outline-dash/);
+      expect(tile.className).not.toMatch(/(^|\s)(transition|focus-visible:outline-focus)/);
+    }
+    const blank = screen.getByRole("button", { name: "Blank diagram, Empty canvas" });
+    expect(blank).toHaveClass("bg-ink-surface");
+    expect(blank.className).not.toMatch(/outline-line-strong|outline-edge|hover:outline-/);
+    const hero = screen.getByRole("article", { name: "Checkout service" });
+    expect(hero).toHaveClass("rounded-xl", ...tileLine);
+    expect(hero).not.toHaveClass("outline-edge");
+    const recent = within(screen.getByRole("list", { name: "Recent diagrams" })).getByRole(
+      "button",
+      {
+        name: "Open Login sequence in Onboarding",
+      },
+    );
+    expect(recent).toHaveClass(
+      "rounded-lg",
+      "overflow-hidden",
+      ...cardLine,
+      ...ring,
+      "hover:outline-dash",
+    );
+    // the press: in 160ms, out softly in 360ms (HomeCardFx-Fade)
+    expect(recent).toHaveClass(
+      "motion-safe:active:scale-[.99]",
+      "motion-safe:active:[transition-duration:160ms,220ms,160ms]",
+      "motion-safe:[transition:outline-color_160ms_ease-out,box-shadow_220ms_ease-out,scale_360ms_cubic-bezier(0.22,1,0.36,1)]",
+    );
+    expect(recent.className).not.toMatch(
+      /(^|\s)(transition|\[transition|focus-visible:outline-focus)/,
+    );
+    const caption = recent.lastElementChild as HTMLElement;
+    expect(caption).toHaveClass(
+      "border-t-[0.5px]",
+      "border-edge",
+      "group-hover/card:border-dash",
+      "group-hover/card:bg-hover",
+    );
+    expect(caption.querySelector("svg.text-glyph-diagram")).not.toBeNull();
+  });
+
   describe("CONTINUE (D9)", () => {
     it("most recent diagram — path chip, title, 'Edited …', Resume — no page chip (#229 D5)", () => {
       render(<Dashboard />);
@@ -236,33 +292,37 @@ describe("Home dashboard (#220 D5·D6·D9·D10, T24)", () => {
       ]);
       const login = metaOf(list.getByRole("button", { name: "Open Login sequence in Onboarding" }));
       expect(spoken(login)).toBe("Onboarding\u00a0· 10 min ago");
-      // the path line starts with the project's badge, 6 under the title (#236 R4, T15)
-      expect(login).toHaveClass("mt-1.5");
-      expect(login.firstElementChild).toBe(badgeIn(login));
+      // the path line comes first and starts with the project's badge, in the 16px slot the
+      // title's glyph has on the line below — one left edge (#236 R4, #265)
+      expect(login.firstElementChild).toHaveClass("w-4", "flex-none", "justify-center");
+      expect(login.firstElementChild).toContainElement(badgeIn(login));
       expect(badgeIn(login)).toHaveTextContent("O");
-      expect(badgeIn(login)).toHaveClass(`bg-badge-${badgeColour("ob")}-soft`, "mr-[5px]");
+      expect(badgeIn(login)).toHaveClass(`bg-badge-${badgeColour("ob")}-soft`);
       await user.click(list.getByRole("button", { name: "Open Ledger schema in Payments" }));
       await waitFor(() => expect(useDiagramStore.getState().projectId).toBe("le"));
     });
 
-    it("the card cell is a container — well height·title-row date·bottom-row time switch via container query classes at the card's own width threshold (RECENT_WIDE_AT) (#231 D10, jsdom does not measure width)", () => {
-      const wide = `@min-[${RECENT_WIDE_AT}px]:`;
+    it("one shape at every width — under the preview the path and its time, then the glyph and the title, on one left edge (#265, Main)", () => {
       render(<Dashboard />);
       const card = within(screen.getByRole("list", { name: "Recent diagrams" })).getByRole(
         "button",
         { name: "Open Login sequence in Onboarding" },
       );
-      expect(card.parentElement).toHaveClass("@container");
-      const [well, titleRow] = [...card.children] as HTMLElement[];
+      // the cell is no container any more: nothing moves with the card's width
+      expect(card.parentElement).not.toHaveClass("@container");
+      expect(card.innerHTML).not.toMatch(/@min-\[/);
+      const [well, caption] = [...card.children] as HTMLElement[];
       // every card's well is 15:8, whatever its width (#236 R5)
       expect(well).toHaveClass("aspect-[15/8]");
       expect(well.className).not.toMatch(/\bh-\[\d+px\]/);
-      const date = titleRow!.lastElementChild as HTMLElement;
-      expect(date).toHaveTextContent(/^10 min ago$/);
-      expect(date).toHaveClass("hidden", `${wide}block`);
-      const time = metaOf(card).lastElementChild as HTMLElement;
-      expect(time).toHaveTextContent(/^· 10 min ago$/);
-      expect(time).toHaveClass(`${wide}hidden`);
+      const [meta, titleRow] = [...caption!.children] as HTMLElement[];
+      expect(spoken(meta!)).toBe("Onboarding\u00a0· 10 min ago");
+      expect(meta).toHaveClass("gap-2", "text-[11px]", "text-muted-strong");
+      expect(titleRow).toHaveClass("gap-2");
+      const [glyph, title] = [...titleRow!.children] as HTMLElement[];
+      expect(glyph).toHaveClass("text-glyph-diagram");
+      expect(title).toHaveTextContent(/^Login sequence$/);
+      expect(title).toHaveClass("truncate", "font-semibold");
     });
 
     it("the RECENT row is a grid at the chosen size, showing only what fits in one row — draws 4 cards and hides the overflow (#236 R5·R7, T13)", () => {

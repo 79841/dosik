@@ -212,6 +212,22 @@ export const FOCUS_RING =
 export const FOCUS_RING_INSET =
   "focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus";
 /**
+ * Keyboard focus on a Home card C (#265, `Home-States` 2·3): its outline is
+ * its hairline, so the ring is a shadow round it — 2px of surface, then 2px
+ * of `focus`, on the tokens themselves (the `--color-*` names are build-time
+ * only, `@theme inline reference`). `FOCUS_CARD_WITHIN` goes on a card whose
+ * focus is inside it (the folder view's: its button, its name field), with
+ * `FOCUS_CARD_BUTTON` on that button; `FOCUS_CARD` on a card that is the
+ * button itself (Recent, a START tile). High contrast drops shadows: there the
+ * focused button's outline is what the system paints — `outline-hidden`'s
+ * transparent outline, or the card's own line thickened and stepped out.
+ */
+export const FOCUS_CARD_WITHIN =
+  "has-[:focus-visible]:shadow-[0_0_0_2px_var(--surface),0_0_0_4px_var(--focus)]";
+export const FOCUS_CARD_BUTTON = "focus-visible:outline-hidden";
+export const FOCUS_CARD =
+  "focus-visible:shadow-[0_0_0_2px_var(--surface),0_0_0_4px_var(--focus)] forced-colors:focus-visible:outline-2 forced-colors:focus-visible:outline-offset-2";
+/**
  * Keyboard focus on a menu item: the hover wash, no outline — an outline is
  * clipped by a scrolling menu and reads heavy in a list (#178).
  * `outline-hidden`, not `-none`: forced-colors mode drops the wash, and keeps

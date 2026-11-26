@@ -21,7 +21,6 @@ import { resetPreviewCacheForTests } from "../diagramPreview";
 import { Home } from "../Home";
 import { cardGrid } from "../homeGrid";
 import { useHomeMode } from "../homeMode";
-import { useHomeSelection } from "../homeSelection";
 import { likeRust } from "../../../test/rustAnswers";
 
 vi.mock("../../../shared/lib/systemClipboard", () => ({
@@ -69,7 +68,6 @@ const h1 = () => screen.getByRole("heading", { level: 1 });
 
 describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
   beforeEach(() => {
-    useHomeSelection.getState().clear();
     useAppStore.setState({ folderRenameRequest: null });
     resetAutosaveForTests();
     resetPreviewCacheForTests();
@@ -115,11 +113,10 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
     await user.click(screen.getByRole("button", { name: "More for Checkout" }));
     await user.click(screen.getByRole("menuitem", { name: "New folder" }));
     const input = await screen.findByRole("textbox", { name: "Folder name" });
-    // the new card, first and selected, names it — not the header's path (#231 D8)
+    // the new card, first, names it in its caption bar — not the header's path (#231 D8)
     const list = screen.getByRole("list", { name: "Items in Checkout" });
     const first = within(list).getAllByRole("article")[0]!;
-    expect(first).toContainElement(input);
-    expect(first).toHaveClass("ring-[1.5px]", "ring-ink");
+    expect(first.querySelector("[data-caption-bar]")).toContainElement(input);
     expect(screen.getByRole("navigation", { name: "Breadcrumb" })).not.toContainElement(input);
     expect(h1()).toHaveTextContent("Checkout");
     expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "chk" });
@@ -234,7 +231,7 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
       expect(useAppStore.getState()).toMatchObject({ view: "editor", activeTab: tab });
     });
 
-    it("going to another folder right after header ⋯ New folder — stays there, neither selects the new card nor requests the name field", async () => {
+    it("going to another folder right after header ⋯ New folder — stays there, does not request the name field", async () => {
       const user = userEvent.setup();
       show({ kind: "folder", folder: "chk" });
       await user.click(await screen.findByRole("button", { name: "More for Checkout" }));
@@ -243,7 +240,6 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
       await landed("create_folder");
       expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "flw" });
       expect(useAppStore.getState().folderRenameRequest).toBeNull();
-      expect(useHomeSelection.getState().key).toBeNull();
     });
   });
 
@@ -380,7 +376,9 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
       expect(skeleton).toHaveClass(...cardGrid("small").split(" "));
       // a card's shape, not a fixed height: the size picked sets it
       for (const cell of skeleton.children) {
-        expect(cell).toHaveClass("p-2.5", "pb-[52px]");
+        // card C: the 15:8 well and the 40px caption bar, no padding round them
+        expect(cell).toHaveClass("pb-10");
+        expect(cell.className).not.toMatch(/\bp-2\.5\b/);
         expect(cell.className).not.toMatch(/\bh-\[\d+px\]/);
         expect(cell.firstElementChild).toHaveClass("aspect-[15/8]");
       }
@@ -425,10 +423,10 @@ describe("Home assembly (#220 D1·D4·D12·D16, T29)", () => {
 });
 
 /**
- * #231 D7, D11: no preview any more — a card's click selects it, a double
- * click opens it, and the selection outlives Home (a document tab and back).
+ * #231 D11, #265: no preview — one click on a card opens it, and there is no
+ * selection to keep or clear.
  */
-describe("cards — one press = select, two = open, no preview — in the real Home (#231 D7·D11, T14·T17·T23)", () => {
+describe("cards — one click opens, no selection, no preview — in the real Home (#231 D11, #265)", () => {
   const card = (title: string) => screen.getByRole("article", { name: title });
   const cardBody = () => screen.getByRole("button", { name: /^Login flow, diagram, edited/ });
 
@@ -436,72 +434,38 @@ describe("cards — one press = select, two = open, no preview — in the real H
     resetAutosaveForTests();
     resetPreviewCacheForTests();
     resetTabsForTests();
-    useHomeSelection.getState().clear();
     useToastStore.getState().dismissAll();
     useHomeMode.setState({ mode: "cards" });
     useLibraryStore.setState({ folders: library(), readFailed: false });
     serve();
   });
 
-  it("pressing a card selects it — view unchanged, nothing opens", async () => {
+  it("one click opens it — a new tab, no ring left behind", async () => {
     const user = userEvent.setup();
     show({ kind: "folder", folder: "work" });
+    expect(card("Login flow").className).not.toMatch(/ring-\[1\.5px\]/);
     await user.click(cardBody());
-    expect(cardBody()).toHaveAttribute("aria-current", "true");
-    expect(card("Login flow")).toHaveClass("ring-[1.5px]", "ring-ink");
-    expect(useAppStore.getState()).toMatchObject({
-      view: "home",
-      tabs: [],
-      homeView: { kind: "folder", folder: "work" },
-    });
-    expect(h1()).toHaveTextContent("Work");
-  });
-
-  it("a double press opens it — new tab", async () => {
-    const user = userEvent.setup();
-    show({ kind: "folder", folder: "work" });
-    await user.dblClick(cardBody());
     await waitFor(() => expect(useAppStore.getState().view).toBe("editor"));
     expect(useDiagramStore.getState().projectId).toBe("p1");
   });
 
-  it("the selection survives Home unmounting and remounting — even after visiting a document tab (T17)", async () => {
-    const user = userEvent.setup();
-    const first = show({ kind: "folder", folder: "work" });
-    await user.click(cardBody());
-    first.unmount();
-    render(<Home />);
-    expect(cardBody()).toHaveAttribute("aria-current", "true");
-  });
-
-  it("pressing empty space in the body clears the selection — not cards·controls", async () => {
+  it("a double click opens it once — one tab", async () => {
     const user = userEvent.setup();
     show({ kind: "folder", folder: "work" });
-    await user.click(cardBody());
-    await user.click(screen.getByRole("radio", { name: "Cards" }));
-    // the header row is not the body's empty space
-    await user.click(document.querySelector("header")!);
-    expect(cardBody()).toHaveAttribute("aria-current", "true");
+    await user.dblClick(cardBody());
+    await waitFor(() => expect(useAppStore.getState().view).toBe("editor"));
+    expect(useAppStore.getState().tabs).toHaveLength(1);
+  });
+
+  it("pressing empty space in the body does nothing to the cards", async () => {
+    const user = userEvent.setup();
+    show({ kind: "folder", folder: "work" });
     await user.click(body());
-    expect(cardBody()).not.toHaveAttribute("aria-current");
-  });
-
-  it("empty space in the dashboard·Recent·another folder view leaves that folder view's selection alone — it is an invisible selection (D7)", async () => {
-    const user = userEvent.setup();
-    show({ kind: "folder", folder: "work" });
-    await user.click(cardBody());
-    const elsewhere: HomeView[] = [
-      DASHBOARD,
-      { kind: "recent" },
-      { kind: "folder", folder: "home" },
-    ];
-    for (const view of elsewhere) {
-      act(() => viewInHome(view));
-      await user.click(body());
-      expect(useHomeSelection.getState()).toMatchObject({ folder: "work", key: "diagram:p1" });
-    }
-    act(() => viewInHome({ kind: "folder", folder: "work" }));
-    expect(cardBody()).toHaveAttribute("aria-current", "true");
+    expect(screen.queryByRole("button", { current: true })).toBeNull();
+    expect(useAppStore.getState()).toMatchObject({
+      view: "home",
+      homeView: { kind: "folder", folder: "work" },
+    });
   });
 
   it.each<HomeView>([DASHBOARD, { kind: "recent" }, { kind: "folder", folder: "work" }])(
@@ -529,7 +493,6 @@ describe("a single header row — per view·mode (#231 D2·D3·D5·D12, T8·T11)
     resetPreviewCacheForTests();
     resetTabsForTests();
     resetBoardForTests();
-    useHomeSelection.getState().clear();
     useSidebarStore.setState({ hidden: false, peek: false });
     useLibraryStore.setState({ folders: library(), readFailed: false });
     serve();

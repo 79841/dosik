@@ -14,7 +14,6 @@ import {
   contentColumn,
   DEFAULT_CARD_SIZE,
   GUTTER,
-  RECENT_WIDE_AT,
   recentShowClass,
   START_GRID,
   START_SPAN,
@@ -170,16 +169,5 @@ describe("dashboard RECENT row — a single row (#236 R5·R7, T13)", () => {
       ).filter((from) => from === null || width >= from).length;
     expect(CARD_SIZES.map((size) => shown(size, CONTENT_MAX))).toEqual([4, 3, 2]);
     expect(CARD_SIZES.map((size) => shown(size, CONTENT_MAX_WIDE))).toEqual([4, 3, 2]);
-  });
-});
-
-describe("wide shape of RECENT cards (#231 D10, #236)", () => {
-  it("the threshold sits between the two grid card widths at the default size — Main (336) with the sidebar shown, wide shape (400) hidden", () => {
-    const shown = tracks(cardGrid(DEFAULT_CARD_SIZE), CONTENT_MAX).card;
-    const hidden = tracks(cardGrid(DEFAULT_CARD_SIZE), CONTENT_MAX_WIDE).card;
-    expect([shown, hidden]).toEqual([336, 400]);
-    expect(shown).toBeLessThan(RECENT_WIDE_AT);
-    expect(RECENT_WIDE_AT).toBeLessThanOrEqual(hidden);
-    expect(RECENT_WIDE_AT).toBe((shown + hidden) / 2);
   });
 });

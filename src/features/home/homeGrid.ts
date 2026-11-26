@@ -92,11 +92,3 @@ const RECENT_SHOWN: Record<CardSize, readonly string[]> = {
 /** the classes the dashboard row's `index`-th card (from 0) takes at `size` */
 export const recentShowClass = (size: CardSize, index: number): string =>
   RECENT_SHOWN[size][index] ?? "hidden";
-
-/**
- * From this many px of its own width a recent card takes its wide shape
- * (#231 D10, `HomeCollapse-Hidden`): halfway between the default size's card
- * with the sidebar shown (336, `Main`) and hidden (400). `RecentCard` spells
- * it out whole in its `@min-[368px]:` classes, as Tailwind needs.
- */
-export const RECENT_WIDE_AT = 368;

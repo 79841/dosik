@@ -16,7 +16,6 @@ import { openDocument, resetTabsForTests, showHomeTab } from "../../library/tabA
 import { resetAutosaveForTests } from "../../library/useAutosave";
 import { HomeHeader, homeHeaderModel, LIBRARY_CRUMB } from "../HomeHeader";
 import { type HomeMode, useHomeMode } from "../homeMode";
-import { useHomeSelection } from "../homeSelection";
 import { showInLabel } from "../../library/fileManager";
 import { likeRust } from "../../../test/rustAnswers";
 
@@ -539,7 +538,6 @@ describe("header ⋯·New ▾ (#231 D8, T21)", () => {
     listing = library();
     useLibraryStore.setState({ folders: library(), readFailed: false });
     useAppStore.setState({ folderRenameRequest: null });
-    useHomeSelection.getState().clear();
     mockedAsk.mockReset();
     mockedAsk.mockResolvedValue(false);
     mockedInvoke.mockImplementation(
@@ -718,7 +716,7 @@ describe("header ⋯·New ▾ (#231 D8, T21)", () => {
     expect(useAppStore.getState().homeFocus).toBe(focus + 1);
   });
 
-  it("⋯ New folder — creates it in this folder and keeps the view, selects the new card and requests its name field (#231 D8)", async () => {
+  it("⋯ New folder — creates it in this folder and keeps the view, requests the new card's name field (#231 D8)", async () => {
     const user = userEvent.setup();
     mockedInvoke.mockImplementation(
       likeRust(async (cmd, args) => {
@@ -741,7 +739,6 @@ describe("header ⋯·New ▾ (#231 D8, T21)", () => {
     const { id, parent } = calls("create_folder")[0]![1] as { id: string; parent?: string };
     expect(parent).toBe("chk");
     await waitFor(() => expect(useAppStore.getState().folderRenameRequest?.id).toBe(id));
-    expect(useHomeSelection.getState()).toMatchObject({ folder: "chk", key: `folder:${id}` });
     // Home stays, and the header's path is no field: the card names it
     expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "chk" });
     expect(screen.queryByRole("textbox")).toBeNull();

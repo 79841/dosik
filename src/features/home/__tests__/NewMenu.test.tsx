@@ -9,7 +9,6 @@ import { useLibraryStore } from "../../library/libraryStore";
 import { findFolder } from "../../library/libraryTree";
 import { resetTabsForTests, showHomeTab } from "../../library/tabActions";
 import { useHomeMode } from "../homeMode";
-import { useHomeSelection } from "../homeSelection";
 import { startDiagram } from "../newDiagram";
 import { NewMenu } from "../NewMenu";
 
@@ -52,7 +51,6 @@ describe("New menu (#231 D9, T20)", () => {
   beforeEach(() => {
     mockedStart.mockReset();
     resetTabsForTests();
-    useHomeSelection.getState().clear();
     useAppStore.setState({ folderRenameRequest: null });
     useHomeMode.setState({ mode: "cards" });
     listing = library();
@@ -140,7 +138,7 @@ describe("New menu (#231 D9, T20)", () => {
     expect(opener).toHaveFocus();
   });
 
-  it("New folder — creates it in this folder and keeps the view, selects the new card and requests its name field (D8)", async () => {
+  it("New folder — creates it in this folder and keeps the view, requests the new card's name field (D8)", async () => {
     const user = userEvent.setup();
     const { onClose, opener } = open();
     await user.click(screen.getByRole("menuitem", { name: "New folder" }));
@@ -151,11 +149,10 @@ describe("New menu (#231 D9, T20)", () => {
     const { id, parent } = calls("create_folder")[0]![1] as { id: string; parent?: string };
     expect(parent).toBe("pay");
     await waitFor(() => expect(useAppStore.getState().folderRenameRequest?.id).toBe(id));
-    expect(useHomeSelection.getState()).toMatchObject({ folder: "pay", key: `folder:${id}` });
     expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "pay" });
   });
 
-  it("if the user moved to another folder meanwhile — neither selects nor requests the name field (#218 D15)", async () => {
+  it("if the user moved to another folder meanwhile — does not request the name field (#218 D15)", async () => {
     const user = userEvent.setup();
     const serve = mockedInvoke.getMockImplementation()!;
     // the disk answers a little late
@@ -169,7 +166,6 @@ describe("New menu (#231 D9, T20)", () => {
     await waitFor(() => expect(calls("list_library").length).toBeGreaterThan(0));
     await act(() => new Promise((r) => setTimeout(r, 20)));
     expect(useAppStore.getState().folderRenameRequest).toBeNull();
-    expect(useHomeSelection.getState().key).toBeNull();
     expect(useAppStore.getState().homeView).toEqual({ kind: "folder", folder: "chk" });
   });
 
@@ -188,12 +184,11 @@ describe("New menu (#231 D9, T20)", () => {
     await act(() => new Promise((r) => setTimeout(r, 20)));
   };
 
-  it("if focus left the sheet meanwhile (a tree name field) — neither selects nor requests the name field (#231 W1)", async () => {
+  it("if focus left the sheet meanwhile (a tree name field) — does not request the name field (#231 W1)", async () => {
     const field = document.createElement("input");
     document.body.append(field);
     await makeSlowly(() => field.focus());
     expect(useAppStore.getState().folderRenameRequest).toBeNull();
-    expect(useHomeSelection.getState().key).toBeNull();
     expect(field).toHaveFocus();
     field.remove();
   });

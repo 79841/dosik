@@ -1,13 +1,20 @@
-import { type Ref, useRef, useState } from "react";
+import { type MouseEvent, type Ref, useRef, useState } from "react";
 
-import { FOCUS_RING } from "../../shared/lib/palette";
+import { clickOpens } from "../../shared/lib/doubleClickGuard";
+import { FOCUS_CARD, FOCUS_RING } from "../../shared/lib/palette";
 import { START_GRID } from "./homeGrid";
+import { LINE_EASE, TILE_HOVER, TILE_LINE } from "./homeStyles";
 import { MermaidDialog } from "./MermaidDialog";
 import { startDiagram, useStartingStore } from "./newDiagram";
 import { StartArt } from "./StartArt";
 import { START_OPTIONS, type StartOption } from "./startOptions";
 
-const TILE = `flex h-[112px] w-full flex-col rounded-lg text-left shadow-raised motion-safe:transition-shadow hover:shadow-lifted aria-busy:cursor-progress ${FOCUS_RING}`;
+const TILE = "flex h-[112px] w-full flex-col rounded-lg text-left aria-busy:cursor-progress";
+/**
+ * a light tile's hairline, a step darker under the pointer, and the ring
+ * round it (card C, #265); the ink tile has no line and keeps the outline ring
+ */
+const LINED = `${TILE_LINE} ${TILE_HOVER} ${FOCUS_CARD} ${LINE_EASE}`;
 
 /** a tile with a chip and a second line — Blank (the inverted hero) and From Mermaid… */
 const ChipTile = ({
@@ -21,7 +28,7 @@ const ChipTile = ({
   option: StartOption;
   hero: boolean;
   busy: boolean;
-  onClick: () => void;
+  onClick: (e: MouseEvent) => void;
 }) => {
   const Icon = option.icon;
   return (
@@ -31,7 +38,7 @@ const ChipTile = ({
       aria-label={`${option.label}, ${option.sub}`}
       aria-busy={busy || undefined}
       onClick={onClick}
-      className={`${TILE} items-start p-2.5 ${hero ? "bg-ink-surface text-surface" : "bg-surface text-ink"}`}
+      className={`${TILE} items-start p-2.5 ${hero ? `bg-ink-surface text-surface ${FOCUS_RING}` : `bg-surface text-ink ${LINED}`}`}
     >
       <span
         aria-hidden="true"
@@ -79,16 +86,21 @@ export const StartTiles = () => {
                   option={option}
                   hero={choice === "blank"}
                   busy={busy}
-                  onClick={() =>
-                    choice === "mermaid" ? setMermaid(true) : void startDiagram("blank")
-                  }
+                  // one per double click — the rest would land on what it opened
+                  onClick={(e) => {
+                    if (!clickOpens(e)) return;
+                    if (choice === "mermaid") setMermaid(true);
+                    else void startDiagram("blank");
+                  }}
                 />
               ) : (
                 <button
                   type="button"
                   aria-busy={busy || undefined}
-                  onClick={() => void startDiagram(choice)}
-                  className={`${TILE} bg-surface px-1.5 pb-2 pt-1.5 text-ink`}
+                  onClick={(e) => {
+                    if (clickOpens(e)) void startDiagram(choice);
+                  }}
+                  className={`${TILE} ${LINED} bg-surface px-1.5 pb-2 pt-1.5 text-ink`}
                 >
                   <span
                     aria-hidden="true"

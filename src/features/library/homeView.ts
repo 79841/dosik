@@ -5,8 +5,8 @@ import { findFolder } from "./libraryTree";
  * What the Home tab shows (#220 D1) — one value, read by Home and by the
  * sidebar's selection alike, so the two can never disagree. The dashboard,
  * Recent, or a folder at any depth — a project is the top one (#229 D5).
- * There is no view of a diagram (#231 D1): a diagram opens in its tab, and a
- * card picked on Home is a selection, not a view (`homeSelection`, D7).
+ * There is no view of a diagram (#231 D1): a diagram opens in its tab — one
+ * click on its card (#265).
  */
 export type HomeView =
   | { kind: "dashboard" }

@@ -16,18 +16,13 @@ import { cardGrid, contentColumn } from "./homeGrid";
 import { HomeHeader } from "./HomeHeader";
 import { useCardSize, useHomeMode } from "./homeMode";
 import { useSlow } from "./homeParts";
-import { useHomeSelection } from "./homeSelection";
 import { NotFoundBox } from "./NotFoundBox";
 import { RecentView } from "./RecentView";
 
-/** not the body's empty space: a card, a control, or a menu or picker open over it */
-const NOT_EMPTY =
-  "article, button, a, input, textarea, select, [role=menu], [role=img], [role=dialog], [data-move-picker]";
-
 /**
  * What stands in for a view whose folder the first listing has not named yet
- * — at the size picked, each in a folder card's shape (`CardFrame`): a 15:8
- * well in 10 of padding, then the name and meta lines (52 below the well).
+ * — at the size picked, each in a folder card's shape (`CardFrame`, card C
+ * of #265): a 15:8 well, then the 40px caption bar.
  */
 const ViewSkeleton = () => (
   <div
@@ -37,7 +32,7 @@ const ViewSkeleton = () => (
     className={cardGrid(useCardSize())}
   >
     {[0, 1, 2].map((i) => (
-      <div key={i} className="animate-pulse rounded-lg bg-frame p-2.5 pb-[52px]">
+      <div key={i} className="animate-pulse rounded-lg bg-frame pb-10">
         <div className="aspect-[15/8]" />
       </div>
     ))}
@@ -54,8 +49,7 @@ const ViewSkeleton = () => (
  * the Cards | Canvas switch — drawn once for every view and mode, so the
  * switch is never drawn anew; under it the body. In Cards the dashboard,
  * Recent and a folder sit on the 12-column grid — 1040 wide with the sidebar
- * docked, 1232 with it hidden or peeking (D12) — and scroll under the row. A
- * press on the body's empty space lets the selected card go (#231 D7). In
+ * docked, 1232 with it hidden or peeking (D12) — and scroll under the row. In
  * Canvas (#221 D1, D2) the same view is the library board's focus, and the
  * board fills the body — every view but Recent, which the board has no match
  * for. A project not found shows, in Cards, its frame's box centred in the
@@ -75,7 +69,6 @@ export const Home = () => {
   const sliding = useSidebarSliding();
   const mode = useHomeMode((s) => s.mode);
   const sheet = useRef<HTMLElement>(null);
-  const body = useRef<HTMLDivElement>(null);
   const seenTicket = useRef(focusTicket);
   const view = resolveHomeView(homeView, folders);
   const slow = useSlow(folders === null);
@@ -103,25 +96,7 @@ export const Home = () => {
           <LibraryBoard />
         </div>
       ) : (
-        <div
-          key="cards"
-          ref={body}
-          onPointerDown={(e) => {
-            // a menu or dialog drawn elsewhere is not the body, whatever React bubbles
-            const at = e.target as Element;
-            if (e.button !== 0 || !body.current?.contains(at) || at.closest(NOT_EMPTY)) return;
-            // only the selection this view shows: another folder's outlives the views between (D7)
-            const selection = useHomeSelection.getState();
-            if (
-              view.kind === "folder" &&
-              selection.key !== null &&
-              selection.folder === view.folder
-            ) {
-              selection.clear();
-            }
-          }}
-          className="min-h-0 flex-1 overflow-y-auto px-8 pt-4 pb-6"
-        >
+        <div key="cards" className="min-h-0 flex-1 overflow-y-auto px-8 pt-4 pb-6">
           {shown && isMissing(shown) ? (
             // found: its heading takes the focus — the box and its button are
             // gone — while Home still shows it (#218 D15)

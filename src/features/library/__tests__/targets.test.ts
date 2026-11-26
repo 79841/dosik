@@ -1,8 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { useHomeSelection } from "../../home/homeSelection";
 import { useAppStore } from "../appStore";
-import { blankDoc, type FolderMeta, itemKey } from "../libraryApi";
+import { blankDoc, type FolderMeta } from "../libraryApi";
 import { useLibraryStore } from "../libraryStore";
 import { openDocument, resetTabsForTests, showHomeTab } from "../tabActions";
 import { defaultTarget, namedTarget, targetFolder } from "../targets";
@@ -37,7 +36,6 @@ const library = (): FolderMeta[] => [
 describe("where a new diagram goes (#220 D8)", () => {
   beforeEach(() => {
     resetTabsForTests();
-    useHomeSelection.getState().clear();
     useAppStore.setState({ newDiagramTarget: null });
     useLibraryStore.setState({ folders: library(), readFailed: false });
   });
@@ -108,18 +106,6 @@ describe("where a new diagram goes (#220 D8)", () => {
     it("③ when Home is active, the Home view's folder", () => {
       useAppStore.setState({ newDiagramTarget: "work" });
       showHomeTab({ kind: "folder", folder: "empty" });
-      expect(targetFolder()).toBe("empty");
-    });
-
-    it("card selection does not affect the target — the view's folder stays (#231 D7, T6)", () => {
-      showHomeTab({ kind: "folder", folder: "work" });
-      useHomeSelection.getState().select("work", itemKey("folder", "chk"));
-      expect(targetFolder()).toBe("work");
-      showHomeTab({ kind: "folder", folder: "side" });
-      useHomeSelection.getState().select("side", itemKey("diagram", "p2"));
-      expect(targetFolder()).toBe("side");
-      showHomeTab({ kind: "dashboard" });
-      useAppStore.setState({ newDiagramTarget: "empty" });
       expect(targetFolder()).toBe("empty");
     });
 

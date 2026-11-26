@@ -384,8 +384,7 @@ export const moveDiagram = async (diagram: ProjectMeta, folder: string): Promise
 
 /**
  * Resolves whether it was deleted. Home's view stays where it is: no view
- * shows a diagram (#231 D1), and a card selected on it is gone from the
- * listing, so nothing is selected any more (D7).
+ * shows a diagram (#231 D1).
  */
 export const deleteDiagramAsking = (diagram: ProjectMeta): Promise<boolean> =>
   guarded(async () => {

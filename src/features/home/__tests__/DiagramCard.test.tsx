@@ -13,7 +13,6 @@ import { resetTabsForTests, showHomeTab } from "../../library/tabActions";
 import { resetAutosaveForTests } from "../../library/useAutosave";
 import { DiagramCard } from "../DiagramCard";
 import { resetPreviewCacheForTests } from "../diagramPreview";
-import { useHomeSelection } from "../homeSelection";
 import { showInLabel } from "../../library/fileManager";
 import { likeRust } from "../../../test/rustAnswers";
 
@@ -40,22 +39,13 @@ const library = (): FolderMeta[] => [
 
 const pay = () => useLibraryStore.getState().folders![0]!;
 const diagram = (id: string): ProjectMeta => pay().diagrams.find((d) => d.id === id)!;
-const show = ({
-  id = "co",
-  selected = false,
-  stop = true,
-}: {
-  id?: string;
-  selected?: boolean;
-  stop?: boolean;
-} = {}) =>
+const show = ({ id = "co", stop = true }: { id?: string; stop?: boolean } = {}) =>
   render(
     <ul>
       <DiagramCard
         diagram={diagram(id)}
         folder={pay()}
         folders={useLibraryStore.getState().folders!}
-        selected={selected}
         stop={stop}
       />
     </ul>,
@@ -63,13 +53,12 @@ const show = ({
 const card = () => screen.getByRole("article");
 const main = () => screen.getByRole("button", { name: /, diagram, edited|, unreadable, edited/ });
 
-/** a diagram's card in a folder view (#231 D7·D8, T14·T15·T19) */
-describe("diagram card (#231 D7·D8, T19)", () => {
+/** a diagram's card in a folder view (#231 D8, card C — one click opens) */
+describe("diagram card (card C, one click opens)", () => {
   beforeEach(() => {
     resetAutosaveForTests();
     resetPreviewCacheForTests();
     resetTabsForTests();
-    useHomeSelection.getState().clear();
     useLibraryStore.setState({ folders: library(), readFailed: false });
     showHomeTab({ kind: "folder", folder: "pay" });
     mockedInvoke.mockImplementation(
@@ -83,18 +72,93 @@ describe("diagram card (#231 D7·D8, T19)", () => {
     );
   });
 
-  it("look — inset 10·radius 8·shadow-raised, shadow-lifted on hover or with focus inside", () => {
+  it("look — card C: a hairline (0.5px) inside, no padding, no shadow; the line a step darker on hover", () => {
     show();
-    expect(card()).toHaveClass("rounded-lg", "bg-surface", "p-2.5", "shadow-raised");
-    expect(card()).toHaveClass("hover:shadow-lifted", "focus-within:shadow-lifted");
-    expect(card()).not.toHaveClass("ring-[1.5px]");
-    // the picture's well keeps 15:8 — 168 at three across, smaller with more (#236 R5, T14)
-    expect(card().querySelector('[class~="aspect-[15/8]"]')).not.toBeNull();
-    expect(card().querySelector('[class~="h-[168px]"]')).toBeNull();
-    expect(within(card()).getByText("Edited 2 min ago")).toHaveClass("text-[11px]", "text-muted");
+    expect(card()).toHaveClass(
+      "rounded-lg",
+      "bg-surface",
+      "outline-[0.5px]",
+      "-outline-offset-[0.5px]",
+    );
+    expect(card()).toHaveClass("outline-edge", "hover:outline-dash");
+    expect(card().className).not.toMatch(/shadow-raised|shadow-lifted|ring-\[1\.5px\]|\bp-2\.5\b/);
+    // the keyboard's ring round the card: 2px of surface, then 2px of focus (Home-States 2)
+    expect(card()).toHaveClass(
+      "has-[:focus-visible]:shadow-[0_0_0_2px_var(--surface),0_0_0_4px_var(--focus)]",
+    );
+    // the picture fills the card's top, 15:8 (#236 R5)
+    const well = card().querySelector('[class~="aspect-[15/8]"]');
+    expect(well).not.toBeNull();
+    expect(well).not.toHaveClass("rounded-[6px]");
   });
 
-  it("main button — name '{title}, diagram, edited {time}', shortcuts, roving Tab stop", () => {
+  it("caption bar — 40 high under a hairline: the diagram glyph, the title, 'Edited …'", () => {
+    show();
+    const bar = card().querySelector("[data-caption-bar]") as HTMLElement;
+    expect(bar).toHaveClass("h-10", "border-t-[0.5px]", "border-edge", "px-3", "gap-2");
+    expect(bar).toHaveClass("group-hover/card:border-dash", "group-hover/card:bg-hover");
+    expect(bar.querySelector("svg.text-glyph-diagram")).not.toBeNull();
+    expect(within(bar).getByText("Checkout service")).toHaveClass("truncate", "font-semibold");
+    expect(within(bar).getByText("Edited 2 min ago")).toHaveClass(
+      "text-[11px]",
+      "text-muted-strong",
+    );
+  });
+
+  it("motion only where motion is allowed — a press on the card itself shrinks it to 99% in 160ms and lets it out softly in 360ms (HomeCardFx-Fade)", () => {
+    show();
+    expect(card()).toHaveClass(
+      "motion-safe:has-[[data-card-key]:active]:scale-[.99]",
+      "motion-safe:has-[[data-card-key]:active]:[transition-duration:160ms,220ms,160ms]",
+      "motion-safe:[transition:outline-color_160ms_ease-out,box-shadow_220ms_ease-out,scale_360ms_cubic-bezier(0.22,1,0.36,1)]",
+    );
+    // pressing Open or More is not pressing the card: no `active:` on the card itself
+    expect(card().className).not.toMatch(/(^|\s)(motion-safe:)?active:/);
+    expect(card().className).not.toMatch(/(^|\s)(active:scale|transition|\[transition)/);
+  });
+
+  it("a right-click on the card opens More's menu beside the pointer — More drawn pressed, nothing opened", async () => {
+    show();
+    const right = fireEvent.contextMenu(card().querySelector("[data-caption-bar]")!, {
+      clientX: 300,
+      clientY: 200,
+    });
+    expect(right).toBe(false);
+    const menu = screen.getByRole("menu", { name: "More for Checkout service" });
+    expect(menu.style.left).toBe("302px");
+    expect(menu.style.top).toBe("202px");
+    expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+      "Open",
+      SHOW_IN,
+      "Copy Path",
+      "Rename",
+      "Move to…",
+      "Delete",
+    ]);
+    expect(screen.getByRole("button", { name: "More for Checkout service" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await act(async () => {});
+    expect(useAppStore.getState()).toMatchObject({ view: "home", tabs: [] });
+  });
+
+  it("a right-click on Open or More opens the same menu", () => {
+    show();
+    fireEvent.contextMenu(screen.getByRole("button", { name: "More for Checkout service" }), {
+      clientX: 10,
+      clientY: 20,
+    });
+    expect(screen.getByRole("menu", { name: "More for Checkout service" })).toBeInTheDocument();
+  });
+
+  it("the main button hides its own outline only while focused — high contrast still marks the focused card", () => {
+    show();
+    expect(main()).toHaveClass("focus-visible:outline-hidden");
+    expect(main().className).not.toMatch(/(^|\s)outline-hidden/);
+  });
+
+  it("main button — name '{title}, diagram, edited {time}', shortcuts, roving Tab stop, no selection", () => {
     const { unmount } = show();
     expect(main()).toHaveAccessibleName("Checkout service, diagram, edited 2 min ago");
     expect(main()).toHaveAttribute("aria-keyshortcuts", "Enter Shift+F10");
@@ -105,17 +169,33 @@ describe("diagram card (#231 D7·D8, T19)", () => {
     expect(main()).toHaveAttribute("tabindex", "-1");
   });
 
-  it("selected card — 1.5px ink ring, aria-current", () => {
-    show({ selected: true });
-    expect(card()).toHaveClass("ring-[1.5px]", "ring-ink", "shadow-raised");
-    expect(main()).toHaveAttribute("aria-current", "true");
-  });
-
   it("unreadable diagram — 'unreadable' name, No preview, 'Edited …'", () => {
     show({ id: "br" });
     expect(main()).toHaveAccessibleName("Broken, unreadable, edited 1 hour ago");
     expect(within(card()).getByText("No preview")).toBeInTheDocument();
     expect(within(card()).getByText("Edited 1 hour ago")).toBeInTheDocument();
+  });
+
+  it("Open·More rest hidden, 4px up and out of the pointer's way; pointing·focus inside·an open menu bring them down (HomeCardFx-Fade)", async () => {
+    const user = userEvent.setup();
+    show();
+    const controls = card().querySelector("[data-card-controls]") as HTMLElement;
+    expect(controls).toHaveClass(
+      "right-2.5",
+      "top-2.5",
+      "opacity-0",
+      "-translate-y-1",
+      "pointer-events-none",
+    );
+    expect(controls).toHaveClass(
+      "group-hover/card:opacity-100",
+      "group-hover/card:translate-y-0",
+      "group-focus-within/card:opacity-100",
+      "motion-safe:[transition:opacity_160ms_ease-out,translate_160ms_cubic-bezier(0.2,0.7,0.2,1)]",
+    );
+    await user.click(screen.getByRole("button", { name: "More for Checkout service" }));
+    expect(controls).toHaveClass("opacity-100", "pointer-events-auto");
+    expect(controls).not.toHaveClass("-translate-y-1");
   });
 
   it("Open·More are for pointers — not Tab stops", () => {
@@ -130,46 +210,31 @@ describe("diagram card (#231 D7·D8, T19)", () => {
     );
   });
 
-  it("pressing anywhere in the card selects + focuses the main button — inner padding, Open·More too (T14)", () => {
-    show();
-    fireEvent.pointerDown(card(), { button: 0 });
-    expect(useHomeSelection.getState()).toMatchObject({ folder: "pay", key: "diagram:co" });
-    expect(main()).toHaveFocus();
-    useHomeSelection.getState().clear();
-    fireEvent.pointerDown(screen.getByRole("button", { name: "More for Checkout service" }), {
-      button: 0,
-    });
-    expect(useHomeSelection.getState().key).toBe("diagram:co");
-  });
-
-  it("right button·ctrl+click (macOS right click) does not select", () => {
-    show();
-    fireEvent.pointerDown(card(), { button: 2 });
-    onMac(() => fireEvent.pointerDown(card(), { button: 0, ctrlKey: true }));
-    expect(useHomeSelection.getState().key).toBeNull();
-  });
-
-  it("off macOS a ctrl+press is a press — the card is selected", () => {
-    show();
-    fireEvent.pointerDown(card(), { button: 0, ctrlKey: true });
-    expect(useHomeSelection.getState().key).not.toBeNull();
-  });
-
-  it("pressing empty padding keeps focus on the main button — the press's default action does not steal it", () => {
-    show();
-    fireEvent.pointerDown(card(), { button: 0 });
-    expect(fireEvent.mouseDown(card(), { button: 0 })).toBe(false);
-    expect(fireEvent.mouseDown(main(), { button: 0 })).toBe(true);
-  });
-
-  it("one press does not open, a double press opens (T14)", async () => {
+  it("one click anywhere on the card opens it in its tab", async () => {
     const user = userEvent.setup();
     show();
-    await user.click(main());
-    expect(useAppStore.getState()).toMatchObject({ view: "home", tabs: [] });
-    await user.dblClick(main());
+    await user.click(card().querySelector("[data-caption-bar]")!);
     await waitFor(() => expect(useDiagramStore.getState().projectId).toBe("co"));
     expect(useAppStore.getState().view).toBe("editor");
+    expect(useAppStore.getState().tabs).toHaveLength(1);
+  });
+
+  it("a double click's second click opens nothing more — it lands on the screen the first opened", async () => {
+    show();
+    fireEvent.click(main(), { detail: 2 });
+    await act(async () => {});
+    expect(useAppStore.getState()).toMatchObject({ view: "home", tabs: [] });
+  });
+
+  it("right click·ctrl+click (macOS right click) does not open", async () => {
+    show();
+    fireEvent.contextMenu(main());
+    onMac(() => {
+      fireEvent.contextMenu(main(), { ctrlKey: true });
+      fireEvent.click(main(), { ctrlKey: true, detail: 1 });
+    });
+    await act(async () => {});
+    expect(useAppStore.getState()).toMatchObject({ view: "home", tabs: [] });
   });
 
   it("double-pressing More does not open — menu only", async () => {
@@ -179,15 +244,41 @@ describe("diagram card (#231 D7·D8, T19)", () => {
     expect(useAppStore.getState()).toMatchObject({ view: "home", tabs: [] });
   });
 
-  it("Enter opens and Space selects (T15)", async () => {
+  it.each([
+    ["Shift+Enter", { key: "Enter", shiftKey: true }],
+    ["Alt+Enter", { key: "Enter", altKey: true }],
+    ["Cmd+Enter", { key: "Enter", metaKey: true }],
+  ])("%s opens nothing — and keeps the button's own click from opening it", async (_, keys) => {
+    show();
+    const down = fireEvent.keyDown(main(), keys);
+    await act(async () => {});
+    expect(down).toBe(false);
+    expect(useAppStore.getState()).toMatchObject({ view: "home", tabs: [] });
+  });
+
+  it("off macOS a ctrl+click is a click — it opens", async () => {
+    show();
+    fireEvent.click(main(), { ctrlKey: true, detail: 1 });
+    await waitFor(() => expect(useDiagramStore.getState().projectId).toBe("co"));
+  });
+
+  it.each([
+    ["Enter", "{Enter}"],
+    ["Space", " "],
+  ])("%s opens it", async (_, key) => {
     const user = userEvent.setup();
     show();
     act(() => main().focus());
-    await user.keyboard(" ");
-    expect(useHomeSelection.getState()).toMatchObject({ folder: "pay", key: "diagram:co" });
-    expect(useAppStore.getState().view).toBe("home");
-    await user.keyboard("{Enter}");
+    await user.keyboard(key);
     await waitFor(() => expect(useDiagramStore.getState().projectId).toBe("co"));
+  });
+
+  it("Open opens once — the card's own button is not pressed with it", async () => {
+    const user = userEvent.setup();
+    show();
+    await user.click(screen.getByRole("button", { name: "Open Checkout service" }));
+    await waitFor(() => expect(useDiagramStore.getState().projectId).toBe("co"));
+    expect(useAppStore.getState().tabs).toHaveLength(1);
   });
 
   it.each([
@@ -206,12 +297,16 @@ describe("diagram card (#231 D7·D8, T19)", () => {
     expect(main()).toHaveFocus();
   });
 
-  it("More — Open · Rename · Move to… · Delete, selected background while open", async () => {
+  it("More — Open · Rename · Move to… · Delete, selected background while open, opens nothing", async () => {
     const user = userEvent.setup();
     show();
     const more = screen.getByRole("button", { name: "More for Checkout service" });
+    // a 1px line, no shadow (Home-States 2)
+    expect(more).toHaveClass("inset-ring", "inset-ring-line-strong", "bg-surface");
+    expect(more.className).not.toMatch(/shadow-raised/);
     await user.click(more);
-    expect(more).toHaveClass("bg-selected");
+    expect(more).toHaveClass("bg-selected", "inset-ring");
+    expect(useAppStore.getState()).toMatchObject({ view: "home", tabs: [] });
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
       "Open",
       SHOW_IN,

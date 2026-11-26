@@ -4,6 +4,24 @@
    by hand. No layer: its `--font-sans`/`--font-mono` must beat Tailwind's
    theme defaults. */
 @import "../design/design-system/project/tokens.css";
+
+/* Pointing at a button shows the hand (#265): Tailwind 4's preflight leaves
+   buttons on the arrow. A utility on the element still wins — it is in the
+   utilities layer: `cursor-progress` while busy, `disabled:cursor-default`,
+   the grab cursors of the boards. */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+  /* …but not under a drag that holds the cursor on <body> (the sidebar's and
+     the chat panel's resize edges set `col-resize` there): a button the
+     pointer passes keeps the drag's cursor instead of the hand. */
+  body[style*="cursor"] :is(button, [role="button"]) {
+    cursor: inherit;
+  }
+}
+
 /* design/ and docs/ are not app markup and must not add utilities */
 @source not "../design";
 @source not "../docs";
