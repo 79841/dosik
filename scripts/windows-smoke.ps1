@@ -565,6 +565,139 @@ $res = Bridge 'GET' '/api/diagram' $null
 $nodes = ([regex]::Matches($res.body, '"id"\s*:\s*"[ab]"')).Count
 Check "diagram keeps the Korean label" ($res.status -eq 200 -and $res.body.Contains($ko) -and $nodes -eq 2) "status=$($res.status) nodes=$nodes"
 
+# ---- Settings > Integrations > Claude Desktop: one Install writes Dosik into
+# Claude Desktop's config, and the server it names answers. Claude Desktop (its
+# MSIX build, from Anthropic's own address) is installed and opened once, so it
+# makes its data folder; a runner where that fails skips these checks
+$claudeData = Join-Path $env:LOCALAPPDATA 'Claude-Data\claude_pzs8sxrjxfjjc'
+$claudeConfig = Join-Path $claudeData 'claude_desktop_config.json'
+# a runner may put its WSL update prompt (a terminal window) in front at any
+# time - Claude Desktop's first start set it off once - and keys sent then go
+# into it, so it is closed first and the app is made sure of before each run of keys
+function QuietRunner {
+  # only on a hosted runner: on a person's machine these are their own terminals
+  if (-not $env:GITHUB_ACTIONS) { return }
+  Get-Process wsl, wslhost, WindowsTerminal, OpenConsole -ErrorAction SilentlyContinue | ForEach-Object {
+    Log "closing $($_.Name) id=$($_.Id)"; Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+  }
+}
+$claudeReady = $false
+try {
+  $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+  $msix = Join-Path $env:TEMP 'Claude.msix'
+  $ProgressPreference = 'SilentlyContinue'
+  Invoke-WebRequest "https://claude.ai/api/desktop/win32/$arch/msix/latest/redirect" -OutFile $msix -UseBasicParsing -TimeoutSec 300
+  $sig = Get-AuthenticodeSignature $msix
+  if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Anthropic') { throw "signature $($sig.Status) $($sig.SignerCertificate.Subject)" }
+  Add-AppxPackage -Path $msix -ErrorAction Stop
+  $claudePkg = Get-AppxPackage -Name Claude | Select-Object -First 1
+  Log "claude desktop $($claudePkg.Version) installed"
+  Start-Process "shell:AppsFolder\$($claudePkg.PackageFamilyName)!Claude"
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  while (-not (Test-Path $claudeData) -and $sw.Elapsed.TotalSeconds -lt 90) { Start-Sleep -Seconds 2 }
+  Start-Sleep -Seconds 5
+  Get-Process claude -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Seconds 3
+  # the package's own Windows service outlives the app and keeps waking WSL on a runner
+  Get-CimInstance Win32_Service -ErrorAction SilentlyContinue | Where-Object { $_.PathName -match 'WindowsApps\\Claude_' } | ForEach-Object {
+    Log "stopping service $($_.Name)"; Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue
+  }
+  Get-Process cowork-svc -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  QuietRunner
+  $claudeReady = Test-Path $claudeData
+  Log "claude data folder after $([int]$sw.Elapsed.TotalSeconds) s: $claudeReady"
+} catch { Log "claude desktop could not be installed: $($_.Exception.Message)" }
+
+# the MCP server a config entry names, asked for its tools over stdio
+function McpTools($command, $arguments) {
+  $psi = New-Object System.Diagnostics.ProcessStartInfo $command
+  $psi.Arguments = ($arguments | ForEach-Object { '"' + $_ + '"' }) -join ' '
+  $psi.UseShellExecute = $false
+  # stderr (the server's notes) is left to the console: a pipe nobody reads could fill and stall it
+  $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $false
+  $server = [System.Diagnostics.Process]::Start($psi)
+  # UTF-8 without a byte order mark: one before the first message would break it
+  $in = New-Object System.IO.StreamWriter($server.StandardInput.BaseStream, (New-Object System.Text.UTF8Encoding $false))
+  $in.NewLine = "`n"
+  $in.WriteLine('{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"1"}}}')
+  $in.WriteLine('{"jsonrpc":"2.0","method":"notifications/initialized"}')
+  $in.WriteLine('{"jsonrpc":"2.0","id":2,"method":"tools/list"}')
+  $in.Flush()
+  $answer = ''
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  while ($sw.Elapsed.TotalSeconds -lt 30) {
+    $line = $server.StandardOutput.ReadLineAsync()
+    if (-not $line.Wait(30000)) { break }
+    if ($null -eq $line.Result) { break }
+    if ($line.Result -match '"id"\s*:\s*2') { $answer = $line.Result; break }
+  }
+  if (-not $server.HasExited) { $server.Kill() }
+  return $answer
+}
+
+function AppInFront { return [W]::GetForegroundWindow() -eq $script:h }
+function ReadEntry {
+  try { return (Get-Content $claudeConfig -Raw -ErrorAction Stop | ConvertFrom-Json).mcpServers.dosik } catch { return $null }
+}
+
+if ($claudeReady) {
+  # while keys go to the app, a watcher keeps closing what the runner puts over it
+  $guard = if ($env:GITHUB_ACTIONS) {
+    Start-Job { while ($true) { Get-Process wsl, wslhost, WindowsTerminal, OpenConsole -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 300 } }
+  }
+  $entry = $null
+  for ($attempt = 1; $attempt -le 3 -and -not $entry; $attempt++) {
+    QuietRunner; Start-Sleep -Seconds 3
+    Focus "Settings > Integrations ($attempt)"
+    [W]::Chord($VK_CTRL, $VK_COMMA); Start-Sleep -Seconds 2
+    # the dialog has the focus: General, AI assistant, Integrations, Enter
+    for ($i = 0; $i -lt 3; $i++) { [W]::Tap(0x09); Start-Sleep -Milliseconds 300 }
+    if (-not (AppInFront)) { Log "attempt $attempt - $(WindowName ([W]::GetForegroundWindow())) took the keys"; [W]::Tap($VK_ESC); continue }
+    [W]::Tap(0x0D); Start-Sleep -Seconds 4
+    Shot "11-integrations"
+    # then About, Close, and the first row's button that can be pressed - Claude
+    # Desktop's (Claude Code is not on the runner, so its Install is off)
+    for ($i = 0; $i -lt 3; $i++) { [W]::Tap(0x09); Start-Sleep -Milliseconds 300 }
+    if (-not (AppInFront)) { Log "attempt $attempt - $(WindowName ([W]::GetForegroundWindow())) took the keys"; [W]::Tap($VK_ESC); continue }
+    [W]::Tap(0x0D)
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($sw.Elapsed.TotalSeconds -lt 20 -and -not $entry) { Start-Sleep -Seconds 1; $entry = ReadEntry }
+    Shot "11b-after-install-$attempt"
+    # not written: close Settings and try the whole run of keys once more
+    if (-not $entry) { Log "attempt $attempt - no entry"; QuietRunner; [W]::SetForegroundWindow($script:h) | Out-Null; [W]::Tap($VK_ESC); Start-Sleep -Seconds 1 }
+  }
+  Start-Sleep -Seconds 2
+  Shot "12-integrations-claude-desktop-installed"
+  $serverPath = Join-Path $env:APPDATA 'app.dosik.desktop\mcp\server\server.mjs'
+  $registered = $entry -and (Test-Path $entry.command) -and @($entry.args).Count -eq 1 -and $entry.args[0] -eq $serverPath
+  Check "Install writes Dosik into Claude Desktop's config" $registered "config=$claudeConfig command=$($entry.command) args=$(@($entry.args) -join ' ')"
+  if ($registered) {
+    $tools = McpTools $entry.command @($entry.args)
+    Check "the server Claude Desktop starts answers with Dosik's tools" ($tools -match '"get_diagram"' -and $tools -match '"list_projects"') "answer=$($tools.Substring(0, [Math]::Min(160, $tools.Length)))"
+    # the button is Remove now and keeps the focus; it takes a press only once
+    # the row has read its facts again (slow under emulation), so a press that
+    # went nowhere is tried again
+    $gone = $false
+    for ($try = 1; $try -le 3 -and -not $gone; $try++) {
+      if (-not (AppInFront)) { Log "remove press $try - $(WindowName ([W]::GetForegroundWindow())) in front"; QuietRunner; [W]::SetForegroundWindow($script:h) | Out-Null; Start-Sleep -Seconds 1 }
+      [W]::Tap(0x0D)
+      $sw = [System.Diagnostics.Stopwatch]::StartNew()
+      while ($sw.Elapsed.TotalSeconds -lt 15 -and -not $gone) {
+        Start-Sleep -Seconds 1
+        $gone = $null -eq (ReadEntry) -and (Test-Path $claudeConfig)
+      }
+      Log "remove press $try gone=$gone"
+    }
+    Start-Sleep -Seconds 2
+    Shot "13-integrations-claude-desktop-removed"
+    Check "Remove takes Dosik out of Claude Desktop's config" $gone "config=$(Get-Content $claudeConfig -Raw -ErrorAction SilentlyContinue)"
+  }
+  [W]::Tap($VK_ESC); Start-Sleep -Seconds 1
+  if ($guard) { Stop-Job $guard -ErrorAction SilentlyContinue; Remove-Job $guard -Force -ErrorAction SilentlyContinue }
+} else {
+  Check "Claude Desktop checks (skipped: Claude Desktop could not be installed on this runner)" $true "see log.txt"
+}
+
 # ---- Alt+Tab (seen): the switcher with the app's icon over its window; Esc
 # before Alt goes up leaves it without switching. The window saw Alt go down
 # and up with nothing between, so it may be left in menu mode: one more Esc

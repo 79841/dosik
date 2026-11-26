@@ -6,6 +6,7 @@ import { create } from "zustand";
 import { toastError } from "../../../shared/lib/toastStore";
 import { Button, Caption, Group, Groups, Mono, Row, Status } from "../parts";
 import {
+  DESKTOP_CONFIG,
   NODE_URL,
   type PluginFacts,
   type PluginRow,
@@ -82,8 +83,8 @@ const readFacts = async (quiet = false): Promise<void> => {
  * Settings ▸ Integrations (#252): Dosik's MCP server in each AI app. Rust
  * reports the facts (`plugins_status`), `pluginRows` turns them into rows; an
  * action runs, then the facts are read again — the row stays busy until they
- * are in. Coming back to the window — from Claude Desktop's install prompt,
- * say — reads them again too. The AI apps reach Dosik through the bridge on
+ * are in. Coming back to the window — from installing Claude Desktop, say —
+ * reads them again too. The AI apps reach Dosik through the bridge on
  * its fixed port; when another app holds it, a row above the others says so.
  */
 export const IntegrationsSection = () => {
@@ -101,7 +102,6 @@ export const IntegrationsSection = () => {
   const act = async (row: PluginRow) => {
     const { does } = row.action;
     if (does === "get-node") return void openUrl(NODE_URL).catch(toastError);
-    if (does === "open") return void invoke("open_claude").catch(toastError);
     if (useIntegrationsStore.getState().busy.includes(row.target)) return;
     setBusy(row.target, true);
     try {
@@ -140,7 +140,11 @@ export const IntegrationsSection = () => {
                 <Row
                   key={row.target}
                   title={row.title}
-                  description={withCode(row.description, ["claude mcp add", facts.codex.config])}
+                  description={withCode(row.description, [
+                    "claude mcp add",
+                    DESKTOP_CONFIG,
+                    facts.codex.config,
+                  ])}
                 >
                   {/* hidden while it works, but kept: its words changing is what gets read out */}
                   <Status tone={row.tone} hidden={working}>
@@ -167,9 +171,8 @@ export const IntegrationsSection = () => {
       </Groups>
       <p className="m-0 mt-3 text-[11px] leading-[15px] text-muted">
         Dosik keeps the MCP server in its app data and refreshes it when Dosik updates, so moving or
-        updating Dosik keeps Claude Code, ChatGPT and Codex working. The Claude Desktop extension
-        carries its own copy; Dosik offers an update when it falls behind. Restart the AI app after
-        a change.
+        updating Dosik keeps Claude Code, Claude Desktop, ChatGPT and Codex working. Quit and reopen
+        the AI app after a change.
       </p>
     </>
   );

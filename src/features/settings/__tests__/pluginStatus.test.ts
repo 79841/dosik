@@ -1,15 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { olderVersion, type PluginFacts, pluginRows } from "../pluginStatus";
+import { type PluginFacts, pluginRows } from "../pluginStatus";
 
 const SERVER = "/Users/a/Library/Application Support/app.dosik.desktop/mcp/server/server.mjs";
 const facts = (over: Partial<PluginFacts> = {}): PluginFacts => ({
   server: SERVER,
   serverProblem: null,
   node: { path: "/usr/local/bin/node", version: "v22.18.0" },
-  appVersion: "0.2.0",
   claudeCode: { cli: true, registered: null },
-  claudeDesktop: { app: true, installedVersion: null },
+  claudeDesktop: { app: true, registered: null },
   codex: { config: "~/.codex/config.toml", registered: null },
   ...over,
 });
@@ -32,7 +31,7 @@ describe("plugin rows (#252, the canvas's Settings-Plugins and Settings-States)"
     ]);
   });
 
-  it("not registered → Not installed + Install; ours → Installed + Remove; another → Old path + Update", () => {
+  it("not registered → Not installed + Install; ours → Installed + Remove; another → Needs update + Update", () => {
     expect(row(facts(), "claude-code")).toMatchObject({
       tone: "off",
       status: "Not installed",
@@ -49,7 +48,7 @@ describe("plugin rows (#252, the canvas's Settings-Plugins and Settings-States)"
       row(facts({ codex: { config: "~/.codex/config.toml", registered: repo } }), "codex"),
     ).toMatchObject({
       tone: "warn",
-      status: "Old path",
+      status: "Needs update",
       action: { label: "Update", kind: "secondary", does: "install" },
     });
   });
@@ -65,53 +64,67 @@ describe("plugin rows (#252, the canvas's Settings-Plugins and Settings-States)"
     });
   });
 
-  it("no Node.js (or too old) → Needs Node.js + Get Node.js, for the two rows that run node — not Claude Desktop", () => {
+  it("no Node.js (or too old) → Needs Node.js + Get Node.js, for every row — all three run node", () => {
     for (const node of [null, { path: "/n", version: "v16.20.0" }]) {
       const f = facts({ node });
-      expect(row(f, "codex")).toMatchObject({
-        tone: "bad",
-        status: "Needs Node.js",
-        action: { label: "Get Node.js", does: "get-node", external: true },
-      });
-      expect(row(f, "claude-code").status).toBe("Needs Node.js");
-      expect(row(f, "claude-desktop").status).toBe("Not installed");
+      for (const target of ["claude-code", "claude-desktop", "codex"]) {
+        expect(row(f, target)).toMatchObject({
+          tone: "bad",
+          status: "Needs Node.js",
+          description: "The MCP server runs on Node.js, which this Mac does not have",
+          action: { label: "Get Node.js", does: "get-node", external: true },
+        });
+      }
     }
   });
 
-  it("Claude Desktop: not installed → Install…; behind → Update available; current → Installed + Open Claude", () => {
-    expect(row(facts(), "claude-desktop")).toMatchObject({
+  it("Claude Desktop: registered in its config like the others — one Install, no confirm step in Claude", () => {
+    const desktop = (over: Partial<PluginFacts["claudeDesktop"]>) =>
+      row(facts({ claudeDesktop: { app: true, registered: null, ...over } }), "claude-desktop");
+    const description = "Registered in Claude Desktop's claude_desktop_config.json";
+    expect(desktop({})).toMatchObject({
+      tone: "off",
       status: "Not installed",
-      description: "A Dosik extension in Claude Desktop — it asks you to confirm",
-      action: { label: "Install…", kind: "primary", does: "install" },
+      description,
+      action: { label: "Install", kind: "primary", does: "install" },
     });
-    expect(
-      row(facts({ claudeDesktop: { app: true, installedVersion: "0.1.0" } }), "claude-desktop"),
-    ).toMatchObject({
-      tone: "warn",
-      status: "Update available",
-      description: "Version 0.1.0 is installed; this Dosik has 0.2.0",
-      action: { label: "Update…", does: "install" },
-    });
-    expect(
-      row(facts({ claudeDesktop: { app: true, installedVersion: "0.2.0" } }), "claude-desktop"),
-    ).toMatchObject({
+    expect(desktop({ registered: ours })).toMatchObject({
       tone: "ok",
       status: "Installed",
-      description: "Remove or turn it off in Claude ▸ Settings ▸ Extensions",
-      action: { label: "Open Claude", kind: "ghost", does: "open", external: true },
+      description,
+      action: { label: "Remove", kind: "ghost", does: "remove" },
     });
-    expect(
-      row(facts({ claudeDesktop: { app: false, installedVersion: null } }), "claude-desktop"),
-    ).toMatchObject({
+    expect(desktop({ registered: repo })).toMatchObject({
+      tone: "warn",
+      status: "Needs update",
+      action: { label: "Update", kind: "secondary", does: "install" },
+    });
+    expect(desktop({ app: false })).toMatchObject({
+      tone: "off",
       status: "Claude Desktop not found",
+      description: "Install Claude Desktop first, then come back",
+      action: { label: "Install", kind: "primary", does: "install" },
       disabled: true,
     });
   });
 
-  it("a build without a server cannot install into Claude Code or Codex — and says why", () => {
+  it("no row offers Open Claude, Update available or a … button any more", () => {
+    const all = [
+      facts(),
+      facts({ claudeDesktop: { app: true, registered: ours } }),
+      facts({ claudeDesktop: { app: false, registered: null } }),
+    ].flatMap((f) => pluginRows(f, true));
+    for (const r of all) {
+      expect(r.action.label).not.toMatch(/…|Open Claude/);
+      expect(r.status).not.toBe("Update available");
+    }
+  });
+
+  it("a build without a server cannot install into any app — and says why", () => {
     const f = facts({ server: null });
     expect(row(f, "codex").disabled).toBe(true);
     expect(row(f, "claude-code").disabled).toBe(true);
+    expect(row(f, "claude-desktop").disabled).toBe(true);
     expect(row(f, "codex").description).toBe("This build of Dosik carries no MCP server.");
     const failed = facts({
       server: null,
@@ -120,7 +133,7 @@ describe("plugin rows (#252, the canvas's Settings-Plugins and Settings-States)"
     expect(row(failed, "codex").description).toBe("Copying the MCP server failed: disk full");
   });
 
-  it("registered with Dosik's server but a Node that is gone → Old path, so Update re-registers", () => {
+  it("registered with Dosik's server but a Node that is gone → Needs update, so Update re-registers", () => {
     const gone = {
       ...ours,
       command: "/Users/a/.nvm/versions/node/v22.18.0/bin/node",
@@ -129,19 +142,20 @@ describe("plugin rows (#252, the canvas's Settings-Plugins and Settings-States)"
     expect(
       row(facts({ codex: { config: "~/.codex/config.toml", registered: gone } }), "codex"),
     ).toMatchObject({
-      status: "Old path",
+      status: "Needs update",
       action: { label: "Update" },
     });
-  });
-
-  it("olderVersion compares semver numerically", () => {
-    expect(olderVersion("0.1.0", "0.2.0")).toBe(true);
-    expect(olderVersion("0.10.0", "0.9.0")).toBe(false);
-    expect(olderVersion("1.0.0", "1.0.0")).toBe(false);
   });
 });
 
 describe("plugin rows on Windows (the canvas's Win-Settings-States)", () => {
+  it("Claude Desktop without Node on Windows: this PC does not have it", () => {
+    expect(
+      pluginRows(facts({ node: null }), false).find((r) => r.target === "claude-desktop")
+        ?.description,
+    ).toBe("The MCP server runs on Node.js, which this PC does not have");
+  });
+
   it("no Node: this PC does not have it", () => {
     expect(row(facts({ node: null }), "codex").description).toBe(
       "The MCP server runs on Node.js, which this Mac does not have",

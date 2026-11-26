@@ -71,7 +71,7 @@ Try:
 
 > Export `docs/architecture.dosik` to Markdown.
 
-Claude Code and Codex need Node.js 18 or later; the Claude Desktop extension brings its own.
+Each app runs Dosik's MCP server with Node.js 18 or later, installed on your computer.
 
 ## Share it anywhere
 

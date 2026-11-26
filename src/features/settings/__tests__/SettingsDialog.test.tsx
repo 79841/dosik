@@ -98,12 +98,11 @@ const facts = (over: Record<string, unknown> = {}) => ({
   server: SERVER,
   serverProblem: null,
   node: { path: "/usr/local/bin/node", version: "v22.18.0" },
-  appVersion: "0.2.0",
   claudeCode: {
     cli: true,
     registered: { command: "/usr/local/bin/node", args: [SERVER], commandFound: true },
   },
-  claudeDesktop: { app: true, installedVersion: null },
+  claudeDesktop: { app: true, registered: null },
   codex: {
     config: "~/.codex/config.toml",
     registered: { command: "node", args: ["/old/server.mjs"], commandFound: true },
@@ -942,13 +941,20 @@ describe("Integrations", () => {
     render(<SettingsDialog />);
     act(() => openSettings("Integrations"));
     const rows = await within(dialog()).findByRole("region", { name: "AI apps" });
-    await within(rows).findByText("Old path");
+    await within(rows).findByText("Needs update");
     expect(within(rows).getByText("Installed")).toBeInTheDocument();
     expect(within(rows).getByText("Not installed")).toBeInTheDocument();
     expect(within(rows).getByRole("button", { name: "Remove" })).toBeInTheDocument();
-    expect(within(rows).getByRole("button", { name: "Install…" })).toBeInTheDocument();
+    expect(within(rows).getByRole("button", { name: "Install" })).toBeInTheDocument();
     expect(within(rows).getByRole("button", { name: "Update" })).toBeInTheDocument();
+    expect(within(rows).queryByRole("button", { name: /…|Open Claude/ })).toBeNull();
     expect(within(rows).getByText("claude mcp add").tagName).toBe("CODE");
+    expect(within(rows).getByText("claude_desktop_config.json").tagName).toBe("CODE");
+    expect(
+      within(dialog()).getByText(
+        "Dosik keeps the MCP server in its app data and refreshes it when Dosik updates, so moving or updating Dosik keeps Claude Code, Claude Desktop, ChatGPT and Codex working. Quit and reopen the AI app after a change.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("draws no rows until the facts are in", async () => {
@@ -1063,7 +1069,7 @@ describe("Integrations", () => {
     render(<SettingsDialog />);
     act(() => openSettings("Integrations"));
     const rows = await within(dialog()).findByRole("region", { name: "AI apps" });
-    await within(rows).findByText("Old path");
+    await within(rows).findByText("Needs update");
     answer(
       "plugins_status",
       facts({

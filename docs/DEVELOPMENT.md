@@ -31,7 +31,7 @@ gh workflow run windows-build.yml --ref <branch> -f smoke=false  # build only
 
 The installer is the run's `dosik-windows-x64` artifact. The smoke check then installs it on a Windows 11 (ARM, 1024×768) and a Windows Server 2025 (1920×1080) runner and walks through the window frame with real mouse and key input ([`scripts/windows-smoke.ps1`](../scripts/windows-smoke.ps1)):
 
-- **Checked** (a failure fails the job): silent install, the app icon filling its square (other apps' icons are measured alongside), first window placement, the Snap layouts spot over Maximize, one window menu for a right click on the band and for Alt+Space, F11 covering the screen and returning to the same window, Maximize and a double click on the band, no developer tools on F12, the agent bridge, Ctrl+W
+- **Checked** (a failure fails the job): silent install, the app icon filling its square (other apps' icons are measured alongside), first window placement, the Snap layouts spot over Maximize, one window menu for a right click on the band and for Alt+Space, F11 covering the screen and returning to the same window, Maximize and a double click on the band, no developer tools on F12, the agent bridge, Claude Desktop's Install and Remove in Settings ▸ Integrations (with Claude Desktop installed on the runner; its server answering with Dosik's tools), Ctrl+W
 - **Seen** (screenshots in the `smoke-<runner>` artifact): Snap layouts, the hover colours, the full screen toast, Settings still open after F5 / Ctrl+R, no browser menus, the app icon beside other apps' on the desktop, the taskbar, Alt+Tab and Start
 
 Each job's summary lists its checks. Dragging, the tray, sign-ins and connected apps still need a person.
@@ -45,10 +45,10 @@ While Dosik runs, a local REST API at `http://127.0.0.1:4517` lets any agent rea
 Open **Settings ▸ Integrations** (⌘,) and install Dosik into:
 
 - **Claude Code** — registered with `claude mcp add --scope user`, for every project
-- **Claude Desktop** — a Dosik extension; Claude Desktop asks you to confirm
+- **Claude Desktop** — one entry in its `claude_desktop_config.json`
 - **ChatGPT and Codex** — one entry in `~/.codex/config.toml`, which the ChatGPT desktop app and the Codex CLI share
 
-The app carries its MCP server and keeps a copy in its app data, refreshed when Dosik updates, so moving or updating Dosik keeps the AI apps working. Claude Code and Codex start it with Node.js 18 or later (the Claude Desktop extension uses Claude's own). Restart the AI app after a change. Dosik writes to `~/.codex/config.toml` and registers with Claude Code's user scope; a `CODEX_HOME` or `CLAUDE_CONFIG_DIR` set only in a shell profile is not seen by an app opened from Finder or the Start menu.
+The app carries its MCP server and keeps a copy in its app data, refreshed when Dosik updates, so moving or updating Dosik keeps the AI apps working. All three start it with the computer's Node.js 18 or later. Quit and reopen the AI app after a change. Dosik writes to `~/.codex/config.toml` and to Claude Desktop's config (in `~/Library/Application Support/Claude` on macOS; on Windows in the folder Claude itself uses, `%LOCALAPPDATA%\Claude-Data\…` for its MSIX build) and registers with Claude Code's user scope; a `CODEX_HOME` or `CLAUDE_CONFIG_DIR` set only in a shell profile is not seen by an app opened from Finder or the Start menu.
 
 From a checkout, for development:
 

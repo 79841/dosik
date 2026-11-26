@@ -15,9 +15,8 @@ export interface PluginFacts {
   /** why it is not there, or why the last copy failed */
   serverProblem: string | null;
   node: { path: string; version: string } | null;
-  appVersion: string;
   claudeCode: { cli: boolean; registered: Registration | null };
-  claudeDesktop: { app: boolean; installedVersion: string | null };
+  claudeDesktop: { app: boolean; registered: Registration | null };
   /** `config`: where its config.toml is, as Settings names it — `~/…` on macOS, whole on Windows */
   codex: { config: string; registered: Registration | null };
 }
@@ -27,7 +26,7 @@ export type PluginTarget = "claude-code" | "claude-desktop" | "codex";
 export interface PluginAction {
   label: string;
   kind: "primary" | "secondary" | "ghost";
-  does: "install" | "remove" | "open" | "get-node";
+  does: "install" | "remove" | "get-node";
   external?: boolean;
 }
 
@@ -45,7 +44,9 @@ export const NODE_URL = "https://nodejs.org";
 const MIN_NODE_MAJOR = 18;
 
 const DESC_CODE = "Registered with claude mcp add, for every project";
-const DESC_DESKTOP = "A Dosik extension in Claude Desktop";
+/** the file Claude Desktop keeps its MCP servers in — shown as code */
+export const DESKTOP_CONFIG = "claude_desktop_config.json";
+const DESC_DESKTOP = `Registered in Claude Desktop's ${DESKTOP_CONFIG}`;
 const descCodex = (config: string) => `The ChatGPT desktop app and Codex CLI share ${config}`;
 const descNode = (mac: boolean) =>
   `The MCP server runs on Node.js, which ${platformCopy(mac).machine} does not have`;
@@ -53,27 +54,13 @@ const DESC_NO_SERVER = "This build of Dosik carries no MCP server.";
 
 const INSTALL: PluginAction = { label: "Install", kind: "primary", does: "install" };
 
-/** `a` is an older semver than `b` */
-export const olderVersion = (a: string, b: string): boolean => {
-  const parts = (v: string) =>
-    v
-      .split(/[.+-]/)
-      .slice(0, 3)
-      .map((n) => Number.parseInt(n, 10) || 0);
-  const [x, y] = [parts(a), parts(b)];
-  for (let i = 0; i < 3; i++) {
-    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) < (y[i] ?? 0);
-  }
-  return false;
-};
-
 const nodeReady = (node: PluginFacts["node"]): boolean =>
   node !== null && (Number.parseInt(node.version.replace(/^v/, ""), 10) || 0) >= MIN_NODE_MAJOR;
 
-/** a row for an app Dosik registers by node + server path (Claude Code, ChatGPT and Codex) */
+/** a row for an app Dosik registers by node + server path — all three */
 const nodeRow = (
   facts: PluginFacts,
-  target: "claude-code" | "codex",
+  target: PluginTarget,
   title: string,
   description: string,
   registered: Registration | null,
@@ -110,58 +97,41 @@ const nodeRow = (
       action: { label: "Get Node.js", kind: "secondary", does: "get-node", external: true },
     };
   }
+  // registered, but not with this Dosik's copy (a repository checkout, another
+  // Dosik build, a url entry) or with a Node.js that is gone: Update rewrites it
   if (registered) {
     return {
       target,
       title,
       description,
       tone: "warn",
-      status: "Old path",
+      status: "Needs update",
       action: { label: "Update", kind: "secondary", does: "install" },
     };
   }
   return { target, title, description, tone: "off", status: "Not installed", action: INSTALL };
 };
 
-const desktopRow = ({ claudeDesktop, appVersion }: PluginFacts): PluginRow => {
-  const base = { target: "claude-desktop" as const, title: "Claude Desktop" };
-  if (!claudeDesktop.app) {
-    return {
-      ...base,
-      description: "Install Claude Desktop first, then come back",
-      tone: "off",
-      status: "Claude Desktop not found",
-      action: { label: "Install…", kind: "primary", does: "install" },
-      disabled: true,
-    };
-  }
-  const installed = claudeDesktop.installedVersion;
-  if (installed === null) {
-    return {
-      ...base,
-      description: `${DESC_DESKTOP} — it asks you to confirm`,
-      tone: "off",
-      status: "Not installed",
-      action: { label: "Install…", kind: "primary", does: "install" },
-    };
-  }
-  if (olderVersion(installed, appVersion)) {
-    return {
-      ...base,
-      description: `Version ${installed} is installed; this Dosik has ${appVersion}`,
-      tone: "warn",
-      status: "Update available",
-      action: { label: "Update…", kind: "secondary", does: "install" },
-    };
-  }
-  return {
-    ...base,
-    description: "Remove or turn it off in Claude ▸ Settings ▸ Extensions",
-    tone: "ok",
-    status: "Installed",
-    action: { label: "Open Claude", kind: "ghost", does: "open", external: true },
-  };
-};
+/** Claude Desktop: registered in its own config like the other two, once Claude Desktop is there */
+const desktopRow = (facts: PluginFacts, mac: boolean): PluginRow =>
+  facts.claudeDesktop.app
+    ? nodeRow(
+        facts,
+        "claude-desktop",
+        "Claude Desktop",
+        DESC_DESKTOP,
+        facts.claudeDesktop.registered,
+        mac,
+      )
+    : {
+        target: "claude-desktop",
+        title: "Claude Desktop",
+        description: "Install Claude Desktop first, then come back",
+        tone: "off",
+        status: "Claude Desktop not found",
+        action: INSTALL,
+        disabled: true,
+      };
 
 /** Settings ▸ Integrations, row by row (#252) — the facts decide; the section only draws */
 export const pluginRows = (facts: PluginFacts, mac: boolean = isMacPlatform()): PluginRow[] => {
@@ -178,7 +148,7 @@ export const pluginRows = (facts: PluginFacts, mac: boolean = isMacPlatform()): 
       };
   return [
     code,
-    desktopRow(facts),
+    desktopRow(facts, mac),
     nodeRow(
       facts,
       "codex",

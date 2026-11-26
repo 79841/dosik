@@ -7,11 +7,14 @@
 //!   `$CODEX_HOME/config.toml` (`~/.codex`), which the ChatGPT desktop app and
 //!   the Codex CLI share. Edited with `toml_edit`, so every other line — and
 //!   any key the user added to Dosik's table — stays as it was.
-//! - **Claude Desktop** — the bundled `dosik.mcpb`, handed to Claude Desktop,
-//!   which asks the user to confirm. Installed state is read from Claude's
-//!   `extensions-installations.json` (`extensions["local.mcpb.dosik.dosik"]`)
-//!   in its folder: `~/Library/Application Support/Claude` on macOS,
-//!   `%APPDATA%\Claude` on Windows.
+//! - **Claude Desktop** — one `mcpServers.dosik` entry in its
+//!   `claude_desktop_config.json`, in Claude's data folder
+//!   (`claude_data_dir`): `~/Library/Application Support/Claude` on macOS; on
+//!   Windows the folder Claude itself picks, `%LOCALAPPDATA%\Claude-Data\<package>`
+//!   for its MSIX build. Edited with `serde_json` (`preserve_order`), so every
+//!   other key stays where it was.
+//!
+//! All three start the server copy with the computer's own Node.js.
 //!
 //! The readers take their folders and probes as arguments, so the tests run on
 //! temp folders and never touch the user's files or start other programs.
@@ -27,10 +30,15 @@ use crate::chat::{cli_command, output_with_timeout, CHECK_TIMEOUT};
 
 /// the name Dosik registers under, everywhere
 pub const SERVER_NAME: &str = "dosik";
-/// Claude Desktop's id for the bundled extension — `scripts/build-mcp.mjs` derives the same
-pub const DESKTOP_EXTENSION_ID: &str = "local.mcpb.dosik.dosik";
 /// Claude Desktop's bundle identifier, to find the app without opening anything
 pub const CLAUDE_BUNDLE_ID: &str = "com.anthropic.claudefordesktop";
+/// Claude Desktop's MSIX package families on Windows: the direct download, then the Microsoft Store build
+pub const CLAUDE_PACKAGE_FAMILIES: [&str; 2] =
+    ["Claude_pzs8sxrjxfjjc", "AnthropicPBC.Claude_fnn82j28hfe8t"];
+/// the file in Claude Desktop's data folder that holds its MCP servers
+pub const CLAUDE_CONFIG: &str = "claude_desktop_config.json";
+/// Install on a Windows Claude Desktop that has not made its data folder yet
+const DESKTOP_NEVER_OPENED: &str = "Open Claude Desktop once, then try again.";
 /// the oldest Node the MCP SDK runs on (the packaged server is built for it)
 pub const MIN_NODE_MAJOR: u32 = 18;
 /// `claude mcp add/remove` may take a moment, never forever
@@ -48,13 +56,19 @@ fn string_list(values: impl Iterator<Item = Option<String>>) -> Vec<String> {
     values.flatten().collect()
 }
 
+/// JSON text without the byte order mark some editors put before UTF-8
+fn without_bom(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
+}
+
 // ---------- Claude Code ----------
 
-/// `mcpServers.dosik` in Claude Code's user config. An entry that is not a
-/// stdio one (a url) has no command: it reads as registered elsewhere, so
-/// Update replaces it rather than an `add` that refuses the name.
-pub fn claude_code_entry(claude_json: &str) -> Option<Registration> {
-    let value: serde_json::Value = serde_json::from_str(claude_json).ok()?;
+/// `mcpServers.dosik` in Claude Code's user config (`~/.claude.json`) or
+/// Claude Desktop's config — the same shape. An entry that is not a stdio one
+/// (a url) has no command: it reads as registered elsewhere, so Update
+/// replaces it rather than an `add` that refuses the name.
+pub fn mcp_servers_entry(config_json: &str) -> Option<Registration> {
+    let value: serde_json::Value = serde_json::from_str(without_bom(config_json)).ok()?;
     let entry = value.get("mcpServers")?.get(SERVER_NAME)?;
     Some(Registration {
         command: entry
@@ -212,7 +226,9 @@ pub fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = target.parent() {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
-    let tmp = target.with_extension("toml.dosik-tmp");
+    let mut tmp_name = target.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(".dosik-tmp");
+    let tmp = target.with_file_name(tmp_name);
     let _ = std::fs::remove_file(&tmp);
     // made with the file's own permissions (a new file: owner only), so a config
     // holding a token is never readable by others, not even for a moment
@@ -244,44 +260,156 @@ pub fn write_atomically(path: &Path, text: &str) -> Result<(), String> {
 
 // ---------- Claude Desktop ----------
 
-/// the version of the Dosik extension Claude Desktop has installed, if any
-pub fn desktop_installed_version(installations_json: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(installations_json).ok()?;
-    value
-        .get("extensions")?
-        .get(DESKTOP_EXTENSION_ID)?
-        .get("version")?
-        .as_str()
-        .map(str::to_string)
+type JsonObject = serde_json::Map<String, serde_json::Value>;
+
+/// Claude Desktop's config as an object — an empty one for a file not there
+/// yet; None when it is not JSON or not an object, which is never written over
+fn desktop_config(config: &str) -> Option<JsonObject> {
+    let config = without_bom(config);
+    if config.trim().is_empty() {
+        return Some(JsonObject::new());
+    }
+    match serde_json::from_str(config).ok()? {
+        serde_json::Value::Object(object) => Some(object),
+        _ => None,
+    }
 }
 
-/// Claude Desktop's own folder in the user's app data — `data_dir` is
-/// `~/Library/Application Support` on macOS and `%APPDATA%` on Windows
-pub fn claude_support_dir(data_dir: &Path) -> PathBuf {
-    data_dir.join("Claude")
+/// written as Claude Desktop writes it: two-space indent, a newline at the end
+fn desktop_text(config: &JsonObject) -> String {
+    let mut text = serde_json::to_string_pretty(config).unwrap_or_default();
+    text.push('\n');
+    text
 }
 
-/// Where Claude Desktop's program may be on Windows: its installer puts it
-/// in the user's local app data. An estimate, to be checked on a Windows machine
-pub fn claude_desktop_exe_candidates(local_data: &Path) -> Vec<PathBuf> {
-    vec![
-        local_data.join("AnthropicClaude").join("claude.exe"),
+/// The config with `mcpServers.dosik` starting `node server`. Only `command`
+/// and `args` are set: other keys in Dosik's entry (an `env` the user added)
+/// and everything else in the file stay, in their order. An entry for another
+/// transport (a `url`) is replaced. Err when the file is not a config object
+/// (or its `mcpServers` not an object): it is left as it is.
+pub fn desktop_set(config: &str, node: &Path, server: &Path) -> Result<String, ()> {
+    let mut config = desktop_config(config).ok_or(())?;
+    let servers = config
+        .entry("mcpServers")
+        .or_insert_with(|| serde_json::Value::Object(JsonObject::new()))
+        .as_object_mut()
+        .ok_or(())?;
+    let entry = servers
+        .entry(SERVER_NAME)
+        .or_insert_with(|| serde_json::Value::Object(JsonObject::new()));
+    // not an object, or a url entry (another transport): start it afresh
+    if entry.as_object().is_none_or(|e| e.contains_key("url")) {
+        *entry = serde_json::Value::Object(JsonObject::new());
+    }
+    let entry = entry.as_object_mut().ok_or(())?;
+    entry.insert("command".into(), node.to_string_lossy().into_owned().into());
+    entry.insert("args".into(), serde_json::json!([server.to_string_lossy()]));
+    Ok(desktop_text(&config))
+}
+
+/// The config without `mcpServers.dosik` — None when it has none (nothing to
+/// write); Err when it is not a config object
+pub fn desktop_remove(config: &str) -> Result<Option<String>, ()> {
+    let mut config = desktop_config(config).ok_or(())?;
+    let removed = config
+        .get_mut("mcpServers")
+        .and_then(|s| s.as_object_mut())
+        .and_then(|s| s.shift_remove(SERVER_NAME))
+        .is_some();
+    Ok(removed.then(|| desktop_text(&config)))
+}
+
+/// Claude Desktop's error for a config it cannot read, naming the file
+fn desktop_unreadable(config: &Path) -> String {
+    format!(
+        "Claude Desktop's settings file can't be read — fix or remove it, then try again: {}",
+        config.display()
+    )
+}
+
+/// Install's work on Claude Desktop's files: Dosik's entry into the config in
+/// its data folder. Refused before Claude has made that folder (Windows); a
+/// config that cannot be read is never written over.
+pub fn desktop_install(
+    claude_data: Option<&Path>,
+    node: &Path,
+    server: &Path,
+) -> Result<(), String> {
+    let config = claude_data.ok_or(DESKTOP_NEVER_OPENED)?.join(CLAUDE_CONFIG);
+    let next = desktop_set(&read_config(&config)?, node, server)
+        .map_err(|()| desktop_unreadable(&config))?;
+    write_atomically(&config, &next)
+}
+
+/// Remove's work: Dosik's entry out of the config — nothing written when it
+/// has none, nothing made when Claude has no data folder or config yet
+pub fn desktop_uninstall(claude_data: Option<&Path>) -> Result<(), String> {
+    let Some(dir) = claude_data else {
+        return Ok(());
+    };
+    let config = dir.join(CLAUDE_CONFIG);
+    match desktop_remove(&read_config(&config)?).map_err(|()| desktop_unreadable(&config))? {
+        Some(next) => write_atomically(&config, &next),
+        None => Ok(()),
+    }
+}
+
+/// Claude Desktop's data folder, where its config is. macOS: `<data_dir>/Claude` (`~/Library/Application Support`), made
+/// by Claude or by Dosik's first write. Windows: of the folders Claude itself
+/// chooses from, the first there is, in its own order — the MSIX build's
+/// folder moved out of its package (`%LOCALAPPDATA%\Claude-Data\<family, lower
+/// case>`), the earlier exe install's `%APPDATA%\Claude` (which the MSIX build
+/// keeps using when it is there), the package's own copy before the move; None
+/// before Claude has made one (Dosik does not make it: Claude decides where
+/// its data goes on its first start). `data_dir` is `%APPDATA%` there.
+pub fn claude_data_dir(windows: bool, data_dir: &Path, local_data: &Path) -> Option<PathBuf> {
+    if !windows {
+        return Some(data_dir.join("Claude"));
+    }
+    let moved = CLAUDE_PACKAGE_FAMILIES
+        .iter()
+        .map(|family| local_data.join("Claude-Data").join(family.to_lowercase()));
+    let in_package = CLAUDE_PACKAGE_FAMILIES.iter().map(|family| {
         local_data
-            .join("Programs")
+            .join("Packages")
+            .join(family)
+            .join("LocalCache")
+            .join("Roaming")
             .join("Claude")
-            .join("Claude.exe"),
-    ]
+    });
+    moved
+        .chain(std::iter::once(data_dir.join("Claude")))
+        .chain(in_package)
+        .find(|dir| dir.is_dir())
+}
+
+/// Whether Claude Desktop's program is on this Windows machine: its MSIX
+/// package (direct download or Store), its app execution alias, or the
+/// earlier exe installer's program. The alias is a reparse point that cannot
+/// be followed, so it is looked at, not through.
+pub fn claude_program_on_windows(local_data: &Path) -> bool {
+    CLAUDE_PACKAGE_FAMILIES
+        .iter()
+        .any(|family| local_data.join("Packages").join(family).is_dir())
+        || std::fs::symlink_metadata(
+            local_data
+                .join("Microsoft")
+                .join("WindowsApps")
+                .join("claude-desktop.exe"),
+        )
+        .is_ok()
+        || local_data
+            .join("AnthropicClaude")
+            .join("claude.exe")
+            .exists()
 }
 
 /// Whether Claude Desktop is on this machine. macOS: where apps go, then
-/// Spotlight by its bundle id. Windows: its program where its installer puts
-/// it, or its folder in the app data. Nothing is opened or revealed.
-pub fn claude_app_present(home: &Path, local_data: &Path, support: &Path) -> bool {
+/// Spotlight by its bundle id. Windows: its data folder or its program
+/// (`claude_program_on_windows`). Nothing is opened or revealed.
+pub fn claude_app_present(home: &Path, local_data: &Path, claude_data: Option<&Path>) -> bool {
     if cfg!(windows) {
-        return support.is_dir()
-            || claude_desktop_exe_candidates(local_data)
-                .iter()
-                .any(|p| p.exists());
+        return claude_data.is_some() || claude_program_on_windows(local_data);
     }
     if !cfg!(target_os = "macos") {
         return false;
@@ -482,7 +610,7 @@ pub struct ClaudeCodeFacts {
 #[serde(rename_all = "camelCase")]
 pub struct DesktopFacts {
     pub app: bool,
-    pub installed_version: Option<String>,
+    pub registered: Option<RegisteredFacts>,
 }
 
 #[derive(Serialize, Debug)]
@@ -502,7 +630,6 @@ pub struct PluginFacts {
     /// why it is not there (or why the last copy failed)
     pub server_problem: Option<String>,
     pub node: Option<NodeInfo>,
-    pub app_version: String,
     pub claude_code: ClaudeCodeFacts,
     pub claude_desktop: DesktopFacts,
     pub codex: CodexFacts,
@@ -511,11 +638,11 @@ pub struct PluginFacts {
 /// the places Plugins reads and writes, from the app (tests build their own)
 pub struct PluginPlaces {
     pub home: PathBuf,
-    /// the user's local app data (`%LOCALAPPDATA%` on Windows) — where Claude Desktop's program goes
+    /// the user's local app data (`%LOCALAPPDATA%` on Windows) — where Claude Desktop's package goes
     pub local_data: PathBuf,
     pub server_dir: PathBuf,
-    pub mcpb: PathBuf,
-    pub claude_support: PathBuf,
+    /// Claude Desktop's data folder (`claude_data_dir`) — None on Windows before Claude made one
+    pub claude_data: Option<PathBuf>,
     pub codex_config: PathBuf,
 }
 
@@ -534,18 +661,16 @@ pub struct Probes {
 }
 
 fn places<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Result<PluginPlaces, String> {
-    use tauri::path::BaseDirectory;
     use tauri::Manager;
     let home = app.path().home_dir().map_err(|e| e.to_string())?;
     let data = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let local_data = app.path().local_data_dir().map_err(|e| e.to_string())?;
+    // the user's data folder: ~/Library/Application Support on macOS, %APPDATA% on Windows
+    let user_data = app.path().data_dir().map_err(|e| e.to_string())?;
     Ok(PluginPlaces {
         server_dir: crate::mcp_install::installed_dir(&data),
-        mcpb: app
-            .path()
-            .resolve("mcp/dosik.mcpb", BaseDirectory::Resource)
-            .map_err(|e| e.to_string())?,
-        claude_support: claude_support_dir(&app.path().data_dir().map_err(|e| e.to_string())?),
-        local_data: app.path().local_data_dir().map_err(|e| e.to_string())?,
+        claude_data: claude_data_dir(cfg!(windows), &user_data, &local_data),
+        local_data,
         codex_config: codex_config_path(std::env::var("CODEX_HOME").ok().as_deref(), &home),
         home,
     })
@@ -555,7 +680,7 @@ fn read(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-pub fn facts(places: &PluginPlaces, app_version: &str, probes: Probes) -> PluginFacts {
+pub fn facts(places: &PluginPlaces, probes: Probes) -> PluginFacts {
     let server = places.server_dir.join(crate::mcp_install::SERVER_ENTRY);
     PluginFacts {
         server: server
@@ -563,19 +688,22 @@ pub fn facts(places: &PluginPlaces, app_version: &str, probes: Probes) -> Plugin
             .then(|| server.to_string_lossy().into_owned()),
         server_problem: probes.server_problem,
         node: probes.node,
-        app_version: app_version.to_string(),
         claude_code: ClaudeCodeFacts {
             cli: probes.claude_cli,
             registered: read(&places.home.join(".claude.json"))
                 .as_deref()
-                .and_then(claude_code_entry)
+                .and_then(mcp_servers_entry)
                 .map(registered_facts),
         },
         claude_desktop: DesktopFacts {
             app: probes.claude_app,
-            installed_version: read(&places.claude_support.join("extensions-installations.json"))
+            registered: places
+                .claude_data
+                .as_ref()
+                .and_then(|dir| read(&dir.join(CLAUDE_CONFIG)))
                 .as_deref()
-                .and_then(desktop_installed_version),
+                .and_then(mcp_servers_entry)
+                .map(registered_facts),
         },
         codex: CodexFacts {
             config: config_shown(places, cfg!(windows)),
@@ -594,16 +722,16 @@ pub fn plugins_status<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<Plu
     let probes = Probes {
         node: find_node(),
         claude_cli: crate::chat::find_claude_cli().is_some(),
-        claude_app: claude_app_present(&places.home, &places.local_data, &places.claude_support),
+        claude_app: claude_app_present(
+            &places.home,
+            &places.local_data,
+            places.claude_data.as_deref(),
+        ),
         server_problem: app
             .try_state::<crate::mcp_install::McpServerState>()
             .and_then(|s| s.0.lock().unwrap().clone()),
     };
-    Ok(facts(
-        &places,
-        &app.package_info().version.to_string(),
-        probes,
-    ))
+    Ok(facts(&places, probes))
 }
 
 // ---------- actions ----------
@@ -656,7 +784,7 @@ pub fn plugin_install<R: tauri::Runtime>(
             let (server, node) = server_and_node(&app, &places)?;
             let registered = read(&places.home.join(".claude.json"))
                 .as_deref()
-                .and_then(claude_code_entry);
+                .and_then(mcp_servers_entry);
             let (steps, restore) = claude_install_plan(registered.as_ref(), &node, &server);
             for (i, step) in steps.iter().enumerate() {
                 if let Err(e) = run_claude(step) {
@@ -679,16 +807,14 @@ pub fn plugin_install<R: tauri::Runtime>(
                 .map_err(|e| name_codex_config(e, &places))
         }
         "claude-desktop" => {
-            if !places.mcpb.exists() {
-                return Err("This build of Dosik carries no Claude Desktop extension.".into());
-            }
-            open_with_claude(&app, &places, Some(&places.mcpb))
+            let (server, node) = server_and_node(&app, &places)?;
+            desktop_install(places.claude_data.as_deref(), &node, &server)
         }
         other => Err(format!("unknown plugin target: {other}")),
     }
 }
 
-/// Remove Dosik from Claude Code or Codex — Claude Desktop removes its own extensions
+/// Remove Dosik from one app: `claude-code`, `codex` or `claude-desktop`
 #[tauri::command(async)]
 pub fn plugin_remove<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -705,6 +831,7 @@ pub fn plugin_remove<R: tauri::Runtime>(
             }
             write_atomically(&places.codex_config, &next)
         }
+        "claude-desktop" => desktop_uninstall(places.claude_data.as_deref()),
         other => Err(format!("Dosik cannot remove itself from {other}")),
     }
 }
@@ -712,93 +839,6 @@ pub fn plugin_remove<R: tauri::Runtime>(
 /// an error about the Codex config, naming the file where it is
 fn name_codex_config(error: String, places: &PluginPlaces) -> String {
     error.replace(CODEX_CONFIG_NAME, &config_shown(places, cfg!(windows)))
-}
-
-/// Whether Windows has a program to open this file's kind with — without
-/// one, opening it would only ask the user which app to use
-#[cfg(windows)]
-fn has_open_handler(file: &Path) -> bool {
-    use windows::core::{HSTRING, PCWSTR};
-    use windows::Win32::UI::Shell::{AssocQueryStringW, ASSOCF_NONE, ASSOCSTR_EXECUTABLE};
-    let Some(ext) = file.extension().and_then(|e| e.to_str()) else {
-        return false;
-    };
-    let ext = HSTRING::from(format!(".{ext}"));
-    let mut len = 0u32;
-    // asked for the length only: a handler answers with it, none with an error
-    // SAFETY: a lookup with no output buffer; `len` outlives the call
-    unsafe {
-        AssocQueryStringW(
-            ASSOCF_NONE,
-            ASSOCSTR_EXECUTABLE,
-            &ext,
-            PCWSTR::null(),
-            None,
-            &mut len,
-        )
-    }
-    .is_ok()
-        && len > 0
-}
-
-#[cfg(not(windows))]
-fn has_open_handler(_file: &Path) -> bool {
-    false
-}
-
-/// Opens Claude Desktop, handing it `file` (the extension to install) if any.
-/// macOS: `open -b` by its bundle id. Windows: the file through its own
-/// association when there is one (Claude Desktop registers `.mcpb`) — surer
-/// than a guessed program, which may not pass the file on — else Claude
-/// Desktop's program with the file; with no file, the program.
-fn open_with_claude<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    places: &PluginPlaces,
-    file: Option<&Path>,
-) -> Result<(), String> {
-    if cfg!(windows) {
-        use tauri_plugin_opener::OpenerExt;
-        let program = claude_desktop_exe_candidates(&places.local_data)
-            .into_iter()
-            .find(|p| p.exists());
-        let spawn = |file: Option<&Path>| {
-            program.as_ref().is_some_and(|program| {
-                let mut cmd = std::process::Command::new(program);
-                if let Some(file) = file {
-                    cmd.arg(file);
-                }
-                cmd.spawn().is_ok()
-            })
-        };
-        let opened = match file {
-            Some(file) if has_open_handler(file) => app
-                .opener()
-                .open_path(file.to_string_lossy(), None::<&str>)
-                .is_ok(),
-            file => spawn(file),
-        };
-        return if opened {
-            Ok(())
-        } else {
-            Err("Claude Desktop could not be opened.".into())
-        };
-    }
-    let mut cmd = std::process::Command::new("open");
-    cmd.args(["-b", CLAUDE_BUNDLE_ID]);
-    if let Some(file) = file {
-        cmd.arg(file);
-    }
-    match output_with_timeout(&mut cmd, CHECK_TIMEOUT) {
-        Some(output) if output.status.success() => Ok(()),
-        _ => Err("Claude Desktop could not be opened.".into()),
-    }
-}
-
-/// Plugins ▸ Claude Desktop ▸ Open Claude
-#[tauri::command(async)]
-pub fn open_claude<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), String> {
-    let places = places(&app)?;
-    open_with_claude(&app, &places, None)
 }
 
 #[cfg(test)]
@@ -813,19 +853,24 @@ mod tests {
     }
 
     #[test]
-    fn claude_code_entry_reads_the_user_scope_dosik_server() {
+    fn mcp_servers_entry_reads_dosiks_server_from_claude_code_or_claude_desktop() {
         let json = r#"{"numStartups":3,"mcpServers":{"dosik":{"type":"stdio","command":"node","args":["/a/server.mjs"],"env":{}},"other":{"command":"x"}}}"#;
         assert_eq!(
-            claude_code_entry(json),
+            mcp_servers_entry(json),
             Some(reg("node", &["/a/server.mjs"]))
         );
-        assert_eq!(claude_code_entry(r#"{"mcpServers":{"other":{}}}"#), None);
+        assert_eq!(mcp_servers_entry(r#"{"mcpServers":{"other":{}}}"#), None);
         // a url entry is registered — with no command, so Update replaces it
         assert_eq!(
-            claude_code_entry(r#"{"mcpServers":{"dosik":{"url":"http://x"}}}"#),
+            mcp_servers_entry(r#"{"mcpServers":{"dosik":{"url":"http://x"}}}"#),
             Some(reg("", &[]))
         );
-        assert_eq!(claude_code_entry("not json"), None);
+        assert_eq!(mcp_servers_entry("not json"), None);
+        // read like the writer reads it: a byte order mark in front is no matter
+        assert_eq!(
+            mcp_servers_entry("\u{feff}{\"mcpServers\":{\"dosik\":{\"command\":\"n\"}}}"),
+            Some(reg("n", &[]))
+        );
     }
 
     #[test]
@@ -1026,11 +1071,163 @@ mod tests {
     }
 
     #[test]
-    fn desktop_installed_version_reads_claudes_installation_list() {
-        let json = r#"{"extensions":{"local.mcpb.dosik.dosik":{"version":"0.1.0","hash":"ab","signatureInfo":{"status":"unsigned"}},"ant.dir.x":{"version":"9"}}}"#;
-        assert_eq!(desktop_installed_version(json), Some("0.1.0".into()));
-        assert_eq!(desktop_installed_version(r#"{"extensions":{}}"#), None);
-        assert_eq!(desktop_installed_version("[]"), None);
+    fn desktop_set_adds_dosik_to_a_missing_or_empty_config() {
+        let set = desktop_set("", Path::new("/n/node"), Path::new("/s/server.mjs")).unwrap();
+        assert_eq!(
+            set,
+            "{\n  \"mcpServers\": {\n    \"dosik\": {\n      \"command\": \"/n/node\",\n      \"args\": [\n        \"/s/server.mjs\"\n      ]\n    }\n  }\n}\n"
+        );
+        assert_eq!(
+            desktop_set("  \n", Path::new("/n/node"), Path::new("/s/server.mjs")).unwrap(),
+            set
+        );
+    }
+
+    #[test]
+    fn desktop_set_touches_nothing_but_dosiks_command_and_args() {
+        let config = r#"{
+  "preferences": { "sidebarMode": "chat", "alpha": true },
+  "mcpServers": {
+    "zeta": { "command": "z" },
+    "dosik": { "command": "/old/node", "args": ["/old/server.mjs"], "env": { "A": "1" } },
+    "alpha": { "command": "a" }
+  },
+  "globalShortcut": "Alt+Space"
+}"#;
+        let set = desktop_set(config, Path::new("/n/node"), Path::new("/s/server.mjs")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&set).unwrap();
+        let dosik = &value["mcpServers"]["dosik"];
+        assert_eq!(dosik["command"], "/n/node");
+        assert_eq!(dosik["args"], serde_json::json!(["/s/server.mjs"]));
+        assert_eq!(dosik["env"], serde_json::json!({ "A": "1" }));
+        assert_eq!(
+            value["mcpServers"]["zeta"],
+            serde_json::json!({ "command": "z" })
+        );
+        assert_eq!(value["globalShortcut"], "Alt+Space");
+        // the keys keep their order, at every level
+        let keys =
+            |v: &serde_json::Value| v.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+        assert_eq!(
+            keys(&value),
+            ["preferences", "mcpServers", "globalShortcut"]
+        );
+        assert_eq!(keys(&value["preferences"]), ["sidebarMode", "alpha"]);
+        assert_eq!(keys(&value["mcpServers"]), ["zeta", "dosik", "alpha"]);
+        assert_eq!(keys(dosik), ["command", "args", "env"]);
+        assert!(set.ends_with("}\n"));
+    }
+
+    #[test]
+    fn desktop_set_replaces_an_entry_that_is_not_stdio() {
+        let set = desktop_set(
+            r#"{"mcpServers":{"dosik":{"url":"http://127.0.0.1:1/mcp","transport":"http"}}}"#,
+            Path::new("/n/node"),
+            Path::new("/s/server.mjs"),
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&set).unwrap();
+        assert_eq!(
+            value["mcpServers"]["dosik"],
+            serde_json::json!({ "command": "/n/node", "args": ["/s/server.mjs"] })
+        );
+        // an entry that is not an object at all is started afresh too
+        let set = desktop_set(
+            r#"{"mcpServers":{"dosik":3}}"#,
+            Path::new("/n/node"),
+            Path::new("/s/server.mjs"),
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&set).unwrap();
+        assert_eq!(value["mcpServers"]["dosik"]["command"], "/n/node");
+    }
+
+    #[test]
+    fn desktop_set_reads_a_config_saved_with_a_byte_order_mark() {
+        let set = desktop_set(
+            "\u{feff}{\"a\":1}",
+            Path::new("/n/node"),
+            Path::new("/s/server.mjs"),
+        )
+        .unwrap();
+        // written back without it
+        assert!(set.starts_with('{'));
+        let value: serde_json::Value = serde_json::from_str(&set).unwrap();
+        assert_eq!(value["a"], 1);
+        assert_eq!(value["mcpServers"]["dosik"]["command"], "/n/node");
+    }
+
+    #[test]
+    fn desktop_install_never_writes_over_a_config_it_cannot_read_nor_makes_claudes_folder() {
+        let root = temp("desktop-install");
+        let (node, server) = (Path::new("/n/node"), Path::new("/s/server.mjs"));
+        // Windows, Claude never opened: refused, and no folder made for it
+        assert_eq!(
+            desktop_install(None, node, server),
+            Err(DESKTOP_NEVER_OPENED.to_string())
+        );
+        assert_eq!(desktop_uninstall(None), Ok(()));
+        // a config that is not JSON: an error naming it, its bytes as they were
+        let data = root.join("Claude");
+        std::fs::create_dir_all(&data).unwrap();
+        let config = data.join(CLAUDE_CONFIG);
+        std::fs::write(&config, "{ broken").unwrap();
+        let error = desktop_install(Some(&data), node, server).unwrap_err();
+        assert!(error.contains(&config.display().to_string()), "{error}");
+        assert_eq!(desktop_uninstall(Some(&data)).unwrap_err(), error);
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), "{ broken");
+        // a good one: Dosik's entry in, then out — and no temp file left beside it
+        std::fs::write(&config, r#"{"preferences":{"x":1}}"#).unwrap();
+        desktop_install(Some(&data), node, server).unwrap();
+        assert!(mcp_servers_entry(&std::fs::read_to_string(&config).unwrap()).is_some());
+        desktop_uninstall(Some(&data)).unwrap();
+        assert_eq!(
+            mcp_servers_entry(&std::fs::read_to_string(&config).unwrap()),
+            None
+        );
+        let names: Vec<_> = std::fs::read_dir(&data)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [CLAUDE_CONFIG]);
+        // nothing to take out of a Claude with no config yet: no file made
+        let empty = root.join("Empty");
+        std::fs::create_dir_all(&empty).unwrap();
+        desktop_uninstall(Some(&empty)).unwrap();
+        assert!(!empty.join(CLAUDE_CONFIG).exists());
+    }
+
+    #[test]
+    fn desktop_set_leaves_a_config_it_cannot_read() {
+        for config in ["not json", "[]", r#"{"mcpServers": []}"#] {
+            assert!(
+                desktop_set(config, Path::new("/n/node"), Path::new("/s")).is_err(),
+                "{config}"
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_remove_takes_out_dosik_alone() {
+        let config = r#"{"a":1,"mcpServers":{"x":{"command":"x"},"dosik":{"command":"n"},"y":{"command":"y"}},"b":2}"#;
+        let removed = desktop_remove(config).unwrap().unwrap();
+        let value: serde_json::Value = serde_json::from_str(&removed).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({ "a": 1, "mcpServers": { "x": { "command": "x" }, "y": { "command": "y" } }, "b": 2 })
+        );
+        let keys: Vec<_> = value["mcpServers"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(keys, ["x", "y"]);
+        // nothing of Dosik's there: nothing to write
+        assert_eq!(desktop_remove(r#"{"mcpServers":{"x":{}}}"#).unwrap(), None);
+        assert_eq!(desktop_remove(r#"{"a":1}"#).unwrap(), None);
+        assert_eq!(desktop_remove("").unwrap(), None);
+        assert!(desktop_remove("not json").is_err());
     }
 
     #[test]
@@ -1059,15 +1256,15 @@ mod tests {
     #[test]
     fn facts_read_each_app_from_the_given_places() {
         let root = temp("facts");
+        let claude_data = root.join("local/Claude-Data/claude_pzs8sxrjxfjjc");
         let places = PluginPlaces {
             home: root.join("home"),
             server_dir: root.join("data/mcp/server"),
-            mcpb: root.join("res/mcp/dosik.mcpb"),
-            claude_support: root.join("home/Library/Application Support/Claude"),
+            claude_data: Some(claude_data.clone()),
             local_data: root.join("local"),
             codex_config: root.join("home/.codex/config.toml"),
         };
-        std::fs::create_dir_all(&places.claude_support).unwrap();
+        std::fs::create_dir_all(&claude_data).unwrap();
         std::fs::create_dir_all(places.codex_config.parent().unwrap()).unwrap();
         std::fs::create_dir_all(&places.server_dir).unwrap();
         std::fs::write(places.server_dir.join("server.mjs"), "").unwrap();
@@ -1080,8 +1277,8 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            places.claude_support.join("extensions-installations.json"),
-            r#"{"extensions":{"local.mcpb.dosik.dosik":{"version":"0.1.0"}}}"#,
+            claude_data.join("claude_desktop_config.json"),
+            r#"{"mcpServers":{"dosik":{"command":"node","args":["/d"]}}}"#,
         )
         .unwrap();
         let probes = Probes {
@@ -1090,14 +1287,18 @@ mod tests {
             claude_app: true,
             server_problem: None,
         };
-        let f = facts(&places, "0.2.0", probes);
-        assert_eq!(f.app_version, "0.2.0");
+        let f = facts(&places, probes);
         assert!(f.server.unwrap().ends_with("server.mjs"));
         let registered = f.claude_code.registered.unwrap();
         assert_eq!(registered.args, ["/x"]);
         // the node it points at is gone
         assert!(!registered.command_found);
-        assert_eq!(f.claude_desktop.installed_version.as_deref(), Some("0.1.0"));
+        let desktop = f.claude_desktop.registered.unwrap();
+        assert_eq!(
+            (desktop.command.as_str(), desktop.args.as_slice()),
+            ("node", &["/d".to_string()][..])
+        );
+        assert!(desktop.command_found);
         // the config, named as Settings shows it on this platform
         if cfg!(windows) {
             assert_eq!(f.codex.config, places.codex_config.to_string_lossy());
@@ -1105,31 +1306,83 @@ mod tests {
             assert_eq!(f.codex.config, "~/.codex/config.toml");
         }
         assert_eq!(f.codex.registered, None);
+        // a Windows Claude with no data folder yet: nothing registered
+        let none = facts(
+            &PluginPlaces {
+                claude_data: None,
+                ..places
+            },
+            Probes {
+                node: None,
+                claude_cli: false,
+                claude_app: true,
+                server_problem: None,
+            },
+        );
+        assert_eq!(none.claude_desktop.registered, None);
     }
 
     #[test]
-    fn claude_desktops_folder_is_in_the_users_app_data() {
-        // macOS: ~/Library/Application Support; Windows: %APPDATA% (roaming)
+    fn claude_desktops_data_on_macos_is_its_folder_in_application_support() {
+        let support = Path::new("/Users/a/Library/Application Support");
+        // whether or not Claude has made it yet
         assert_eq!(
-            claude_support_dir(Path::new("/Users/a/Library/Application Support")),
-            PathBuf::from("/Users/a/Library/Application Support/Claude")
-        );
-        assert_eq!(
-            claude_support_dir(Path::new(r"C:\Users\a\AppData\Roaming")),
-            Path::new(r"C:\Users\a\AppData\Roaming").join("Claude")
+            claude_data_dir(false, support, Path::new("/unused")),
+            Some(support.join("Claude"))
         );
     }
 
     #[test]
-    fn claude_desktops_program_is_looked_for_in_local_app_data_on_windows() {
-        let local = Path::new(r"C:\Users\a\AppData\Local");
-        assert_eq!(
-            claude_desktop_exe_candidates(local),
-            vec![
-                local.join("AnthropicClaude").join("claude.exe"),
-                local.join("Programs").join("Claude").join("Claude.exe"),
-            ]
-        );
+    fn claude_desktops_data_on_windows_is_the_folder_claude_itself_picks() {
+        let root = temp("claude-data");
+        let (roaming, local) = (root.join("Roaming"), root.join("Local"));
+        let msix = local.join("Claude-Data").join("claude_pzs8sxrjxfjjc");
+        let store = local
+            .join("Claude-Data")
+            .join("anthropicpbc.claude_fnn82j28hfe8t");
+        let exe = roaming.join("Claude");
+        let cache = local.join("Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude");
+        let pick = || claude_data_dir(true, &roaming, &local);
+        // a Claude never opened: no folder yet
+        assert_eq!(pick(), None);
+        std::fs::create_dir_all(&cache).unwrap();
+        assert_eq!(pick(), Some(cache.clone()));
+        std::fs::create_dir_all(&exe).unwrap();
+        assert_eq!(pick(), Some(exe.clone()));
+        std::fs::create_dir_all(&store).unwrap();
+        assert_eq!(pick(), Some(store.clone()));
+        std::fs::create_dir_all(&msix).unwrap();
+        assert_eq!(pick(), Some(msix));
+    }
+
+    #[test]
+    fn claude_desktops_program_on_windows_is_its_package_alias_or_exe_install() {
+        let root = temp("claude-program");
+        let local = root.join("Local");
+        assert!(!claude_program_on_windows(&local));
+        let found = |path: PathBuf, file: bool| {
+            if file {
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(&path, "").unwrap();
+            } else {
+                std::fs::create_dir_all(&path).unwrap();
+            }
+            let present = claude_program_on_windows(&local);
+            let _ = std::fs::remove_dir_all(&local);
+            present
+        };
+        assert!(found(local.join("Packages/Claude_pzs8sxrjxfjjc"), false));
+        assert!(found(
+            local.join("Packages/AnthropicPBC.Claude_fnn82j28hfe8t"),
+            false
+        ));
+        assert!(found(
+            local.join("Microsoft/WindowsApps/claude-desktop.exe"),
+            true
+        ));
+        assert!(found(local.join("AnthropicClaude/claude.exe"), true));
+        // the guessed folder of earlier builds is not a sign
+        assert!(!found(local.join("Programs/Claude/Claude.exe"), true));
     }
 
     #[test]
@@ -1171,8 +1424,7 @@ mod tests {
             home: PathBuf::from("/Users/a"),
             local_data: PathBuf::from("/Users/a/Library/Application Support"),
             server_dir: PathBuf::from("/x"),
-            mcpb: PathBuf::from("/x.mcpb"),
-            claude_support: PathBuf::from("/Users/a/Library/Application Support/Claude"),
+            claude_data: Some(PathBuf::from("/Users/a/Library/Application Support/Claude")),
             codex_config: PathBuf::from("/Users/a/.codex/config.toml"),
         };
         if cfg!(unix) {

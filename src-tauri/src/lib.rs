@@ -352,7 +352,6 @@ pub fn run() {
             plugins::plugins_status,
             plugins::plugin_install,
             plugins::plugin_remove,
-            plugins::open_claude,
             show_window_menu,
             set_window_fullscreen
         ])
